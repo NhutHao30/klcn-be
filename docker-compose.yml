@@ -1,0 +1,96 @@
+services:
+  # CƠ SỞ DỮ LIỆU MYSQL
+  mysql:
+    image: mysql:8.0
+    container_name: dola_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: dola_bakery_db
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306" # Đổi cổng ra 3307 để tránh đụng độ với XAMPP/MySQL cũ trên máy
+    volumes:
+      - dola_mysql_data:/var/lib/mysql
+    deploy:
+      resources:
+        limits:
+          memory: 800M # MySQL 8 khá ngốn RAM, giới hạn 800MB là vừa đủ cho 20 người
+
+  # BỘ NHỚ TẠM REDIS (CACHING)
+  redis:
+    image: redis:latest
+    container_name: dola_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - dola_redis_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 150M # Caching cơ bản cho 20 người chỉ cần tối đa 150MB
+
+  # HỆ THỐNG HÀNG ĐỢI RABBITMQ
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: dola_rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"    # Port cho ứng dụng kết nối
+      - "15672:15672"  # Port cho giao diện quản lý UI
+    volumes:
+      - dola_rabbitmq_data:/var/lib/rabbitmq
+    deploy:
+      resources:
+        limits:
+          memory: 800M # Ép Erlang/RabbitMQ không được phình to quá 800MB
+
+  # LƯU TRỮ ẢNH MINIO (S3)
+  minio:
+    image: minio/minio:latest
+    container_name: dola_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"    # Port API (Laravel kết nối vào đây)
+      - "9001:9001"    # Port Giao diện UI
+    volumes:
+      - dola_minio_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 400M # MinIO giới hạn 400MB chạy rất ổn định
+
+  # TOOL TỰ ĐỘNG CẤU HÌNH MINIO (Chạy xong tự tắt)
+  # - Tự động tạo bucket 'dolabakery'
+  # - Tự động set quyền Public (không cần bạn làm bằng tay nữa)
+  minio-setup:
+    image: minio/mc:latest
+    container_name: dola_minio_setup
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Đang chờ MinIO khởi động...';
+      sleep 5;
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/dolabakery --ignore-existing;
+      /usr/bin/mc anonymous set public myminio/dolabakery;
+      echo 'Đã cấu hình xong Bucket dolabakery!';
+      exit 0;
+      "
+    deploy:
+      resources:
+        limits:
+          memory: 100M # Chỉ là tool chạy 1 lần rồi tắt nên giới hạn thấp
+
+
+# KHAI BÁO Ổ CỨNG ẢO (Giúp lưu lại dữ liệu vĩnh viễn dù có tắt/xóa Container)
+volumes:
+  dola_mysql_data:
+  dola_redis_data:
+  dola_rabbitmq_data:
+  dola_minio_data:
