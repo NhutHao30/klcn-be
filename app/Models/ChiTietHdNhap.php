@@ -17,6 +17,9 @@ class ChiTietHdNhap extends Model
         'SOLUONGTN',
         'DONGIANHAP',
         'GHICHU',
+        'MACUAHANG',
+        'NGAYSX',
+        'HSD_LO',
     ];
 
     public function hdnhap()

@@ -8,15 +8,22 @@ return new class () extends Migration {
     public function up(): void
     {
         Schema::table('nhanvien', function (Blueprint $table) {
-            $table->string('CCCD_TRUOC')->nullable();
-            $table->string('CCCD_SAU')->nullable();
+            if (!Schema::hasColumn('nhanvien', 'CCCD_TRUOC')) {
+                $table->string('CCCD_TRUOC')->nullable();
+            }
+            if (!Schema::hasColumn('nhanvien', 'CCCD_SAU')) {
+                $table->string('CCCD_SAU')->nullable();
+            }
         });
     }
 
     public function down(): void
     {
         Schema::table('nhanvien', function (Blueprint $table) {
-            $table->dropColumn(['CCCD_TRUOC', 'CCCD_SAU']);
+            $cols = [];
+            if (Schema::hasColumn('nhanvien', 'CCCD_TRUOC')) $cols[] = 'CCCD_TRUOC';
+            if (Schema::hasColumn('nhanvien', 'CCCD_SAU')) $cols[] = 'CCCD_SAU';
+            if (!empty($cols)) $table->dropColumn($cols);
         });
     }
 };

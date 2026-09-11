@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\Schema;
 return new class () extends Migration {
     public function up(): void
     {
-        Schema::create('hdnhap', function (Blueprint $table) {
+        if (!Schema::hasTable('hdnhap')) {
+            Schema::create('hdnhap', function (Blueprint $table) {
             $table->string('MAHDNHAP', 10)->primary();
             $table->dateTime('NGAYLAP')->useCurrent();
             $table->string('USERNAME', 100)->nullable();
@@ -16,6 +17,7 @@ return new class () extends Migration {
 
             $table->foreign('USERNAME')->references('USERNAME')->on('nhanvien');
         });
+        }
     }
 
     public function down(): void

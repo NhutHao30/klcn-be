@@ -6,23 +6,21 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::table('cuahang', function (Blueprint $table) {
-            $table->string('GHN_SHOP_ID')->nullable()->after('TRANGTHAI');
+            if (!Schema::hasColumn('cuahang', 'GHN_SHOP_ID')) {
+                $table->string('GHN_SHOP_ID', 255)->nullable();
+            }
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::table('cuahang', function (Blueprint $table) {
-            $table->dropColumn('GHN_SHOP_ID');
+            if (Schema::hasColumn('cuahang', 'GHN_SHOP_ID')) {
+                $table->dropColumn('GHN_SHOP_ID');
+            }
         });
     }
 };

@@ -10,7 +10,8 @@ return new class () extends Migration {
      */
     public function up(): void
     {
-        Schema::create('personal_access_tokens', function (Blueprint $table) {
+        if (!Schema::hasTable('personal_access_tokens')) {
+            Schema::create('personal_access_tokens', function (Blueprint $table) {
             $table->id();
             $table->morphs('tokenable');
             $table->text('name');
@@ -20,6 +21,7 @@ return new class () extends Migration {
             $table->timestamp('expires_at')->nullable()->index();
             $table->timestamps();
         });
+        }
     }
 
     /**

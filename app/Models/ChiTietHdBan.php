@@ -15,6 +15,7 @@ class ChiTietHdBan extends Model
         'MASP',
         'SOLUONG',
         'DONGIA',
+        'MALOHAN',
     ];
 
     public function hdban()
@@ -25,5 +26,10 @@ class ChiTietHdBan extends Model
     public function sanpham()
     {
         return $this->belongsTo(SanPham::class, 'MASP', 'MASP');
+    }
+
+    public function loHang()
+    {
+        return $this->belongsTo(LoHang::class, 'MALOHAN', 'MALOHAN');
     }
 }

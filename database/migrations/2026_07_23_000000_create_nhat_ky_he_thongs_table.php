@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\Schema;
 return new class () extends Migration {
     public function up(): void
     {
-        Schema::create('nhat_ky_he_thong', function (Blueprint $table) {
+        if (!Schema::hasTable('nhat_ky_he_thong')) {
+            Schema::create('nhat_ky_he_thong', function (Blueprint $table) {
             $table->id();
             $table->string('USERNAME', 100)->nullable();
             $table->string('HOTEN', 150)->nullable();
@@ -16,6 +17,7 @@ return new class () extends Migration {
             $table->string('HANH_DONG', 150);
             $table->timestamps();
         });
+        }
     }
 
     public function down(): void

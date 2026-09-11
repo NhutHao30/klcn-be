@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\Schema;
 return new class () extends Migration {
     public function up(): void
     {
-        Schema::create('giohang', function (Blueprint $table) {
+        if (!Schema::hasTable('giohang')) {
+            Schema::create('giohang', function (Blueprint $table) {
             $table->string('MAGIOHANG', 10)->primary();
             $table->string('MAKH', 100);
             $table->date('NGAYTAO')->useCurrent();
@@ -15,6 +16,7 @@ return new class () extends Migration {
 
             $table->foreign('MAKH')->references('MAKH')->on('khachhang');
         });
+        }
     }
 
     public function down(): void

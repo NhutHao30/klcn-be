@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\Schema;
 return new class () extends Migration {
     public function up(): void
     {
-        Schema::create('taikhoan', function (Blueprint $table) {
+        if (!Schema::hasTable('taikhoan')) {
+            Schema::create('taikhoan', function (Blueprint $table) {
             $table->string('USERNAME', 100)->primary();
             $table->string('PASSWORD', 100);
             $table->integer('MAROLE');
@@ -20,6 +21,7 @@ return new class () extends Migration {
 
             $table->foreign('MAROLE')->references('MAROLE')->on('vaitro');
         });
+        }
     }
 
     public function down(): void

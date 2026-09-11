@@ -76,11 +76,9 @@ class CartController extends Controller
                 return response()->json(['error' => 'Sản phẩm không tồn tại'], 404);
             }
 
-            $maxStock = \App\Models\TonKhoCuaHang::whereHas('cuahang', function ($q) {
-                $q->where('TRANGTHAI', 'Đang hoạt động');
-            })->where('MASP', $request->masp)->max('SOLUONG_TON') ?? 0;
+            $maxStock = (new \App\Http\Controllers\Api\ProductController)->calculateStock($request->masp);
             if ($maxStock < $request->quantity) {
-                return response()->json(['error' => 'Kho không đủ số lượng'], 400);
+                return response()->json(['error' => 'Sản phẩm đã hết hạn sử dụng hoặc không đủ tồn kho còn hạn!'], 400);
             }
 
             // Check if item exists in cart
@@ -126,11 +124,9 @@ class CartController extends Controller
             }
 
             $sp = SanPham::find($request->masp);
-            $maxStock = \App\Models\TonKhoCuaHang::whereHas('cuahang', function ($q) {
-                $q->where('TRANGTHAI', 'Đang hoạt động');
-            })->where('MASP', $request->masp)->max('SOLUONG_TON') ?? 0;
+            $maxStock = (new \App\Http\Controllers\Api\ProductController)->calculateStock($request->masp);
             if ($request->quantity > $maxStock) {
-                return response()->json(['error' => 'Vượt quá số lượng tồn kho'], 400);
+                return response()->json(['error' => 'Vượt quá số lượng tồn kho còn hạn sử dụng'], 400);
             }
 
             $item->SOLUONG = $request->quantity;
@@ -190,9 +186,8 @@ class CartController extends Controller
             foreach ($cuahangs as $ch) {
                 $isEnoughStock = true;
                 foreach ($items as $item) {
-                    $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $ch->MACUAHANG)
-                                ->where('MASP', $item->MASP)->first();
-                    if (!$tonKho || $tonKho->SOLUONG_TON < $item->SOLUONG) {
+                    $avail = (new \App\Http\Controllers\Api\ProductController)->calculateStock($item->MASP, $ch->MACUAHANG);
+                    if ($avail < $item->SOLUONG) {
                         $isEnoughStock = false;
                         break;
                     }
@@ -256,20 +251,38 @@ class CartController extends Controller
                 $selectedStoreId = $eligibleStores[0]->MACUAHANG; // Fallback
             }
 
-            // Trừ tồn kho tại cửa hàng được chọn và tính tổng tiền
+            // Trừ tồn kho lô FEFO còn hạn tại cửa hàng được chọn và tính tổng tiền
+            $loService = new \App\Services\LoHangService();
             foreach ($items as $item) {
-                $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $selectedStoreId)
-                            ->where('MASP', $item->MASP)->lockForUpdate()->first();
+                $fefoResult = $loService->getFefoLo($item->MASP, $selectedStoreId, $item->SOLUONG, 0);
+                if (!empty($fefoResult)) {
+                    foreach ($fefoResult as $fefoItem) {
+                        $loService->consumeLo(
+                            $fefoItem['malohan'],
+                            $fefoItem['soLuong'],
+                            $request->mahd ?? null,
+                            $user?->USERNAME
+                        );
+                    }
+                } else {
+                    // Fallback trừ tonkho_cuahang nếu sản phẩm chưa được khởi tạo bảng lo_hang
+                    $hasLoHang = \App\Models\LoHang::where('MASP', $item->MASP)->where('MACUAHANG', $selectedStoreId)->exists();
+                    if ($hasLoHang) {
+                        throw new \Exception("Sản phẩm {$item->MASP} đã hết hạn sử dụng hoặc không đủ lô còn hạn!");
+                    }
+                    $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $selectedStoreId)
+                                ->where('MASP', $item->MASP)->lockForUpdate()->first();
+                    if ($tonKho) {
+                        \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
+                            ->where('MACUAHANG', $selectedStoreId)
+                            ->where('MASP', $item->MASP)
+                            ->update(['SOLUONG_TON' => max(0, $tonKho->SOLUONG_TON - $item->SOLUONG)]);
+                    }
+                }
 
-                \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                    ->where('MACUAHANG', $selectedStoreId)
-                    ->where('MASP', $item->MASP)
-                    ->update(['SOLUONG_TON' => $tonKho->SOLUONG_TON - $item->SOLUONG]);
-
-                // (Tùy chọn) Vẫn trừ bảng sanpham để tương thích ngược nếu Frontend đang đọc từ bảng này
                 $sp = SanPham::find($item->MASP);
                 if ($sp) {
-                    $sp->SOLUONG -= $item->SOLUONG;
+                    $sp->SOLUONG = max(0, $sp->SOLUONG - $item->SOLUONG);
                     $sp->save();
                 }
 

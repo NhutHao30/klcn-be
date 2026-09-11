@@ -7,11 +7,13 @@ use Illuminate\Support\Facades\Schema;
 return new class () extends Migration {
     public function up(): void
     {
-        Schema::create('vaitro', function (Blueprint $table) {
+        if (!Schema::hasTable('vaitro')) {
+            Schema::create('vaitro', function (Blueprint $table) {
             $table->integer('MAROLE')->primary();
             $table->string('MOTA', 50)->nullable();
             $table->timestamps();
         });
+        }
     }
 
     public function down(): void

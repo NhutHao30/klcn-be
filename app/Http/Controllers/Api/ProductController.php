@@ -11,7 +11,7 @@ class ProductController extends Controller
 {
     protected $uploadService;
 
-    public function __construct(UploadService $uploadService)
+    public function __construct(?UploadService $uploadService = null)
     {
         $this->uploadService = $uploadService;
     }
@@ -81,39 +81,56 @@ class ProductController extends Controller
         // Caching: Tạo cache key dựa trên tất cả các tham số query và mã cửa hàng
         $cacheKey = 'products_v2_' . md5(serialize($request->all())) . '_store_' . $maCuaHang;
 
-        $products = \Illuminate\Support\Facades\Cache::tags(['products'])->remember($cacheKey, 600, function () use ($query, $maCuaHang) {
-            // Paginate 12 products per page.
-            $paginated = $query->paginate(12);
+        $products = \Illuminate\Support\Facades\Cache::tags(['products'])->remember($cacheKey, 600, function () use ($query, $maCuaHang, $request) {
+            $perPage = (int) $request->input('size', $request->input('limit', $request->input('per_page', 12)));
+            $paginated = $query->paginate($perPage);
 
-            // Calculate the actual inventory for each returned product.
-            $paginated->getCollection()->transform(function ($product) use ($maCuaHang) {
-                $product->setAttribute('TONKHO_THUCTE', $this->calculateStock($product->MASP, $maCuaHang));
+            // Bulk fetch stock in ONE single query to avoid N+1 query performance bottleneck
+            $productIds = $paginated->getCollection()->pluck('MASP')->toArray();
+            $allStock = \App\Models\TonKhoCuaHang::with('cuahang')
+                ->whereHas('cuahang', function ($q) {
+                    $q->where('TRANGTHAI', 'Đang hoạt động');
+                })
+                ->whereIn('MASP', $productIds)
+                ->get()
+                ->groupBy('MASP');
+
+            $paginated->getCollection()->transform(function ($product) use ($maCuaHang, $allStock) {
+                $stockList = $allStock->get($product->MASP, collect());
+                if ($maCuaHang) {
+                    $storeStock = $stockList->firstWhere('MACUAHANG', $maCuaHang);
+                    $stockVal = $storeStock ? (int)$storeStock->SOLUONG_TON : 0;
+                } else {
+                    $stockVal = (int)$stockList->sum('SOLUONG_TON');
+                }
+
+                // Standardize non-negative stock
+                $stockVal = max(0, $stockVal);
+                if ($product->SOLUONG < 0) {
+                    $product->SOLUONG = 0;
+                }
+
+                $product->setAttribute('TONKHO_THUCTE', $stockVal);
 
                 if (!$maCuaHang) {
-                    $chiTiet = \App\Models\TonKhoCuaHang::with('cuahang')
-                        ->whereHas('cuahang', function ($q) {
-                            $q->where('TRANGTHAI', 'Đang hoạt động');
-                        })
-                        ->where('MASP', $product->MASP)
-                        ->get()
-                        ->map(function ($tk) {
-                            return [
-                                'MACUAHANG' => $tk->MACUAHANG,
-                                'TENCUAHANG' => $tk->cuahang ? $tk->cuahang->TENCUAHANG : 'Chi nhánh ' . $tk->MACUAHANG,
-                                'SOLUONG_TON' => $tk->SOLUONG_TON
-                            ];
-                        })->toArray();
+                    $chiTiet = $stockList->map(function ($tk) {
+                        return [
+                            'MACUAHANG' => $tk->MACUAHANG,
+                            'TENCUAHANG' => $tk->cuahang ? $tk->cuahang->TENCUAHANG : 'Chi nhánh ' . $tk->MACUAHANG,
+                            'SOLUONG_TON' => $tk->SOLUONG_TON
+                        ];
+                    })->values()->toArray();
                     $product->setAttribute('TONKHO_CHITIET', json_encode($chiTiet));
                 }
                 return $product;
             });
 
-            // Quan trọng: Phải chuyển thành Array trước khi lưu vào Redis để tránh lỗi Serialize Object của PHP
             return $paginated->toArray();
         });
 
         return response()->json($products);
     }
+
 
     /**
      * Customer: View product details
@@ -345,14 +362,47 @@ class ProductController extends Controller
 
     public function calculateStock($masp, $maCuaHang = null)
     {
+        $today = \Carbon\Carbon::today();
+
+        // Tự động quét và loại trừ lô hết hạn nếu có
+        try {
+            (new \App\Services\LoHangService)->autoExpireLo();
+        } catch (\Exception $e) {}
+
         if ($maCuaHang) {
+            $hasLoHang = \App\Models\LoHang::where('MASP', $masp)->where('MACUAHANG', $maCuaHang)->exists();
+            if ($hasLoHang) {
+                return (int) \App\Models\LoHang::where('MASP', $masp)
+                    ->where('MACUAHANG', $maCuaHang)
+                    ->where('TRANGTHAI', 'con_hang')
+                    ->where('HSD', '>=', $today)
+                    ->where('SOLUONG_CON', '>', 0)
+                    ->sum('SOLUONG_CON');
+            }
             $tonKho = \App\Models\TonKhoCuaHang::where('MASP', $masp)->where('MACUAHANG', $maCuaHang)->first();
             return $tonKho ? $tonKho->SOLUONG_TON : 0;
         }
 
-        // Đối với khách hàng mua online (không có $maCuaHang cụ thể),
-        // Số lượng tồn kho lớn nhất hiển thị phải là số lượng lớn nhất ở MỘT chi nhánh bất kỳ.
-        // Vì hệ thống hiện tại chỉ giao hàng từ 1 chi nhánh cho 1 đơn hàng (không chia nhỏ đơn).
+        $hasLoHang = \App\Models\LoHang::where('MASP', $masp)->exists();
+        if ($hasLoHang) {
+            $activeStores = \App\Models\CuaHang::where('TRANGTHAI', 'Đang hoạt động')->pluck('MACUAHANG');
+            if ($activeStores->isEmpty()) {
+                return 0;
+            }
+
+            $maxStock = \App\Models\LoHang::selectRaw('MACUAHANG, SUM(SOLUONG_CON) as total_con')
+                ->where('MASP', $masp)
+                ->whereIn('MACUAHANG', $activeStores)
+                ->where('TRANGTHAI', 'con_hang')
+                ->where('HSD', '>=', $today)
+                ->where('SOLUONG_CON', '>', 0)
+                ->groupBy('MACUAHANG')
+                ->orderByDesc('total_con')
+                ->value('total_con');
+
+            return (int) ($maxStock ?? 0);
+        }
+
         $maxStock = \App\Models\TonKhoCuaHang::whereHas('cuahang', function ($q) {
             $q->where('TRANGTHAI', 'Đang hoạt động');
         })->where('MASP', $masp)->max('SOLUONG_TON');
@@ -430,36 +480,81 @@ class ProductController extends Controller
             ->limit(8)
             ->get();
 
-        // Top 8 sản phẩm giá cao nhất
-        $expensive = SanPham::with('loaisanpham')
-            ->orderByDesc('GIABAN')
+        // Top 8 sản phẩm bán chạy nhất dựa trên tổng số lượng bán
+        $bestSellersIds = \Illuminate\Support\Facades\DB::table('chitiethdban')
+            ->select('chitiethdban.MASP', \Illuminate\Support\Facades\DB::raw('SUM(chitiethdban.SOLUONG) as TONG_BAN'))
+            ->join('sanpham', 'sanpham.MASP', '=', 'chitiethdban.MASP')
+            ->whereNull('sanpham.deleted_at')
+            ->groupBy('chitiethdban.MASP')
+            ->orderByDesc('TONG_BAN')
             ->limit(8)
-            ->get();
+            ->pluck('chitiethdban.MASP')
+            ->toArray();
 
-        // Thêm tồn kho cho tất cả sản phẩm
-        $allProducts = collect()->merge($discounted)->merge($newest)->merge($expensive)->unique('MASP');
-        $allProducts->each(function ($product) {
-            $product->setAttribute('TONKHO_THUCTE', $this->calculateStock($product->MASP));
-            $chiTiet = \App\Models\TonKhoCuaHang::with('cuahang')
-                ->whereHas('cuahang', function ($q) {
-                    $q->where('TRANGTHAI', 'Đang hoạt động');
-                })
-                ->where('MASP', $product->MASP)
+        if (empty($bestSellersIds)) {
+            $bestSellers = SanPham::with('loaisanpham')->orderByDesc('created_at')->limit(8)->get();
+        } else {
+            $bestSellers = SanPham::with('loaisanpham')
+                ->whereIn('MASP', $bestSellersIds)
                 ->get()
-                ->map(function ($tk) {
-                    return [
-                        'MACUAHANG' => $tk->MACUAHANG,
-                        'TENCUAHANG' => $tk->cuahang ? $tk->cuahang->TENCUAHANG : 'Chi nhánh ' . $tk->MACUAHANG,
-                        'SOLUONG_TON' => $tk->SOLUONG_TON
-                    ];
-                })->toArray();
+                ->sortBy(function ($product) use ($bestSellersIds) {
+                    return array_search($product->MASP, $bestSellersIds);
+                })->values();
+        }
+
+        // Bulk fetch stock for homepage products to avoid N+1 query overhead
+        $allProducts = collect()->merge($discounted)->merge($newest)->merge($bestSellers)->unique('MASP');
+        $productIds = $allProducts->pluck('MASP')->toArray();
+        $allStock = \App\Models\TonKhoCuaHang::with('cuahang')
+            ->whereHas('cuahang', function ($q) {
+                $q->where('TRANGTHAI', 'Đang hoạt động');
+            })
+            ->whereIn('MASP', $productIds)
+            ->get()
+            ->groupBy('MASP');
+
+        $allProducts->each(function ($product) use ($allStock) {
+            $stockList = $allStock->get($product->MASP, collect());
+            $product->setAttribute('TONKHO_THUCTE', (int)$stockList->sum('SOLUONG_TON'));
+            $chiTiet = $stockList->map(function ($tk) {
+                return [
+                    'MACUAHANG' => $tk->MACUAHANG,
+                    'TENCUAHANG' => $tk->cuahang ? $tk->cuahang->TENCUAHANG : 'Chi nhánh ' . $tk->MACUAHANG,
+                    'SOLUONG_TON' => $tk->SOLUONG_TON
+                ];
+            })->values()->toArray();
             $product->setAttribute('TONKHO_CHITIET', json_encode($chiTiet));
         });
 
         return response()->json([
             'discounted' => $discounted->values(),
             'newest' => $newest->values(),
-            'expensive' => $expensive->values()
+            'bestSellers' => $bestSellers->values(),
+            'expensive' => $bestSellers->values()
+        ]);
+    }
+
+    /**
+     * Lấy lịch sử biến động giá của sản phẩm
+     */
+    public function getPriceHistory($masp)
+    {
+        $product = SanPham::find($masp);
+        if (!$product) {
+            return response()->json(['error' => 'Không tìm thấy sản phẩm'], 404);
+        }
+
+        $history = \App\Models\LichSuGiaSanPham::with('nhanvien')
+            ->where('MASP', $masp)
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json([
+            'masp' => $product->MASP,
+            'tensp' => $product->TENSP,
+            'gia_hien_tai' => $product->GIABAN,
+            'phan_tram_giam_hien_tai' => $product->PHAN_TRAM_GIAM ?? 0,
+            'history' => $history
         ]);
     }
 }

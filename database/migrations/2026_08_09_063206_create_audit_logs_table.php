@@ -11,7 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('audit_logs', function (Blueprint $table) {
+        if (!Schema::hasTable('audit_logs')) {
+            Schema::create('audit_logs', function (Blueprint $table) {
             $table->id();
             $table->string('USERNAME', 50)->nullable();
             $table->string('action', 100);
@@ -31,6 +32,7 @@ return new class extends Migration
             $table->index('created_at');
             $table->index('request_id');
         });
+        }
     }
 
     /**

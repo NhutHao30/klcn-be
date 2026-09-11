@@ -11,7 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('outbox_events', function (Blueprint $table) {
+        if (!Schema::hasTable('outbox_events')) {
+            Schema::create('outbox_events', function (Blueprint $table) {
             $table->id();
             $table->string('event_type', 100);
             $table->string('aggregate_type', 50);
@@ -24,6 +25,7 @@ return new class extends Migration
 
             $table->index(['status', 'created_at']);
         });
+        }
     }
 
     /**

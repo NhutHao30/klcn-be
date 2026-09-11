@@ -26,6 +26,7 @@ class NhanVien extends Model
         'TRANGTHAI',
         'CALAMVIEC',
         'MACUAHANG',
+        'CHU_KY',
     ];
 
     public function taikhoan()

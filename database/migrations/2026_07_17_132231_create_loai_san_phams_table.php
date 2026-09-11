@@ -7,11 +7,13 @@ use Illuminate\Support\Facades\Schema;
 return new class () extends Migration {
     public function up(): void
     {
-        Schema::create('loaisanpham', function (Blueprint $table) {
+        if (!Schema::hasTable('loaisanpham')) {
+            Schema::create('loaisanpham', function (Blueprint $table) {
             $table->string('MALOAI', 10)->primary();
             $table->string('TENLOAI', 50)->nullable();
             $table->timestamps();
         });
+        }
     }
 
     public function down(): void

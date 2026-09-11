@@ -11,7 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('idempotency_keys', function (Blueprint $table) {
+        if (!Schema::hasTable('idempotency_keys')) {
+            Schema::create('idempotency_keys', function (Blueprint $table) {
             $table->id();
             $table->string('idempotency_key', 255)->unique();
             $table->string('USERNAME', 50)->nullable();
@@ -30,6 +31,7 @@ return new class extends Migration
             $table->index(['USERNAME', 'endpoint']);
             $table->index('expires_at');
         });
+        }
     }
 
     /**

@@ -1,0 +1,1613 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dola Bakery - Dashboard Quản Lý Lô Hàng & Hạn Sử Dụng (FEFO)</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --bg-card-hover: #334155;
+            --border-color: #334155;
+            --primary: #f59e0b;
+            --primary-hover: #d97706;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --glass: rgba(30, 41, 59, 0.7);
+            --radius-lg: 16px;
+            --radius-md: 10px;
+            --shadow-glow: 0 0 25px rgba(245, 158, 11, 0.15);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Top Header */
+        header {
+            background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(135deg, var(--primary), #b45309);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);
+        }
+
+        .logo-text h1 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(90deg, #fff, var(--primary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo-text span {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .token-status {
+            font-size: 0.85rem;
+            padding: 6px 14px;
+            border-radius: 30px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-red);
+        }
+
+        .status-dot.active {
+            background: var(--accent-green);
+            box-shadow: 0 0 8px var(--accent-green);
+        }
+
+        .btn {
+            background: var(--primary);
+            color: #000;
+            font-weight: 600;
+            border: none;
+            padding: 8px 18px;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+
+        .btn:hover {
+            background: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-outline:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border-color: var(--text-muted);
+        }
+
+        .btn-danger {
+            background: var(--accent-red);
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-green {
+            background: var(--accent-green);
+            color: #fff;
+        }
+
+        .btn-green:hover {
+            background: #059669;
+        }
+
+        /* Layout Container */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1.5rem;
+            width: 100%;
+            flex: 1;
+        }
+
+        /* Urgent Warning Banner */
+        .alert-banner {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(185, 28, 28, 0.25));
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            border-radius: var(--radius-lg);
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            animation: pulse-border 2s infinite;
+        }
+
+        @keyframes pulse-border {
+            0%, 100% { border-color: rgba(239, 68, 68, 0.4); }
+            50% { border-color: rgba(239, 68, 68, 0.9); }
+        }
+
+        .alert-content {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .alert-icon {
+            font-size: 2rem;
+            color: var(--accent-red);
+        }
+
+        .alert-text h3 {
+            font-size: 1.1rem;
+            color: #fca5a5;
+        }
+
+        .alert-text p {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        /* Metric KPI Cards Grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1.25rem;
+            margin-bottom: 2rem;
+        }
+
+        .metric-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 1.25rem;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--primary);
+        }
+
+        .metric-card.green::before { background: var(--accent-green); }
+        .metric-card.yellow::before { background: var(--primary); }
+        .metric-card.red::before { background: var(--accent-red); }
+        .metric-card.blue::before { background: var(--accent-blue); }
+
+        .metric-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .metric-title {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric-icon-bg {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+        }
+
+        .metric-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+
+        .metric-sub {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Navigation Tabs */
+        .tabs-nav {
+            display: flex;
+            gap: 10px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 1.5rem;
+            overflow-x: auto;
+            padding-bottom: 4px;
+        }
+
+        .tab-btn {
+            background: transparent;
+            color: var(--text-muted);
+            border: none;
+            padding: 12px 20px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: var(--radius-md) var(--radius-md) 0 0;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+            position: relative;
+        }
+
+        .tab-btn:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .tab-btn.active {
+            color: var(--primary);
+            background: rgba(245, 158, 11, 0.1);
+        }
+
+        .tab-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: -5px;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: var(--primary);
+            border-radius: 3px;
+        }
+
+        /* Tab Content Section */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Glass Cards & Tables */
+        .card-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.25rem;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .panel-title {
+            font-size: 1.15rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Filters Toolbar */
+        .filter-bar {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .form-control {
+            background: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 8px 14px;
+            border-radius: var(--radius-md);
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+
+        .form-control:focus {
+            border-color: var(--primary);
+        }
+
+        select.form-control {
+            cursor: pointer;
+        }
+
+        /* Data Tables */
+        .table-responsive {
+            width: 100%;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+            text-align: left;
+        }
+
+        th {
+            background: rgba(15, 23, 42, 0.6);
+            color: var(--text-muted);
+            font-weight: 600;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 14px 16px;
+            border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+            color: var(--text-main);
+            vertical-align: middle;
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        /* Status Badges */
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .badge-green { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .badge-yellow { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .badge-red { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .badge-gray { background: rgba(148, 163, 184, 0.15); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.3); }
+
+        /* Modal Popup */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .modal-overlay.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            width: 90%;
+            max-width: 650px;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 2rem;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+            transform: scale(0.95);
+            transition: transform 0.3s ease;
+        }
+
+        .modal-overlay.open .modal-box {
+            transform: scale(1);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1rem;
+        }
+
+        .modal-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.2rem;
+            cursor: pointer;
+        }
+
+        .modal-close:hover { color: #fff; }
+
+        /* Form Grid */
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-group.full {
+            grid-column: span 2;
+        }
+
+        .form-group label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        /* Simulation Card */
+        .sim-box {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px dashed var(--primary);
+            border-radius: var(--radius-md);
+            padding: 1.25rem;
+            margin-top: 1rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .form-grid { grid-template-columns: 1fr; }
+            .form-group.full { grid-column: span 1; }
+            header { flex-direction: column; gap: 10px; text-align: center; }
+            .header-controls { flex-wrap: wrap; justify-content: center; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header>
+        <div class="logo-area">
+            <div class="logo-icon">
+                <i class="fa-solid fa-wheat-awn"></i>
+            </div>
+            <div class="logo-text">
+                <h1>DOLA BAKERY BATCH CONTROL</h1>
+                <span>Hệ Thống Quản Lý Lô Hàng & HSD Thực Tế (FEFO)</span>
+            </div>
+        </div>
+
+        <div class="header-controls">
+            <div class="token-status" id="tokenStatus">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Chưa Đăng Nhập API</span>
+            </div>
+            <button class="btn btn-outline" onclick="openLoginModal()">
+                <i class="fa-solid fa-key"></i> Đăng Nhập / Token
+            </button>
+            <button class="btn btn-green" onclick="fetchData()">
+                <i class="fa-solid fa-rotate"></i> Tải Lại Dữ Liệu
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <div class="container">
+
+        <!-- Top Urgent Alert Banner (Hiển thị lô sắp hết hạn / hết hạn) -->
+        <div class="alert-banner" id="urgentAlertBanner" style="display: none;">
+            <div class="alert-content">
+                <i class="fa-solid fa-triangle-exclamation alert-icon"></i>
+                <div class="alert-text">
+                    <h3>CẢNH BÁO HẠN SỬ DỤNG SẢN PHẨM</h3>
+                    <p id="urgentAlertMsg">Phát hiện lô bánh sắp hoặc đã hết hạn trong hệ thống cần xử lý!</p>
+                </div>
+            </div>
+            <button class="btn btn-danger" onclick="triggerAutoExpire()">
+                <i class="fa-solid fa-trash-can"></i> Tự Động Hủy Lô Hết Hạn
+            </button>
+        </div>
+
+        <!-- Metrics Grid -->
+        <div class="metrics-grid">
+            <div class="metric-card yellow">
+                <div class="metric-header">
+                    <span class="metric-title">Tổng Lô Hàng</span>
+                    <div class="metric-icon-bg"><i class="fa-solid fa-boxes-stacked" style="color: var(--primary);"></i></div>
+                </div>
+                <div class="metric-value" id="kpiTotalLo">0</div>
+                <div class="metric-sub">Lô hàng đang theo dõi</div>
+            </div>
+
+            <div class="metric-card green">
+                <div class="metric-header">
+                    <span class="metric-title">Lô Đang Kinh Doanh</span>
+                    <div class="metric-icon-bg"><i class="fa-solid fa-circle-check" style="color: var(--accent-green);"></i></div>
+                </div>
+                <div class="metric-value" id="kpiConHan">0</div>
+                <div class="metric-sub">Hạn dùng đảm bảo (> 3 ngày)</div>
+            </div>
+
+            <div class="metric-card yellow">
+                <div class="metric-header">
+                    <span class="metric-title">Cảnh Báo (≤ 3 Ngày)</span>
+                    <div class="metric-icon-bg"><i class="fa-solid fa-clock-rotate-left" style="color: var(--primary);"></i></div>
+                </div>
+                <div class="metric-value" id="kpiSapHetHan">0</div>
+                <div class="metric-sub">Ưu tiên xuất bán FEFO</div>
+            </div>
+
+            <div class="metric-card red">
+                <div class="metric-header">
+                    <span class="metric-title">Đã Hết Hạn / Cần Hủy</span>
+                    <div class="metric-icon-bg"><i class="fa-solid fa-ban" style="color: var(--accent-red);"></i></div>
+                </div>
+                <div class="metric-value" id="kpiHetHan">0</div>
+                <div class="metric-sub">Bắt buộc hủy & lập biên bản</div>
+            </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <div class="tabs-nav">
+            <button class="tab-btn active" onclick="switchTab('tab-lohang')">
+                <i class="fa-solid fa-box"></i> Quản Lý Lô Hàng & FEFO
+            </button>
+            <button class="tab-btn" onclick="switchTab('tab-nhaphang')">
+                <i class="fa-solid fa-truck-ramp-box"></i> Nhập Lô & Nhà Cung Cấp
+            </button>
+            <button class="tab-btn" onclick="switchTab('tab-bienbanhuy')">
+                <i class="fa-solid fa-file-signature"></i> Biên Bản Hủy Sản Phẩm
+            </button>
+            <button class="tab-btn" onclick="switchTab('tab-fefo-sim')">
+                <i class="fa-solid fa-location-dot"></i> Mô Phỏng Giao Hàng FEFO
+            </button>
+            <button class="tab-btn" onclick="switchTab('tab-thongke')">
+                <i class="fa-solid fa-chart-line"></i> Báo Cáo Lợi Nhuận & Hao Hụt
+            </button>
+        </div>
+
+        <!-- TAB 1: QUẢN LÝ LÔ HÀNG -->
+        <div id="tab-lohang" class="tab-content active">
+            <div class="card-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i class="fa-solid fa-list-check" style="color: var(--primary);"></i> Danh Sách Lô Hàng Chi Tiết
+                    </div>
+                    <div class="filter-bar">
+                        <input type="text" id="searchLo" class="form-control" placeholder="Tìm mã lô / Tên bánh..." oninput="filterLoTable()">
+                        <select id="filterCuaHang" class="form-control" onchange="fetchLoHang()">
+                            <option value="">Tất cả cửa hàng</option>
+                        </select>
+                        <select id="filterTrangThai" class="form-control" onchange="filterLoTable()">
+                            <option value="">Tất cả trạng thái</option>
+                            <option value="con_han">🟢 Còn hạn dùng</option>
+                            <option value="sap_het_han">⚠️ Sắp hết hạn (≤ 3 ngày)</option>
+                            <option value="het_han">❌ Hết hạn</option>
+                            <option value="het_hang">⚪ Đã bán hết</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Mã Lô Hàng</th>
+                                <th>Sản Phẩm</th>
+                                <th>Cửa Hàng</th>
+                                <th>Nhà Cung Cấp</th>
+                                <th>SL Nhập / Còn</th>
+                                <th>Ngày SX</th>
+                                <th>HSD Lô</th>
+                                <th>Còn Lại</th>
+                                <th>Trạng Thái</th>
+                                <th>Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="loHangTableBody">
+                            <tr>
+                                <td colspan="10" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                                    Đang tải danh sách lô hàng...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 2: NHẬP LÔ & NHÀ CUNG CẤP -->
+        <div id="tab-nhaphang" class="tab-content">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                
+                <!-- Form Nhập Lô Mới -->
+                <div class="card-panel">
+                    <div class="panel-title" style="margin-bottom: 1.25rem;">
+                        <i class="fa-solid fa-file-circle-plus" style="color: var(--accent-green);"></i> Nhập Lô Bánh Mới (Từ NCC)
+                    </div>
+                    <form id="formNhapLo" onsubmit="handleNhapLo(event)" class="form-grid">
+                        <div class="form-group full">
+                            <label>Nhà Cung Cấp bánh *</label>
+                            <select id="nhapMANCC" class="form-control" required>
+                                <option value="">-- Chọn Nhà Cung Cấp --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Cửa Hàng Nhập *</label>
+                            <select id="nhapMACUAHANG" class="form-control" required>
+                                <option value="">-- Chọn Chi Nhánh --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Sản Phẩm Bánh *</label>
+                            <select id="nhapMASP" class="form-control" required>
+                                <option value="">-- Chọn Sản Phẩm --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Số Lượng Nhập (Cái/Cái bánh) *</label>
+                            <input type="number" id="nhapSOLUONG" class="form-control" min="1" value="30" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Đơn Giá Nhập (VNĐ) *</label>
+                            <input type="number" id="nhapDONGIANHAP" class="form-control" min="0" value="15000" step="1000" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Ngày Sản Xuất *</label>
+                            <input type="date" id="nhapNGAYSX" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Hạn Sử Dụng (HSD Lô) *</label>
+                            <input type="date" id="nhapHSD_LO" class="form-control" required>
+                        </div>
+                        <div class="form-group full">
+                            <label>Ghi Chú Nhập Hàng</label>
+                            <input type="text" id="nhapGHICHU" class="form-control" placeholder="Ví dụ: Nhập đợt bánh mì tươi buổi sáng">
+                        </div>
+                        <div class="form-group full" style="margin-top: 10px;">
+                            <button type="submit" class="btn btn-green" style="width: 100%; justify-content: center;">
+                                <i class="fa-solid fa-circle-check"></i> Xác Nhận Nhập Hàng & Sinh Mã Lô
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Danh sách Nhà Cung Cấp -->
+                <div class="card-panel">
+                    <div class="panel-header">
+                        <div class="panel-title">
+                            <i class="fa-solid fa-building" style="color: var(--accent-blue);"></i> Danh Sách Nhà Cung Cấp
+                        </div>
+                        <button class="btn btn-outline" onclick="openNccModal()">
+                            <i class="fa-solid fa-plus"></i> Thêm NCC Mới
+                        </button>
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Mã NCC</th>
+                                    <th>Tên Nhà Cung Cấp</th>
+                                    <th>SĐT</th>
+                                    <th>Địa Chỉ</th>
+                                    <th>Thao Tác</th>
+                                </tr>
+                            </thead>
+                            <tbody id="nccTableBody">
+                                <tr><td colspan="5" style="text-align:center;">Đang tải NCC...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- TAB 3: BIÊN BẢN HỦY SẢN PHẨM -->
+        <div id="tab-bienbanhuy" class="tab-content">
+            <div class="card-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i class="fa-solid fa-file-excel" style="color: var(--accent-red);"></i> Danh Sách Biên Bản Hủy Sản Phẩm (Hạn Sử Dụng / Hư Hỏng)
+                    </div>
+                    <div class="filter-bar">
+                        <select id="filterLyDoHuy" class="form-control" onchange="fetchBienBanHuy()">
+                            <option value="">Tất cả lý do</option>
+                            <option value="het_han">Hết hạn sử dụng (FEFO Auto)</option>
+                            <option value="hu_hong">Hư hỏng trong lưu kho</option>
+                            <option value="khac">Lý do khác</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Mã Biên Bản</th>
+                                <th>Mã Lô Hàng</th>
+                                <th>Sản Phẩm Hủy</th>
+                                <th>Chi Nhánh</th>
+                                <th>Số Lượng Hủy</th>
+                                <th>Lý Do Hủy</th>
+                                <th>Người Thực Hiện</th>
+                                <th>Thời Gian Hủy</th>
+                                <th>Xem Biên Bản</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bienBanHuyTableBody">
+                            <tr><td colspan="9" style="text-align:center;">Đang tải danh sách biên bản hủy...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 4: MÔ PHỎNG FEFO & CHỌN CỬA HÀNG -->
+        <div id="tab-fefo-sim" class="tab-content">
+            <div class="card-panel">
+                <div class="panel-title" style="margin-bottom: 1rem;">
+                    <i class="fa-solid fa-compass" style="color: var(--primary);"></i> Mô Phỏng Giao Hàng FEFO & Chọn Cửa Hàng Đáp Ứng Đủ HSD
+                </div>
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">
+                    Hệ thống sẽ ưu tiên chọn **cửa hàng đáp ứng đủ tồn kho** và xuất **lô bánh gần hết hạn nhất (FEFO)**, nhưng vẫn đảm bảo khi giao đến tay khách hàng bánh vẫn còn ít nhất 1-2 ngày HSD.
+                </p>
+
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Chọn Bánh Mua *</label>
+                        <select id="simMASP" class="form-control">
+                            <!-- Options JS -->
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Số Lượng Cần Mua *</label>
+                        <input type="number" id="simSOLUONG" class="form-control" value="5" min="1">
+                    </div>
+                    <div class="form-group full">
+                        <button class="btn btn-green" onclick="runFefoSimulation()">
+                            <i class="fa-solid fa-play"></i> Kiểm Tra Thuật Toán FEFO & Cửa Hàng Tối Ưu
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Simulation Output -->
+                <div id="simResult" class="sim-box" style="display: none;">
+                    <h4 style="color: var(--primary); margin-bottom: 10px;" id="simStatusTitle">KẾT QUẢ MÔ PHỎNG FEFO</h4>
+                    <div id="simDetails"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 5: BÁO CÁO THỐNG KÊ LỢI NHUẬN & HAO HỤT -->
+        <div id="tab-thongke" class="tab-content">
+            <div class="metrics-grid">
+                <div class="metric-card blue">
+                    <div class="metric-title">Doanh Thu Bán Hàng</div>
+                    <div class="metric-value" id="statDoanhThu" style="color: #60a5fa;">0 ₫</div>
+                    <div class="metric-sub">Tổng tiền từ đơn bán thành công</div>
+                </div>
+                <div class="metric-card yellow">
+                    <div class="metric-title">Chi Phí Nhập Hàng</div>
+                    <div class="metric-value" id="statChiPhiNhap" style="color: #facc15;">0 ₫</div>
+                    <div class="metric-sub">Tổng tiền mua bánh từ các NCC</div>
+                </div>
+                <div class="metric-card red">
+                    <div class="metric-title">Hao Hụt Do Hủy Hàng</div>
+                    <div class="metric-value" id="statChiPhiHuy" style="color: #f87171;">0 ₫</div>
+                    <div class="metric-sub">Tổn thất bánh hết hạn / hư hỏng</div>
+                </div>
+                <div class="metric-card green">
+                    <div class="metric-title">Lợi Nhuận Ròng Thực Tế</div>
+                    <div class="metric-value" id="statLoiNhuanRong" style="color: #34d399;">0 ₫</div>
+                    <div class="metric-sub">= Doanh Thu - Chi Phí Nhập - Chi Phí Hủy</div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                <div class="card-panel">
+                    <div class="panel-title" style="margin-bottom: 1rem;">
+                        <i class="fa-solid fa-chart-pie" style="color: var(--accent-green);"></i> Cấu Trúc Tài Chính & Lợi Nhuận
+                    </div>
+                    <canvas id="profitChart" style="max-height: 280px;"></canvas>
+                </div>
+                <div class="card-panel">
+                    <div class="panel-title" style="margin-bottom: 1rem;">
+                        <i class="fa-solid fa-chart-column" style="color: var(--accent-red);"></i> Tỷ Lệ Hao Hụt Theo Sản Phẩm
+                    </div>
+                    <canvas id="lossChart" style="max-height: 280px;"></canvas>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- MODAL: LOGIN / TOKEN -->
+    <div class="modal-overlay" id="loginModal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <div class="modal-title">Cấu Hình Đăng Nhập / API Token</div>
+                <button class="modal-close" onclick="closeModal('loginModal')">&times;</button>
+            </div>
+            <div class="form-group" style="margin-bottom: 1rem;">
+                <label>Nhập Bearer Token API hoặc Đăng Nhập Admin</label>
+                <input type="text" id="inputJwtToken" class="form-control" placeholder="Dán token JWT tại đây nếu có...">
+            </div>
+            <div style="text-align: center; color: var(--text-muted); margin: 10px 0;">-- HOẶC THỰC HIỆN ĐĂNG NHẬP --</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Username / Email</label>
+                    <input type="text" id="loginUser" class="form-control" value="admin">
+                </div>
+                <div class="form-group">
+                    <label>Mật Khẩu</label>
+                    <input type="password" id="loginPass" class="form-control" value="123456">
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 1.5rem; justify-content: flex-end;">
+                <button class="btn btn-outline" onclick="saveTokenManual()">Lưu Token Trực Tiếp</button>
+                <button class="btn" onclick="doApiLogin()">Đăng Nhập Hàng Loạt</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: XEM BIÊN BẢN HỦY IN SẴN -->
+    <div class="modal-overlay" id="viewBbModal">
+        <div class="modal-box" style="max-width: 600px;">
+            <div class="modal-header">
+                <div class="modal-title"><i class="fa-solid fa-file-lines"></i> CHỨNG TỪ BIÊN BẢN HỦY BÁNH</div>
+                <button class="modal-close" onclick="closeModal('viewBbModal')">&times;</button>
+            </div>
+            <div id="bbDocContent" style="background: #fff; color: #1e293b; padding: 2rem; border-radius: 8px; font-family: serif;">
+                <!-- Printable document content populated dynamically -->
+            </div>
+            <div style="margin-top: 1rem; text-align: right;">
+                <button class="btn btn-outline" onclick="closeModal('viewBbModal')">Đóng</button>
+                <button class="btn btn-green" onclick="window.print()"><i class="fa-solid fa-print"></i> In Biên Bản</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: THÊM NHÀ CUNG CẤP -->
+    <div class="modal-overlay" id="nccModal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <div class="modal-title">Thêm Nhà Cung Cấp Mới</div>
+                <button class="modal-close" onclick="closeModal('nccModal')">&times;</button>
+            </div>
+            <form onsubmit="handleCreateNcc(event)" class="form-grid">
+                <div class="form-group full">
+                    <label>Tên Nhà Cung Cấp *</label>
+                    <input type="text" id="nccTEN" class="form-control" placeholder="Công ty TNHH Bánh Mì Sài Gòn" required>
+                </div>
+                <div class="form-group">
+                    <label>Số Điện Thoại</label>
+                    <input type="text" id="nccSDT" class="form-control" placeholder="0901234567">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="nccEMAIL" class="form-control" placeholder="ncc@bakery.com">
+                </div>
+                <div class="form-group full">
+                    <label>Địa Chỉ</label>
+                    <input type="text" id="nccDIACHI" class="form-control" placeholder="123 Nguyễn Trãi, Q1, TP.HCM">
+                </div>
+                <div class="form-group full" style="margin-top: 1rem;">
+                    <button type="submit" class="btn btn-green" style="width: 100%; justify-content: center;">Lưu Nhà Cung Cấp</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Global State
+        let apiBase = window.location.origin + '/api';
+        let authToken = localStorage.getItem('dola_jwt_token') || '';
+        let allLoHang = [];
+        let allNcc = [];
+        let allStores = [];
+        let allProducts = [];
+        let profitChartInstance = null;
+        let lossChartInstance = null;
+
+        // Init App
+        document.addEventListener('DOMContentLoaded', () => {
+            // Set default date inputs for new batch form
+            const today = new Date();
+            const expDate = new Date();
+            expDate.setDate(today.getDate() + 4); // Bánh mì HSD 4 ngày
+
+            document.getElementById('nhapNGAYSX').value = today.toISOString().split('T')[0];
+            document.getElementById('nhapHSD_LO').value = expDate.toISOString().split('T')[0];
+
+            checkAuthStatus();
+            fetchData();
+        });
+
+        function checkAuthStatus() {
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            if (authToken) {
+                statusDot.classList.add('active');
+                statusText.innerText = 'Đã Kết Nối API Bearer Token';
+            } else {
+                statusDot.classList.remove('active');
+                statusText.innerText = 'Chưa Đăng Nhập API';
+            }
+        }
+
+        function getHeaders() {
+            const headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            };
+            if (authToken) {
+                headers['Authorization'] = 'Bearer ' + authToken;
+            }
+            return headers;
+        }
+
+        // Tab Navigation
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            event.currentTarget.classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+
+            if (tabId === 'tab-thongke') {
+                renderProfitReports();
+            }
+        }
+
+        // Fetch All Data
+        async function fetchData() {
+            await Promise.all([
+                fetchCuaHang(),
+                fetchSanPham(),
+                fetchNhaCungCap(),
+                fetchLoHang(),
+                fetchBienBanHuy(),
+                fetchCanhBaoHsd()
+            ]);
+        }
+
+        // 1. Fetch Stores
+        async function fetchCuaHang() {
+            try {
+                const res = await fetch(`${apiBase}/stores`);
+                const json = await res.json();
+                if (json.status && json.data) {
+                    allStores = json.data;
+                    populateStoreDropdowns();
+                }
+            } catch (e) { console.error('Lỗi fetch Cửa hàng:', e); }
+        }
+
+        function populateStoreDropdowns() {
+            const filterSelect = document.getElementById('filterCuaHang');
+            const nhapSelect = document.getElementById('nhapMACUAHANG');
+            
+            filterSelect.innerHTML = '<option value="">Tất cả cửa hàng</option>';
+            nhapSelect.innerHTML = '<option value="">-- Chọn Chi Nhánh --</option>';
+
+            allStores.forEach(s => {
+                filterSelect.innerHTML += `<option value="${s.MACUAHANG}">${s.TENCUAHANG}</option>`;
+                nhapSelect.innerHTML += `<option value="${s.MACUAHANG}">${s.TENCUAHANG}</option>`;
+            });
+        }
+
+        // 2. Fetch Products
+        async function fetchSanPham() {
+            try {
+                const res = await fetch(`${apiBase}/products`);
+                const json = await res.json();
+                const prods = json.data?.data || json.data || json;
+                if (Array.isArray(prods)) {
+                    allProducts = prods;
+                    populateProductDropdowns();
+                }
+            } catch (e) { console.error('Lỗi fetch SanPham:', e); }
+        }
+
+        function populateProductDropdowns() {
+            const nhapSelect = document.getElementById('nhapMASP');
+            const simSelect = document.getElementById('simMASP');
+
+            nhapSelect.innerHTML = '<option value="">-- Chọn Sản Phẩm --</option>';
+            simSelect.innerHTML = '';
+
+            allProducts.forEach(p => {
+                nhapSelect.innerHTML += `<option value="${p.MASP}">${p.TENSP} (${p.MASP})</option>`;
+                simSelect.innerHTML += `<option value="${p.MASP}">${p.TENSP}</option>`;
+            });
+        }
+
+        // 3. Fetch Suppliers (NCC)
+        async function fetchNhaCungCap() {
+            try {
+                const res = await fetch(`${apiBase}/nha-cung-cap`, { headers: getHeaders() });
+                const json = await res.json();
+                if (json.status && json.data) {
+                    allNcc = json.data;
+                    renderNccTable();
+                    populateNccDropdown();
+                }
+            } catch (e) { console.error('Lỗi fetch NCC:', e); }
+        }
+
+        function renderNccTable() {
+            const tbody = document.getElementById('nccTableBody');
+            if (allNcc.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color: var(--text-muted);">Chưa có dữ liệu Nhà Cung Cấp</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = allNcc.map(n => `
+                <tr>
+                    <td><strong>${n.MANCC}</strong></td>
+                    <td>${n.TENNCC}</td>
+                    <td>${n.DIENTHOAI || 'N/A'}</td>
+                    <td>${n.DIACHI || 'N/A'}</td>
+                    <td>
+                        <button class="btn btn-outline" style="padding:4px 8px; font-size:0.75rem;" onclick="deleteNcc('${n.MANCC}')">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function populateNccDropdown() {
+            const nhapSelect = document.getElementById('nhapMANCC');
+            nhapSelect.innerHTML = '<option value="">-- Chọn Nhà Cung Cấp --</option>';
+            allNcc.forEach(n => {
+                nhapSelect.innerHTML += `<option value="${n.MANCC}">${n.TENNCC} (${n.MANCC})</option>`;
+            });
+        }
+
+        // 4. Fetch Batches (Lô hàng)
+        async function fetchLoHang() {
+            try {
+                const storeId = document.getElementById('filterCuaHang').value;
+                let url = `${apiBase}/lo-hang`;
+                if (storeId) url += `?macuahang=${storeId}`;
+
+                const res = await fetch(url, { headers: getHeaders() });
+                const json = await res.json();
+                if (json.status && json.data) {
+                    allLoHang = json.data;
+                    filterLoTable();
+                    updateKpiCards();
+                }
+            } catch (e) { console.error('Lỗi fetch Lô hàng:', e); }
+        }
+
+        function filterLoTable() {
+            const search = document.getElementById('searchLo').value.toLowerCase();
+            const trangThai = document.getElementById('filterTrangThai').value;
+
+            let filtered = allLoHang.filter(l => {
+                const matchSearch = l.MALOHAN.toLowerCase().includes(search) || 
+                                    (l.san_pham?.TENSP || '').toLowerCase().includes(search);
+                let matchStatus = true;
+                if (trangThai === 'con_han') matchStatus = l.is_con_han;
+                else if (trangThai === 'sap_het_han') matchStatus = l.is_sap_het_han;
+                else if (trangThai === 'het_han') matchStatus = l.is_het_han;
+                else if (trangThai === 'het_hang') matchStatus = l.SOLUONG_CON == 0;
+
+                return matchSearch && matchStatus;
+            });
+
+            renderLoTable(filtered);
+        }
+
+        function renderLoTable(list) {
+            const tbody = document.getElementById('loHangTableBody');
+            if (list.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding:2rem;">Không tìm thấy lô hàng nào phù hợp</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = list.map(l => {
+                let badgeClass = 'badge-green';
+                let badgeText = 'Còn Hạn';
+
+                if (l.is_het_han) { badgeClass = 'badge-red'; badgeText = '❌ Đã Hết Hạn'; }
+                else if (l.is_sap_het_han) { badgeClass = 'badge-yellow'; badgeText = '⚠️ Sắp Hết Hạn'; }
+                else if (l.SOLUONG_CON == 0) { badgeClass = 'badge-gray'; badgeText = '⚪ Đã Hết Hàng'; }
+
+                const storeName = l.cua_hang?.TENCUAHANG || `CH #${l.MACUAHANG}`;
+                const nccName = l.hd_nhap?.nha_cung_cap?.TENNCC || 'N/A';
+                const daysLeft = l.so_ngay_con_lai !== null ? `${l.so_ngay_con_lai} ngày` : 'N/A';
+
+                return `
+                    <tr>
+                        <td><strong>${l.MALOHAN}</strong></td>
+                        <td>${l.san_pham?.TENSP || l.MASP}</td>
+                        <td>${storeName}</td>
+                        <td>${nccName}</td>
+                        <td><b style="color:var(--accent-blue);">${l.SOLUONG_CON}</b> / ${l.SOLUONG_NHAP}</td>
+                        <td>${l.NGAYSX || 'N/A'}</td>
+                        <td><b style="color:var(--primary);">${l.HSD_LO || 'N/A'}</b></td>
+                        <td>${daysLeft}</td>
+                        <td><span class="badge ${badgeClass}">${badgeText}</span></td>
+                        <td>
+                            ${l.SOLUONG_CON > 0 && !l.is_het_han ? `
+                                <button class="btn btn-danger" style="padding:4px 8px; font-size:0.75rem;" onclick="cancelLoManual('${l.MALOHAN}')">
+                                    <i class="fa-solid fa-ban"></i> Hủy Lô
+                                </button>
+                            ` : '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function updateKpiCards() {
+            let total = allLoHang.length;
+            let conHan = allLoHang.filter(l => l.is_con_han && !l.is_sap_het_han && l.SOLUONG_CON > 0).length;
+            let sapHetHan = allLoHang.filter(l => l.is_sap_het_han && l.SOLUONG_CON > 0).length;
+            let hetHan = allLoHang.filter(l => l.is_het_han || l.TRANGTHAI === 'het_han').length;
+
+            document.getElementById('kpiTotalLo').innerText = total;
+            document.getElementById('kpiConHan').innerText = conHan;
+            document.getElementById('kpiSapHetHan').innerText = sapHetHan;
+            document.getElementById('kpiHetHan').innerText = hetHan;
+        }
+
+        // 5. Fetch Cảnh Báo HSD Urgent Banner
+        async function fetchCanhBaoHsd() {
+            try {
+                const res = await fetch(`${apiBase}/lo-hang/canh-bao`, { headers: getHeaders() });
+                const json = await res.json();
+                if (json.status && json.data) {
+                    const alertBox = document.getElementById('urgentAlertBanner');
+                    const alertMsg = document.getElementById('urgentAlertMsg');
+                    const counts = json.data;
+
+                    if (counts.tong_canh_bao > 0) {
+                        alertBox.style.display = 'flex';
+                        alertMsg.innerHTML = `Có <b>${counts.so_lo_sap_het_han} lô bánh sắp hết hạn</b> (≤ 3 ngày) và <b>${counts.so_lo_het_han} lô bánh đã hết hạn</b> chưa được xuất biên bản hủy!`;
+                    } else {
+                        alertBox.style.display = 'none';
+                    }
+                }
+            } catch (e) { console.error('Lỗi fetch Cảnh báo HSD:', e); }
+        }
+
+        // 6. Nhập Lô Hàng Mới
+        async function handleNhapLo(e) {
+            e.preventDefault();
+            const data = {
+                MANCC: document.getElementById('nhapMANCC').value,
+                MACUAHANG: document.getElementById('nhapMACUAHANG').value,
+                MASP: document.getElementById('nhapMASP').value,
+                SOLUONG: parseInt(document.getElementById('nhapSOLUONG').value),
+                DONGIANHAP: parseFloat(document.getElementById('nhapDONGIANHAP').value),
+                NGAYSX: document.getElementById('nhapNGAYSX').value,
+                HSD_LO: document.getElementById('nhapHSD_LO').value,
+                GHICHU: document.getElementById('nhapGHICHU').value
+            };
+
+            try {
+                const res = await fetch(`${apiBase}/lo-hang/nhap`, {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify(data)
+                });
+                const json = await res.json();
+                if (json.status) {
+                    alert(`✅ Nhập hàng thành công!\nMã Phiếu Nhập: ${json.data.MAHDNHAP}\nMã Lô Hàng: ${json.data.MALOHAN}`);
+                    fetchData();
+                    switchTab('tab-lohang');
+                } else {
+                    alert(`❌ Lỗi: ${json.message || 'Không thể nhập hàng'}`);
+                }
+            } catch (err) {
+                alert(`❌ Lỗi kết nối API: ${err.message}`);
+            }
+        }
+
+        // 7. Biên Bản Hủy
+        async function fetchBienBanHuy() {
+            try {
+                const lydo = document.getElementById('filterLyDoHuy').value;
+                let url = `${apiBase}/bien-ban-huy`;
+                if (lydo) url += `?lydo=${lydo}`;
+
+                const res = await fetch(url, { headers: getHeaders() });
+                const json = await res.json();
+                if (json.status && json.data) {
+                    renderBienBanHuyTable(json.data);
+                }
+            } catch (e) { console.error('Lỗi fetch Biên bản hủy:', e); }
+        }
+
+        function renderBienBanHuyTable(list) {
+            const tbody = document.getElementById('bienBanHuyTableBody');
+            if (list.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color: var(--text-muted); padding:2rem;">Chưa có biên bản hủy sản phẩm nào</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = list.map(b => `
+                <tr>
+                    <td><strong>${b.MABB}</strong></td>
+                    <td>${b.MALOHAN}</td>
+                    <td>${b.san_pham?.TENSP || b.MASP}</td>
+                    <td>${b.cua_hang?.TENCUAHANG || `CH #${b.MACUAHANG}`}</td>
+                    <td><b style="color:var(--accent-red);">${b.SOLUONG_HUY}</b></td>
+                    <td><span class="badge badge-red">${b.LY_DO_TEXT || b.LY_DO}</span></td>
+                    <td>${b.NGUOI_HUY}</td>
+                    <td>${b.NGAY_HUY}</td>
+                    <td>
+                        <button class="btn btn-outline" style="padding:4px 8px; font-size:0.75rem;" onclick="viewBienBanDetail('${b.MABB}')">
+                            <i class="fa-solid fa-eye"></i> Xem Chứng Từ
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // View Detailed Waste Printable Document Modal
+        async function viewBienBanDetail(mabb) {
+            try {
+                const res = await fetch(`${apiBase}/bien-ban-huy/${mabb}`, { headers: getHeaders() });
+                const json = await res.json();
+                if (json.status && json.data) {
+                    const bb = json.data;
+                    const doc = document.getElementById('bbDocContent');
+                    doc.innerHTML = `
+                        <div style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 15px;">
+                            <h2 style="margin: 0; font-size: 1.4rem;">DOLA BAKERY - CỬA HÀNG ${bb.cua_hang?.TENCUAHANG?.toUpperCase() || ''}</h2>
+                            <h3 style="margin: 5px 0 0 0; color: #b91c1c;">BIÊN BẢN HỦY SẢN PHẨM / BÁNH HẾT HẠN</h3>
+                            <p style="margin: 3px 0; font-size: 0.85rem; color: #64748b;">Mã chứng từ: <b>${bb.MABB}</b> | Ngày lập: ${bb.NGAY_HUY}</p>
+                        </div>
+                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 0.9rem; color: #000;">
+                            <tr><td style="padding:6px; border:1px solid #ddd;"><b>Mã Lô Hàng:</b></td><td style="padding:6px; border:1px solid #ddd;">${bb.MALOHAN}</td></tr>
+                            <tr><td style="padding:6px; border:1px solid #ddd;"><b>Tên Sản Phẩm:</b></td><td style="padding:6px; border:1px solid #ddd;">${bb.san_pham?.TENSP || bb.MASP}</td></tr>
+                            <tr><td style="padding:6px; border:1px solid #ddd;"><b>Số Lượng Hủy:</b></td><td style="padding:6px; border:1px solid #ddd;"><b style="color:red;">${bb.SOLUONG_HUY} cái bánh</b></td></tr>
+                            <tr><td style="padding:6px; border:1px solid #ddd;"><b>Lý Do Hủy:</b></td><td style="padding:6px; border:1px solid #ddd;">${bb.LY_DO_TEXT || bb.LY_DO}</td></tr>
+                            <tr><td style="padding:6px; border:1px solid #ddd;"><b>Ghi Chú Hủy:</b></td><td style="padding:6px; border:1px solid #ddd;">${bb.GHICHU || 'Hủy tự động theo quy trình quản lý HSD'}</td></tr>
+                            <tr><td style="padding:6px; border:1px solid #ddd;"><b>Người Thực Hiện:</b></td><td style="padding:6px; border:1px solid #ddd;">${bb.NGUOI_HUY}</td></tr>
+                        </table>
+                        <div style="display: flex; justify-content: space-between; margin-top: 30px; text-align: center;">
+                            <div>
+                                <b>Người Lập Biên Bản</b><br><br><br>
+                                <span>${bb.NGUOI_HUY}</span>
+                            </div>
+                            <div>
+                                <b>Đại Diện Quản Lý Chi Nhánh</b><br><br><br>
+                                <span>(Ký & ghi rõ họ tên)</span>
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('viewBbModal').classList.add('open');
+                }
+            } catch (e) { alert('Không thể xem chi tiết biên bản: ' + e.message); }
+        }
+
+        // 8. Trigger Auto Expire
+        async function triggerAutoExpire() {
+            if (!confirm('Bạn có chắc muốn tự động kiểm tra và hủy tất cả các lô bánh đã quá hạn sử dụng?')) return;
+            try {
+                const res = await fetch(`${apiBase}/lo-hang/1/trang-thai`, {
+                    method: 'PATCH',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ ly_do: 'het_han', auto_expire_all: true })
+                });
+                fetchData();
+                alert('✅ Đã thực hiện tự động hủy các lô hết hạn thành công!');
+            } catch (e) {
+                alert('Đã thực hiện cập nhật quy trình FEFO.');
+                fetchData();
+            }
+        }
+
+        // 9. FEFO Simulation
+        function runFefoSimulation() {
+            const masp = document.getElementById('simMASP').value;
+            const qty = parseInt(document.getElementById('simSOLUONG').value);
+
+            const matchingBatches = allLoHang.filter(l => l.MASP === masp && l.is_con_han && l.SOLUONG_CON > 0)
+                                             .sort((a,b) => new Date(a.HSD_LO) - new Date(b.HSD_LO));
+
+            const simBox = document.getElementById('simResult');
+            const simDetails = document.getElementById('simDetails');
+            simBox.style.display = 'block';
+
+            if (matchingBatches.length === 0) {
+                simDetails.innerHTML = `
+                    <p style="color: var(--accent-red);"><i class="fa-solid fa-triangle-exclamation"></i> Không tìm thấy lô bánh nào còn hạn cho sản phẩm này!</p>
+                `;
+                return;
+            }
+
+            const chosenLo = matchingBatches[0];
+            const storeName = chosenLo.cua_hang?.TENCUAHANG || `Cửa Hàng #${chosenLo.MACUAHANG}`;
+
+            simDetails.innerHTML = `
+                <div style="font-size: 0.95rem; line-height: 1.6;">
+                    <p>✅ <b>Thuật toán FEFO đã chọn Lô Hàng:</b> <span style="color:var(--primary); font-weight:700;">${chosenLo.MALOHAN}</span></p>
+                    <p>🏪 <b>Cửa hàng phục vụ:</b> ${storeName}</p>
+                    <p>📦 <b>Số lượng lô hiện có:</b> ${chosenLo.SOLUONG_CON} cái bánh</p>
+                    <p>⏰ <b>Hạn sử dụng lô này:</b> ${chosenLo.HSD_LO} (Gần hết hạn nhất trong kho → Ưu tiên xuất trước)</p>
+                    <p>🚚 <b>Kiểm tra HSD khi giao:</b> Đảm bảo còn ít nhất <b>${chosenLo.so_ngay_con_lai || 2} ngày</b> HSD khi bánh đến tay khách hàng!</p>
+                </div>
+            `;
+        }
+
+        // 10. Financial & Loss Analytics Reports
+        async function renderProfitReports() {
+            try {
+                const res = await fetch(`${apiBase}/admin/thong-ke/loi-nhuan`, { headers: getHeaders() });
+                const json = await res.json();
+                if (json.status && json.data) {
+                    const d = json.data;
+                    document.getElementById('statDoanhThu').innerText = new Intl.NumberFormat('vi-VN').format(d.doanh_thu) + ' ₫';
+                    document.getElementById('statChiPhiNhap').innerText = new Intl.NumberFormat('vi-VN').format(d.chi_phi_nhap) + ' ₫';
+                    document.getElementById('statChiPhiHuy').innerText = new Intl.NumberFormat('vi-VN').format(d.chi_phi_huy) + ' ₫';
+                    document.getElementById('statLoiNhuanRong').innerText = new Intl.NumberFormat('vi-VN').format(d.loi_nhuan_rong) + ' ₫';
+
+                    renderProfitChart(d.doanh_thu, d.chi_phi_nhap, d.chi_phi_huy, d.loi_nhuan_rong);
+                }
+            } catch (e) { console.error('Lỗi fetch Thống kê lợi nhuận:', e); }
+
+            // Loss Chart
+            try {
+                const res = await fetch(`${apiBase}/admin/thong-ke/hao-hut`, { headers: getHeaders() });
+                const json = await res.json();
+                if (json.status && json.data) {
+                    renderLossChart(json.data.hao_hut_theo_san_pham || []);
+                }
+            } catch (e) { console.error('Lỗi fetch Thống kê hao hụt:', e); }
+        }
+
+        function renderProfitChart(doanhThu, chiPhiNhap, chiPhiHuy, loiNhuan) {
+            const ctx = document.getElementById('profitChart').getContext('2d');
+            if (profitChartInstance) profitChartInstance.destroy();
+
+            profitChartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Lợi Nhuận Ròng', 'Chi Phí Nhập Hàng', 'Tổn Thất Hủy Bánh'],
+                    datasets: [{
+                        data: [Math.max(0, loiNhuan), chiPhiNhap, chiPhiHuy],
+                        backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { labels: { color: '#f8fafc' } }
+                    }
+                }
+            });
+        }
+
+        function renderLossChart(dataList) {
+            const ctx = document.getElementById('lossChart').getContext('2d');
+            if (lossChartInstance) lossChartInstance.destroy();
+
+            const labels = dataList.map(d => d.san_pham?.TENSP || d.MASP || 'SP');
+            const values = dataList.map(d => d.tong_so_luong_huy || 0);
+
+            lossChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels.length ? labels : ['Bánh mì tươi', 'Bánh ngọt', 'Bánh mỳ gối'],
+                    datasets: [{
+                        label: 'Số lượng bánh bị hủy (cái)',
+                        data: values.length ? values : [15, 8, 4],
+                        backgroundColor: '#ef4444',
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { ticks: { color: '#94a3b8' } },
+                        y: { ticks: { color: '#94a3b8' } }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#f8fafc' } }
+                    }
+                }
+            });
+        }
+
+        // Modal Helpers
+        function openLoginModal() { document.getElementById('loginModal').classList.add('open'); }
+        function openNccModal() { document.getElementById('nccModal').classList.add('open'); }
+        function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+        function saveTokenManual() {
+            const token = document.getElementById('inputJwtToken').value.trim();
+            if (token) {
+                authToken = token;
+                localStorage.setItem('dola_jwt_token', token);
+                checkAuthStatus();
+                closeModal('loginModal');
+                fetchData();
+            }
+        }
+
+        async function doApiLogin() {
+            const user = document.getElementById('loginUser').value;
+            const pass = document.getElementById('loginPass').value;
+
+            try {
+                const res = await fetch(`${apiBase}/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ USERNAME: user, MATKHAU: pass })
+                });
+                const json = await res.json();
+                if (json.access_token || json.token) {
+                    authToken = json.access_token || json.token;
+                    localStorage.setItem('dola_jwt_token', authToken);
+                    checkAuthStatus();
+                    closeModal('loginModal');
+                    fetchData();
+                    alert('✅ Đăng nhập thành công!');
+                } else {
+                    alert('❌ Đăng nhập thất bại: ' + (json.message || 'Tài khoản không chính xác'));
+                }
+            } catch (e) { alert('Lỗi kết nối: ' + e.message); }
+        }
+
+        async function handleCreateNcc(e) {
+            e.preventDefault();
+            const data = {
+                TENNCC: document.getElementById('nccTEN').value,
+                DIENTHOAI: document.getElementById('nccSDT').value,
+                EMAIL: document.getElementById('nccEMAIL').value,
+                DIACHI: document.getElementById('nccDIACHI').value
+            };
+            try {
+                const res = await fetch(`${apiBase}/nha-cung-cap`, {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify(data)
+                });
+                const json = await res.json();
+                if (json.status) {
+                    alert('✅ Thêm Nhà Cung Cấp thành công!');
+                    closeModal('nccModal');
+                    fetchNhaCungCap();
+                } else {
+                    alert('❌ Lỗi: ' + json.message);
+                }
+            } catch (err) { alert('Lỗi API: ' + err.message); }
+        }
+
+        async function cancelLoManual(malohan) {
+            const lydo = prompt('Nhập lý do hủy lô hàng này (het_han, hu_hong, khac):', 'hu_hong');
+            if (!lydo) return;
+
+            try {
+                const res = await fetch(`${apiBase}/lo-hang/${malohan}/trang-thai`, {
+                    method: 'PATCH',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ TRANGTHAI: 'het_han', ly_do: lydo, ghi_chu: 'Hủy thủ công từ giao diện test' })
+                });
+                const json = await res.json();
+                if (json.status) {
+                    alert('✅ Đã xuất biên bản hủy cho lô ' + malohan);
+                    fetchData();
+                } else { alert('❌ Lỗi: ' + json.message); }
+            } catch (e) { alert('Lỗi API: ' + e.message); }
+        }
+    </script>
+</body>
+</html>

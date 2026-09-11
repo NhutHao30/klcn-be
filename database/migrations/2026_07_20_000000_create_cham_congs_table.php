@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\Schema;
 return new class () extends Migration {
     public function up(): void
     {
-        Schema::create('chamcong', function (Blueprint $table) {
+        if (!Schema::hasTable('chamcong')) {
+            Schema::create('chamcong', function (Blueprint $table) {
             $table->id();
             $table->string('USERNAME', 50);
             $table->date('NGAYCHAMCONG');
@@ -19,6 +20,7 @@ return new class () extends Migration {
             // Một nhân viên chỉ có 1 bản ghi chấm công mỗi ngày
             $table->unique(['USERNAME', 'NGAYCHAMCONG']);
         });
+        }
     }
 
     public function down(): void

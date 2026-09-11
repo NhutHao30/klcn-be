@@ -6,24 +6,25 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::table('hdban', function (Blueprint $table) {
-            $table->string('MA_VOUCHER')->nullable()->after('MACUAHANG');
-            $table->integer('SOTIEN_GIAM_VOUCHER')->default(0)->after('MA_VOUCHER');
+            if (!Schema::hasColumn('hdban', 'MA_VOUCHER')) {
+                $table->string('MA_VOUCHER', 50)->nullable();
+            }
+            if (!Schema::hasColumn('hdban', 'SOTIEN_GIAM_VOUCHER')) {
+                $table->integer('SOTIEN_GIAM_VOUCHER')->default(0);
+            }
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::table('hdban', function (Blueprint $table) {
-            $table->dropColumn(['MA_VOUCHER', 'SOTIEN_GIAM_VOUCHER']);
+            $cols = [];
+            if (Schema::hasColumn('hdban', 'MA_VOUCHER')) $cols[] = 'MA_VOUCHER';
+            if (Schema::hasColumn('hdban', 'SOTIEN_GIAM_VOUCHER')) $cols[] = 'SOTIEN_GIAM_VOUCHER';
+            if (!empty($cols)) $table->dropColumn($cols);
         });
     }
 };

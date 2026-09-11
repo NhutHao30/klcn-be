@@ -10,13 +10,15 @@ return new class () extends Migration {
      */
     public function up(): void
     {
-        Schema::create('internal_messages', function (Blueprint $table) {
+        if (!Schema::hasTable('internal_messages')) {
+            Schema::create('internal_messages', function (Blueprint $table) {
             $table->id();
             $table->string('channel_name'); // VD: 'branch_1', 'managers'
             $table->string('sender_username');
             $table->text('message');
             $table->timestamps();
         });
+        }
     }
 
     /**

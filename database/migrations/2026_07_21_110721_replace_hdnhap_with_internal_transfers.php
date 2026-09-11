@@ -13,7 +13,8 @@ return new class () extends Migration {
         Schema::dropIfExists('chitiethdnhap');
         Schema::dropIfExists('hdnhap');
 
-        Schema::create('yeucau_nhaphang', function (Blueprint $table) {
+        if (!Schema::hasTable('yeucau_nhaphang')) {
+            Schema::create('yeucau_nhaphang', function (Blueprint $table) {
             $table->id('ID_YEUCAU');
             $table->unsignedBigInteger('MACUAHANG_YEUCAU');
             $table->string('NGUOITAO', 255);
@@ -23,8 +24,10 @@ return new class () extends Migration {
 
             $table->foreign('MACUAHANG_YEUCAU')->references('MACUAHANG')->on('cuahang');
         });
+        }
 
-        Schema::create('chitiet_yeucau', function (Blueprint $table) {
+        if (!Schema::hasTable('chitiet_yeucau')) {
+            Schema::create('chitiet_yeucau', function (Blueprint $table) {
             $table->id('ID_CHITIET');
             $table->unsignedBigInteger('ID_YEUCAU');
             $table->string('MASP', 10);
@@ -34,8 +37,10 @@ return new class () extends Migration {
             $table->foreign('ID_YEUCAU')->references('ID_YEUCAU')->on('yeucau_nhaphang')->onDelete('cascade');
             $table->foreign('MASP')->references('MASP')->on('sanpham');
         });
+        }
 
-        Schema::create('phieu_dieuchuyen', function (Blueprint $table) {
+        if (!Schema::hasTable('phieu_dieuchuyen')) {
+            Schema::create('phieu_dieuchuyen', function (Blueprint $table) {
             $table->id('ID_PHIEU');
             $table->unsignedBigInteger('MACUAHANG_XUAT');
             $table->unsignedBigInteger('MACUAHANG_NHAP');
@@ -54,8 +59,10 @@ return new class () extends Migration {
             $table->foreign('MACUAHANG_NHAP')->references('MACUAHANG')->on('cuahang');
             $table->foreign('ID_YEUCAU')->references('ID_YEUCAU')->on('yeucau_nhaphang');
         });
+        }
 
-        Schema::create('chitiet_dieuchuyen', function (Blueprint $table) {
+        if (!Schema::hasTable('chitiet_dieuchuyen')) {
+            Schema::create('chitiet_dieuchuyen', function (Blueprint $table) {
             $table->id('ID_CHITIET');
             $table->unsignedBigInteger('ID_PHIEU');
             $table->string('MASP', 10);
@@ -67,6 +74,7 @@ return new class () extends Migration {
             $table->foreign('ID_PHIEU')->references('ID_PHIEU')->on('phieu_dieuchuyen')->onDelete('cascade');
             $table->foreign('MASP')->references('MASP')->on('sanpham');
         });
+        }
     }
 
     /**
@@ -80,7 +88,8 @@ return new class () extends Migration {
         Schema::dropIfExists('yeucau_nhaphang');
 
         // Recreate hdnhap and chitiethdnhap (simplified version just for rollback)
-        Schema::create('hdnhap', function (Blueprint $table) {
+        if (!Schema::hasTable('hdnhap')) {
+            Schema::create('hdnhap', function (Blueprint $table) {
             $table->id('MAHDN');
             $table->string('MANCC', 10)->nullable();
             $table->date('NGAYNHAP')->nullable();
@@ -88,8 +97,10 @@ return new class () extends Migration {
             $table->string('MANV', 20)->nullable();
             $table->timestamps();
         });
+        }
 
-        Schema::create('chitiethdnhap', function (Blueprint $table) {
+        if (!Schema::hasTable('chitiethdnhap')) {
+            Schema::create('chitiethdnhap', function (Blueprint $table) {
             $table->unsignedBigInteger('MAHDN');
             $table->string('MASP', 10);
             $table->integer('SOLUONG')->default(0);
@@ -97,5 +108,6 @@ return new class () extends Migration {
             $table->decimal('THANHTIEN', 18, 2)->default(0);
             $table->primary(['MAHDN', 'MASP']);
         });
+        }
     }
 };

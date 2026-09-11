@@ -6,24 +6,31 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::table('sanpham', function (Blueprint $table) {
-            $table->boolean('IS_NEW')->default(false)->after('MALOAI');
-            $table->decimal('PHAN_TRAM_GIAM', 5, 2)->default(0)->after('IS_NEW');
+            if (!Schema::hasColumn('sanpham', 'IS_NEW')) {
+                $table->boolean('IS_NEW')->default(false)->after('MALOAI');
+            }
+            if (!Schema::hasColumn('sanpham', 'PHAN_TRAM_GIAM')) {
+                $table->decimal('PHAN_TRAM_GIAM', 5, 2)->default(0)->after('IS_NEW');
+            }
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::table('sanpham', function (Blueprint $table) {
-            $table->dropColumn(['IS_NEW', 'PHAN_TRAM_GIAM']);
+            $colsToDrop = [];
+            if (Schema::hasColumn('sanpham', 'IS_NEW')) {
+                $colsToDrop[] = 'IS_NEW';
+            }
+            if (Schema::hasColumn('sanpham', 'PHAN_TRAM_GIAM')) {
+                $colsToDrop[] = 'PHAN_TRAM_GIAM';
+            }
+            if (!empty($colsToDrop)) {
+                $table->dropColumn($colsToDrop);
+            }
         });
     }
 };

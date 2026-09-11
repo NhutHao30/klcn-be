@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\Schema;
 return new class () extends Migration {
     public function up(): void
     {
-        Schema::create('diachi', function (Blueprint $table) {
+        if (!Schema::hasTable('diachi')) {
+            Schema::create('diachi', function (Blueprint $table) {
             $table->id();
             $table->string('MAKH', 100);
             $table->string('DIACHI', 255)->nullable();
@@ -16,6 +17,7 @@ return new class () extends Migration {
 
             $table->foreign('MAKH')->references('MAKH')->on('khachhang');
         });
+        }
     }
 
     public function down(): void

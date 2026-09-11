@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\Schema;
 return new class () extends Migration {
     public function up(): void
     {
-        Schema::create('chitiethdban', function (Blueprint $table) {
+        if (!Schema::hasTable('chitiethdban')) {
+            Schema::create('chitiethdban', function (Blueprint $table) {
             $table->string('MAHD', 10);
             $table->string('MASP', 10);
             $table->integer('SOLUONG')->default(0);
@@ -19,6 +20,7 @@ return new class () extends Migration {
             $table->foreign('MAHD')->references('MAHD')->on('hdban');
             $table->foreign('MASP')->references('MASP')->on('sanpham');
         });
+        }
     }
 
     public function down(): void

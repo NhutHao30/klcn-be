@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\NhatKyHeThongController;
 use App\Http\Controllers\Api\GoogleAuthController;
+use App\Http\Controllers\Api\DatHangTruocController;
 use Illuminate\Support\Facades\Broadcast;
 
 Broadcast::routes(['middleware' => ['auth:api']]);
@@ -124,7 +125,9 @@ Route::post('/contact', [\App\Http\Controllers\Api\ContactController::class, 'se
 
 // Voucher Customer
 Route::post('/vouchers/apply', [\App\Http\Controllers\Api\OrderController::class, 'applyVoucher']);
+Route::post('/vouchers/suggest-for-order', [\App\Http\Controllers\Api\VoucherController::class, 'suggestForOrder']);
 Route::get('/products/{id}', [ProductController::class, 'show']);
+Route::get('/products/{id}/price-history', [ProductController::class, 'getPriceHistory']);
 Route::get('/products/{id}/reviews', [\App\Http\Controllers\Api\ReviewController::class, 'getProductReviews']);
 // ==========================================
 // 🔒 API BẢO MẬT (ĐÃ ĐĂNG NHẬP)
@@ -134,6 +137,9 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/profile/update', [AuthController::class, 'updateProfile']);
+    Route::post('/profile/chu-ky', [\App\Http\Controllers\Api\SignatureController::class, 'updateProfileSignature']);
+    Route::get('/chu-ky/danh-sach-cho-ky', [\App\Http\Controllers\Api\SignatureController::class, 'getPendingSignatures']);
+    Route::post('/chu-ky/xac-nhan', [\App\Http\Controllers\Api\SignatureController::class, 'signDocument']);
 
     // Đánh giá sản phẩm (Review)
     Route::post('/reviews', [\App\Http\Controllers\Api\ReviewController::class, 'storeReview']);
@@ -174,8 +180,6 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         // 📋 Nhật ký hệ thống
         Route::get('/admin/nhat-ky-he-thong', [NhatKyHeThongController::class, 'index']);
 
-        // Audit Logs (Nâng cao)
-        Route::get('/admin/audit-logs', [\App\Http\Controllers\Api\AuditLogController::class, 'index']);
 
         // Khuyen Mai / Voucher Admin API
         Route::get('/admin/vouchers', [\App\Http\Controllers\Api\VoucherController::class, 'index']);
@@ -205,6 +209,9 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         Route::get('/admin/reports/revenue', [AdminController::class, 'revenueReport']);
         Route::get('/admin/reports/bi-dashboard', [AdminController::class, 'biDashboard']);
         Route::get('/admin/reports/top-products', [AdminController::class, 'topProducts']);
+
+        // Audit Logs (Nâng cao)
+        Route::get('/admin/audit-logs', [\App\Http\Controllers\Api\AuditLogController::class, 'index']);
 
         // Quản lý Nhân sự
         Route::get('/admin/users', [AdminController::class, 'listUsers']);
@@ -250,10 +257,20 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         Route::put('/hoa-don/{id}', [\App\Http\Controllers\Api\OrderController::class, 'updateStatus']);
 
         // Quản lý Khách hàng (Thêm, Sửa, Xóa)
+        Route::get('/customers/lookup', [\App\Http\Controllers\Api\CustomerController::class, 'lookupBySdt']);
         Route::post('/customers', [\App\Http\Controllers\Api\CustomerController::class, 'store']);
         Route::put('/customers/{id}', [\App\Http\Controllers\Api\CustomerController::class, 'update']);
         Route::delete('/customers/{id}', [\App\Http\Controllers\Api\CustomerController::class, 'destroy']);
         Route::put('/customers/{id}/restore', [\App\Http\Controllers\Api\CustomerController::class, 'restore']);
+
+        // ============================================
+        // 📋 Đặt Hàng Trước (Pre-Order)
+        // ============================================
+        Route::get('/admin/pre-orders', [DatHangTruocController::class, 'index']);
+        Route::post('/admin/pre-orders', [DatHangTruocController::class, 'store']);
+        Route::get('/admin/pre-orders/{id}', [DatHangTruocController::class, 'show']);
+        Route::put('/admin/pre-orders/{id}/status', [DatHangTruocController::class, 'updateStatus']);
+        Route::post('/admin/pre-orders/{id}/complete-payment', [DatHangTruocController::class, 'completePayment']);
     });
 
     // ==========================================
@@ -287,9 +304,75 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         Route::post('/cart/checkout', [\App\Http\Controllers\Api\CartController::class, 'checkoutOnline'])->middleware(['throttle:orders', 'idempotency']);
         Route::post('/vouchers/apply', [\App\Http\Controllers\Api\OrderController::class, 'applyVoucher']);
 
+        // Voucher Wallet
+        Route::post('/vouchers/{id}/collect', [\App\Http\Controllers\Api\VoucherController::class, 'collectVoucher']);
+        Route::get('/vouchers/my-wallet', [\App\Http\Controllers\Api\VoucherController::class, 'getMyWallet']);
+
         // Xem đơn hàng của tôi
         Route::get('/my-orders', [\App\Http\Controllers\Api\OrderController::class, 'myOrders']);
         Route::get('/my-orders/{id}/chi-tiet', [\App\Http\Controllers\Api\OrderController::class, 'getMyOrderDetails']);
         Route::post('/my-orders/{id}/cancel', [\App\Http\Controllers\Api\OrderController::class, 'customerCancelOrder']);
+    });
+
+    // ==========================================
+    // 🏭 QUẢN LÝ LÔ HÀNG & NHÀ CUNG CẤP (Quyền = 0, 1, 2)
+    // ==========================================
+    Route::middleware(['role:0,1,2', 'log.activity'])->group(function () {
+
+        // ── Nhà Cung Cấp ──────────────────────────────────────────────────
+        Route::prefix('nha-cung-cap')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Api\NhaCungCapController::class, 'index']);
+            Route::get('/{id}', [\App\Http\Controllers\Api\NhaCungCapController::class, 'show']);
+            Route::post('/', [\App\Http\Controllers\Api\NhaCungCapController::class, 'store']);
+            Route::put('/{id}', [\App\Http\Controllers\Api\NhaCungCapController::class, 'update']);
+            Route::delete('/{id}', [\App\Http\Controllers\Api\NhaCungCapController::class, 'destroy']);
+        });
+
+        // ── Lô Hàng ───────────────────────────────────────────────────────
+        Route::prefix('lo-hang')->group(function () {
+            // Danh sách lô (có filter: masp, macuahang, trangthai, hsd_from, hsd_to, sap_het_han, search)
+            Route::get('/', [\App\Http\Controllers\Api\LoHangController::class, 'index']);
+
+            // 🔴 Dashboard cảnh báo HSD — đặt trước {malohan} để không bị conflict
+            Route::get('/canh-bao', [\App\Http\Controllers\Api\LoHangController::class, 'canhBao']);
+
+            // Lịch sử lô của 1 sản phẩm
+            Route::get('/san-pham/{masp}', [\App\Http\Controllers\Api\LoHangController::class, 'loHangSanPham']);
+
+            // Nhập lô hàng mới (tích hợp phiếu nhập HdNhap)
+            Route::post('/nhap', [\App\Http\Controllers\Api\LoHangController::class, 'nhapLo']);
+
+            // Chi tiết lô
+            Route::get('/{malohan}', [\App\Http\Controllers\Api\LoHangController::class, 'show']);
+
+            // Hủy lô thủ công (tạo biên bản hủy)
+            Route::patch('/{malohan}/trang-thai', [\App\Http\Controllers\Api\LoHangController::class, 'updateTrangThai']);
+        });
+
+        // ── Biên Bản Hủy ──────────────────────────────────────────────────
+        Route::prefix('bien-ban-huy')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Api\BienBanHuyController::class, 'index']);
+            Route::get('/thong-ke', [\App\Http\Controllers\Api\BienBanHuyController::class, 'thongKe']);
+            Route::get('/{id}', [\App\Http\Controllers\Api\BienBanHuyController::class, 'show']);
+        });
+    });
+
+    // ==========================================
+    // 📊 THỐNG KÊ NÂNG CAO (Quyền = 0, 1)
+    // ==========================================
+    Route::middleware(['role:0,1', 'log.activity'])->prefix('admin')->group(function () {
+
+        // Lợi nhuận thực tế = Doanh thu - Chi phí nhập - Chi phí hủy
+        // Params: thang, nam, macuahang (optional cho role 0)
+        Route::get('/thong-ke/loi-nhuan', [AdminController::class, 'thongKeLoiNhuan']);
+
+        // Phân tích nhập hàng: chi phí, top SP nhập, nhập theo NCC
+        Route::get('/thong-ke/nhap-hang', [AdminController::class, 'thongKeNhapHang']);
+
+        // Phân tích hao hụt: % lô hết hạn, lãng phí theo SP
+        Route::get('/thong-ke/hao-hut', [AdminController::class, 'thongKeHaoHut']);
+
+        // Cảnh báo HSD tổng hợp cho dashboard admin
+        Route::get('/thong-ke/canh-bao-hsd', [AdminController::class, 'canhBaoHSD']);
     });
 });

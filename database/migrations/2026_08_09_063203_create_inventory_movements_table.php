@@ -11,7 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('inventory_movements', function (Blueprint $table) {
+        if (!Schema::hasTable('inventory_movements')) {
+            Schema::create('inventory_movements', function (Blueprint $table) {
             $table->id();
             $table->string('MASP', 50);
             $table->unsignedBigInteger('MACUAHANG');
@@ -36,6 +37,7 @@ return new class extends Migration
             $table->index(['reference_type', 'reference_id']);
             $table->index('created_at');
         });
+        }
     }
 
     /**

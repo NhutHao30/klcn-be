@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\Schema;
 return new class () extends Migration {
     public function up(): void
     {
-        Schema::create('hdban', function (Blueprint $table) {
+        if (!Schema::hasTable('hdban')) {
+            Schema::create('hdban', function (Blueprint $table) {
             $table->string('MAHD', 10)->primary();
             $table->date('NGAYLAP')->useCurrent();
             $table->string('MAVANDON', 50)->nullable();
@@ -25,6 +26,7 @@ return new class () extends Migration {
 
             $table->foreign('MAKH')->references('MAKH')->on('khachhang');
         });
+        }
     }
 
     public function down(): void

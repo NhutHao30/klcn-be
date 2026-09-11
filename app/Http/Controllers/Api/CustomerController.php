@@ -54,12 +54,17 @@ class CustomerController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
-            'hoTen' => 'required|string',
-            'sdt' => 'required|string',
-        ]);
+        $hoTen = $request->input('hoTen', $request->input('HOTEN'));
+        $sdt = $request->input('sdt', $request->input('SDT'));
+        $ngaySinh = $request->input('ngaySinh', $request->input('NGAYSINH'));
+        $gioiTinh = $request->input('gioiTinh', $request->input('GioiTinh', $request->input('GIOITINH')));
+        $diaChi = $request->input('diaChi', $request->input('DIACHI'));
 
-        $maCuaHang = $request->macuahang ?? 1;
+        if (!$hoTen || !$sdt) {
+            return response()->json(['message' => 'Họ tên và Số điện thoại là bắt buộc.'], 422);
+        }
+
+        $maCuaHang = $request->input('macuahang', $request->input('MACUAHANG', 1));
 
         // Nếu admin/staff đang login, lấy MACUAHANG của họ
         $user = Auth::guard('api')->user();
@@ -73,17 +78,18 @@ class CustomerController extends Controller
         $maKH = 'KH' . substr(time(), -8);
         $kh = KhachHang::create([
             'MAKH' => $maKH,
-            'HOTEN' => $request->hoTen,
-            'SDT' => $request->sdt,
-            'NGAYSINH' => $request->ngaySinh,
-            'GioiTinh' => $request->gioiTinh,
-            'DIACHI' => $request->diaChi,
+            'HOTEN' => $hoTen,
+            'SDT' => $sdt,
+            'NGAYSINH' => $ngaySinh,
+            'GioiTinh' => $gioiTinh,
+            'DIACHI' => $diaChi,
             'DIEMTICHLUY' => 0,
             'MACUAHANG' => $maCuaHang
         ]);
 
         return response()->json($kh);
     }
+
 
     public function update(Request $request, $id)
     {
@@ -121,5 +127,33 @@ class CustomerController extends Controller
             return response()->json(['message' => 'Đã khôi phục tài khoản khách hàng']);
         }
         return response()->json(['error' => 'Không tìm thấy khách hàng'], 404);
+    }
+
+    /**
+     * Tra cứu khách hàng theo SĐT — dùng cho form đặt hàng trước
+     * GET /customers/lookup?sdt=09xxxxxxxx
+     */
+    public function lookupBySdt(Request $request)
+    {
+        $sdt = $request->input('sdt');
+        if (!$sdt || strlen(trim($sdt)) < 9) {
+            return response()->json(['found' => false, 'customer' => null]);
+        }
+
+        $kh = KhachHang::where('SDT', $sdt)->first();
+
+        if (!$kh) {
+            return response()->json(['found' => false, 'customer' => null]);
+        }
+
+        return response()->json([
+            'found' => true,
+            'customer' => [
+                'maKH'       => $kh->MAKH,
+                'hoTen'      => $kh->HOTEN,
+                'sdt'        => $kh->SDT,
+                'diemTichLuy'=> $kh->DIEMTICHLUY,
+            ],
+        ]);
     }
 }

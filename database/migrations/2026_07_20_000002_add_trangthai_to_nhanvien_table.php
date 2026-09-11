@@ -8,14 +8,18 @@ return new class () extends Migration {
     public function up(): void
     {
         Schema::table('nhanvien', function (Blueprint $table) {
-            $table->string('TRANGTHAI')->default('Đang làm việc');
+            if (!Schema::hasColumn('nhanvien', 'TRANGTHAI')) {
+                $table->string('TRANGTHAI', 20)->default('Đang làm việc');
+            }
         });
     }
 
     public function down(): void
     {
         Schema::table('nhanvien', function (Blueprint $table) {
-            $table->dropColumn('TRANGTHAI');
+            if (Schema::hasColumn('nhanvien', 'TRANGTHAI')) {
+                $table->dropColumn('TRANGTHAI');
+            }
         });
     }
 };

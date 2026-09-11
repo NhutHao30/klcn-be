@@ -12,7 +12,14 @@ class KhuyenMaiKhachHang extends Model
         'MA_VOUCHER',
         'MAKH',
         'MAHD',
+        'NGAY_THU_THAP',
         'NGAY_SU_DUNG',
+        'TRANG_THAI',
+    ];
+
+    protected $casts = [
+        'NGAY_THU_THAP' => 'datetime',
+        'NGAY_SU_DUNG' => 'datetime',
     ];
 
     public function voucher()
@@ -23,5 +30,17 @@ class KhuyenMaiKhachHang extends Model
     public function khachhang()
     {
         return $this->belongsTo(KhachHang::class, 'MAKH', 'MAKH');
+    }
+
+    public function scopeChuaSuDung($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('TRANG_THAI')->orWhere('TRANG_THAI', 'CHUA_SU_DUNG');
+        })->whereNull('MAHD');
+    }
+
+    public function scopeDaSuDung($query)
+    {
+        return $query->where('TRANG_THAI', 'DA_SU_DUNG')->orWhereNotNull('MAHD');
     }
 }

@@ -11,7 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('danhgia_sanpham', function (Blueprint $table) {
+        if (!Schema::hasTable('danhgia_sanpham')) {
+            Schema::create('danhgia_sanpham', function (Blueprint $table) {
             $table->id('MADG');
             $table->string('MASP', 10);
             $table->string('MAKH', 100);
@@ -27,6 +28,7 @@ return new class extends Migration
             $table->foreign('MAKH')->references('MAKH')->on('khachhang');
             $table->foreign('MAHD')->references('MAHD')->on('hdban');
         });
+        }
     }
 
     /**

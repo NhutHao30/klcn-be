@@ -11,7 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('pos_shifts', function (Blueprint $table) {
+        if (!Schema::hasTable('pos_shifts')) {
+            Schema::create('pos_shifts', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('MACUAHANG');
             $table->string('USERNAME', 50);
@@ -31,6 +32,7 @@ return new class extends Migration
             $table->index('USERNAME');
             $table->index('opened_at');
         });
+        }
     }
 
     /**

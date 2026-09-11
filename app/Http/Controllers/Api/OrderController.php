@@ -3,10 +3,17 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\LoHangService;
 use Illuminate\Http\Request;
 
 class OrderController extends Controller
 {
+    protected LoHangService $loHangService;
+
+    public function __construct(LoHangService $loHangService)
+    {
+        $this->loHangService = $loHangService;
+    }
     public function storePOS(Request $request)
     {
         $request->validate([
@@ -77,13 +84,40 @@ class OrderController extends Controller
                 ]);
 
                 // Trừ tồn kho tại cửa hàng hiện tại
-                $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $maCuaHang)
-                            ->where('MASP', $item['id'])->first();
-                if ($tonKho) {
-                    \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                        ->where('MACUAHANG', $maCuaHang)
+                // Trừ tồn kho bằng FEFO (ưu tiên lô gần hết hạn trước)
+                $fefoResult = $this->loHangService->getFefoLo($item['id'], $maCuaHang, $item['quantity']);
+
+                if (!empty($fefoResult)) {
+                    // Đủ hàng trong lô — trừ từng lô FEFO
+                    foreach ($fefoResult as $fefoItem) {
+                        $this->loHangService->consumeLo(
+                            $fefoItem['malohan'],
+                            $fefoItem['soLuong'],
+                            $mahd,
+                            $user?->USERNAME
+                        );
+                    }
+                    // Ghi MALOHAN (lô đầu tiên được dùng) vào chitiethdban
+                    $primaryLo = $fefoResult[0]['malohan'];
+                    \Illuminate\Support\Facades\DB::table('chitiethdban')
+                        ->where('MAHD', $mahd)
                         ->where('MASP', $item['id'])
-                        ->update(['SOLUONG_TON' => $tonKho->SOLUONG_TON - $item['quantity']]);
+                        ->update(['MALOHAN' => $primaryLo]);
+                } else {
+                    // Nếu sản phẩm đã có bảng lô hàng nhưng không có lô FEFO còn hạn -> Bị hết hạn
+                    $hasLoHang = \App\Models\LoHang::where('MASP', $item['id'])->where('MACUAHANG', $maCuaHang)->exists();
+                    if ($hasLoHang) {
+                        throw new \Exception("Sản phẩm {$item['id']} đã hết hạn sử dụng hoặc không đủ lô còn hạn để xuất cho khách!");
+                    }
+                    // Fallback: trừ tonkho_cuahang trực tiếp chỉ dành cho dữ liệu legacy không có lô
+                    $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $maCuaHang)
+                                ->where('MASP', $item['id'])->first();
+                    if ($tonKho) {
+                        \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
+                            ->where('MACUAHANG', $maCuaHang)
+                            ->where('MASP', $item['id'])
+                            ->update(['SOLUONG_TON' => max(0, $tonKho->SOLUONG_TON - $item['quantity'])]);
+                    }
                 }
 
                 // Trừ tồn kho thủ công (bảng sanpham) để tương thích ngược
