@@ -2,155 +2,111 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Carbon\Carbon;
 
 class LoHang extends Model
 {
+    use HasFactory;
+
     protected $table = 'lo_hang';
-    protected $primaryKey = 'MALOHAN';
-    public $incrementing = false;
-    protected $keyType = 'string';
 
     protected $fillable = [
-        'MALOHAN',
-        'MAHDNHAP',
-        'MASP',
-        'MACUAHANG',
-        'NGAYNHAP',
-        'NGAYSX',
-        'HSD',
-        'SOLUONG_NHAP',
-        'SOLUONG_CON',
-        'SOLUONG_BAN',
-        'SOLUONG_HUY',
-        'DONGIA_NHAP',
-        'TRANGTHAI',
-        'GHICHU',
+        'ma_lo_hang',
+        'sanpham_id',
+        'cuahang_id',
+        'nhacungcap_id',
+        'so_luong_nhap',
+        'so_luong_con',
+        'ngay_san_xuat',
+        'hsd',
+        'gia_nhap',
+        'trang_thai',
     ];
 
     protected $casts = [
-        'NGAYNHAP'     => 'date',
-        'NGAYSX'       => 'date',
-        'HSD'          => 'date',
-        'SOLUONG_NHAP' => 'integer',
-        'SOLUONG_CON'  => 'integer',
-        'SOLUONG_BAN'  => 'integer',
-        'SOLUONG_HUY'  => 'integer',
-        'DONGIA_NHAP'  => 'decimal:2',
+        'ngay_san_xuat' => 'date',
+        'hsd' => 'date',
+        'gia_nhap' => 'double',
     ];
 
-    // ─────────────────────────── Relationships ───────────────────────────
+    protected $appends = [
+        'MALOHAN', 'MAHDNHAP', 'MASP', 'MACUAHANG', 'MANCC',
+        'SOLUONG_CON', 'SOLUONG_NHAP', 'DONGIA_NHAP', 'NGAYSX', 'HSD', 'HSD_LO'
+    ];
 
-    public function sanpham()
+    public function getMALOHANAttribute()
     {
-        return $this->belongsTo(SanPham::class, 'MASP', 'MASP');
+        return $this->attributes['ma_lo_hang'] ?? $this->attributes['id'] ?? null;
     }
 
-    public function cuahang()
+    public function getMAHDNHAPAttribute()
     {
-        return $this->belongsTo(CuaHang::class, 'MACUAHANG', 'MACUAHANG');
+        return $this->attributes['hoadon_nhap_id'] ?? null;
     }
 
-    public function hdnhap()
+    public function getMASPAttribute()
     {
-        return $this->belongsTo(HdNhap::class, 'MAHDNHAP', 'MAHDNHAP');
+        return $this->attributes['sanpham_id'] ?? null;
     }
 
-    public function bienBanHuys()
+    public function getMACUAHANGAttribute()
     {
-        return $this->hasMany(BienBanHuy::class, 'MALOHAN', 'MALOHAN');
+        return $this->attributes['cuahang_id'] ?? null;
     }
 
-    public function chiTietHdBans()
+    public function getMANCCAttribute()
     {
-        return $this->hasMany(ChiTietHdBan::class, 'MALOHAN', 'MALOHAN');
+        return $this->attributes['nhacungcap_id'] ?? null;
     }
 
-    // ─────────────────────────── Scopes ───────────────────────────────────
-
-    /**
-     * Lô còn hạn và còn hàng để bán.
-     */
-    public function scopeConHan($query)
+    public function getSOLUONGCONAttribute()
     {
-        return $query->where('TRANGTHAI', 'con_hang')
-                     ->where('HSD', '>=', Carbon::today())
-                     ->where('SOLUONG_CON', '>', 0);
+        return $this->attributes['so_luong_con'] ?? 0;
     }
 
-    /**
-     * Lô sắp hết hạn trong $days ngày tới (tính từ hôm nay).
-     */
-    public function scopeSapHetHan($query, int $days = 3)
+    public function getSOLUONGNHAPAttribute()
     {
-        return $query->where('TRANGTHAI', 'con_hang')
-                     ->where('HSD', '>=', Carbon::today())
-                     ->where('HSD', '<=', Carbon::today()->addDays($days))
-                     ->where('SOLUONG_CON', '>', 0);
+        return $this->attributes['so_luong_nhap'] ?? 0;
     }
 
-    /**
-     * Lô đã hết hạn (HSD < hôm nay) nhưng chưa được xử lý.
-     */
-    public function scopeHetHan($query)
+    public function getDONGIANHAPAttribute()
     {
-        return $query->where('HSD', '<', Carbon::today())
-                     ->where('TRANGTHAI', 'con_hang');
+        return $this->attributes['gia_nhap'] ?? 0;
     }
 
-    /**
-     * Filter theo cửa hàng.
-     */
-    public function scopeCuaHang($query, $maCuaHang)
+    public function getNGAYSXAttribute()
     {
-        return $query->where('MACUAHANG', $maCuaHang);
+        return $this->attributes['ngay_san_xuat'] ?? null;
     }
 
-    /**
-     * Filter theo sản phẩm.
-     */
-    public function scopeSanPham($query, $maSP)
+    public function getHSDAttribute()
     {
-        return $query->where('MASP', $maSP);
+        return $this->attributes['hsd'] ?? null;
     }
 
-    // ─────────────────────────── Helpers ──────────────────────────────────
-
-    /**
-     * Số ngày còn lại đến HSD (âm = đã hết hạn).
-     */
-    public function getSoNgayConLaiAttribute(): int
+    public function getHSDLOAttribute()
     {
-        return (int) Carbon::today()->diffInDays($this->HSD, false);
+        return $this->attributes['hsd'] ?? null;
     }
 
-    /**
-     * Mức cảnh báo: 'het_han' | 'nguy_hiem' (≤1 ngày) | 'canh_bao' (≤3 ngày) | 'binh_thuong'
-     */
-    public function getMucCanhBaoAttribute(): string
+    public function sanPham()
     {
-        $days = $this->so_ngay_con_lai;
-        if ($this->TRANGTHAI === 'het_han' || $days < 0) return 'het_han';
-        if ($days <= 1) return 'nguy_hiem';
-        if ($days <= 3) return 'canh_bao';
-        return 'binh_thuong';
+        return $this->belongsTo(SanPham::class, 'sanpham_id');
     }
 
-    /**
-     * Tổng chi phí lô = số lượng nhập × đơn giá nhập.
-     */
-    public function getTongChiPhiAttribute(): float
+    public function cuaHang()
     {
-        return $this->SOLUONG_NHAP * $this->DONGIA_NHAP;
+        return $this->belongsTo(CuaHang::class, 'cuahang_id');
     }
 
-    /**
-     * % đã bán = bán / nhập * 100.
-     */
-    public function getPhanTramBanAttribute(): float
+    public function nhaCungCap()
     {
-        if ($this->SOLUONG_NHAP == 0) return 0;
-        return round(($this->SOLUONG_BAN / $this->SOLUONG_NHAP) * 100, 1);
+        return $this->belongsTo(NhaCungCap::class, 'nhacungcap_id');
+    }
+
+    public function kiemTraHetHan(): bool
+    {
+        return $this->hsd && $this->hsd->isPast();
     }
 }

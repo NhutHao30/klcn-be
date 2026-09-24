@@ -4,148 +4,137 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use App\Models\PosShift;
+use App\Models\DonHang;
+use App\Models\ChiTietDonHang;
+use App\Models\IdempotencyKey;
+use Illuminate\Support\Facades\DB;
 
 class PosShiftController extends Controller
 {
-    private function getUserStore()
-    {
-        $user = Auth::guard('api')->user();
-        $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-        return $nhanVien ? $nhanVien->MACUAHANG : null;
-    }
-
+    /**
+     * Mở ca làm việc POS (Thông qua Stored Procedure sp_open_pos_shift)
+     */
     public function openShift(Request $request)
     {
-        $request->validate(['opening_cash' => 'required|numeric|min:0']);
+        $user = Auth::guard('api')->user();
+        if (!$user) return response()->json(['error' => 'Chưa đăng nhập'], 401);
 
-        $openingCash = $request->opening_cash;
-        if ($openingCash < 0) {
-            return response()->json(['error' => 'Số tiền mở ca không được âm!'], 422);
+        $nguoidung = $user->nguoidung;
+        if (!$nguoidung || !$nguoidung->cuahang_id) {
+            return response()->json(['error' => 'Chỉ nhân viên thuộc chi nhánh mới có thể mở ca làm việc'], 403);
         }
 
-        $storeId = $this->getUserStore();
-        if (!$storeId) return response()->json(['error' => 'User not assigned to a store'], 403);
-
-        $username = Auth::guard('api')->user()->USERNAME;
-
-        try {
-            DB::statement('CALL sp_open_shift(?, ?, ?)', [
-                $storeId,
-                $username,
-                $openingCash
-            ]);
-
-            // Ghi audit log mở ca
-            DB::table('audit_logs')->insert([
-                'entity_type' => 'PosShift',
-                'entity_id'   => 'STORE-' . $storeId,
-                'action'      => 'OPEN_SHIFT',
-                'old_values'  => null,
-                'new_values'  => json_encode([
-                    'macuahang'    => $storeId,
-                    'opening_cash' => $openingCash,
-                ]),
-                'USERNAME'   => $username,
-                'created_at' => now(),
-            ]);
-
-            return response()->json(['message' => 'Mở ca thành công!']);
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
-        }
-    }
-
-    public function closeShift(Request $request)
-    {
         $request->validate([
-            'shift_id'    => 'required|integer',
-            'actual_cash' => 'required|numeric',
+            'tien_mat_dau_ca' => 'required|numeric|min:0',
         ]);
 
-        $actualCash = $request->actual_cash;
-        $shiftId    = $request->shift_id;
+        DB::statement('CALL sp_open_pos_shift(?, ?, ?, @shift_id, @error)', [
+            $nguoidung->cuahang_id,
+            $nguoidung->id,
+            $request->tien_mat_dau_ca,
+        ]);
 
-        if ($actualCash < 0) {
-            return response()->json(['error' => 'Số tiền đóng ca không được âm!'], 422);
+        $res = DB::select('SELECT @shift_id AS shift_id, @error AS error')[0];
+
+        if ($res->error) {
+            $activeShift = PosShift::where('nhanvien_id', $nguoidung->id)->where('trang_thai', 0)->first();
+            return response()->json(['error' => $res->error, 'data' => $activeShift], 400);
         }
 
-        // Lấy thông tin ca hiện tại
-        $shift = DB::table('pos_shifts')->where('id', $shiftId)->first();
-        if (!$shift || $shift->status !== 'open') {
-            return response()->json(['error' => 'Ca làm việc không tồn tại hoặc đã đóng!'], 400);
-        }
-
-        // Tính doanh thu trong ca
-        $salesInShift = DB::table('hdban')
-            ->where('NGAYLAP', '>=', $shift->opened_at)
-            ->where('TRANGTHAITHANHTOAN', 'Đã hoàn thành')
-            ->sum('TONGTIEN');
-
-        $expectedCash = $shift->opening_cash + $salesInShift;
-        $difference   = $actualCash - $expectedCash;
-
-        if ($difference != 0) {
-            $msg = 'Số tiền thực tế không khớp với doanh thu! ' 
-                 . 'Chênh lệch: ' . number_format(abs($difference), 0, ',', '.') . ' ₫ ' 
-                 . ($difference > 0 ? '(Thừa)' : '(Thiếu)') 
-                 . '. Vui lòng kiểm tra lại két tiền!';
-            return response()->json(['error' => $msg], 400);
-        }
-
-        $username = Auth::guard('api')->user()->USERNAME;
-
-        try {
-            DB::statement('CALL sp_close_shift(?, ?)', [
-                $shiftId,
-                $actualCash
-            ]);
-
-            // Ghi audit log đóng ca
-            DB::table('audit_logs')->insert([
-                'entity_type' => 'PosShift',
-                'entity_id'   => 'SHIFT-' . $shiftId,
-                'action'      => 'CLOSE_SHIFT',
-                'old_values'  => json_encode([
-                    'opening_cash'  => $shift->opening_cash,
-                    'sales_in_shift' => $salesInShift,
-                    'expected_cash' => $expectedCash,
-                ]),
-                'new_values'  => json_encode([
-                    'actual_cash' => $actualCash,
-                    'difference'  => $difference,
-                    'status'      => 'balanced',
-                ]),
-                'USERNAME'   => $username,
-                'created_at' => now(),
-            ]);
-
-            return response()->json([
-                'message'       => 'Đóng ca thành công!',
-                'expected_cash' => $expectedCash,
-                'actual_cash'   => $actualCash,
-                'difference'    => $difference,
-                'warning'       => null,
-            ]);
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
-        }
+        $shift = PosShift::find($res->shift_id);
+        return response()->json(['message' => 'Mở ca làm việc thành công', 'data' => $shift], 201);
     }
 
-    public function getActiveShift()
+    /**
+     * Đóng ca làm việc & Kết toán doanh thu (Thông qua Stored Procedure sp_close_pos_shift)
+     */
+    public function closeShift(Request $request)
     {
-        $storeId = $this->getUserStore();
-        if (!$storeId) return response()->json(['error' => 'User not assigned to a store'], 403);
+        $user = Auth::guard('api')->user();
+        if (!$user) return response()->json(['error' => 'Chưa đăng nhập'], 401);
 
-        $shift = DB::table('v_pos_shift_summary')
-            ->where('MACUAHANG', $storeId)
-            ->where('status', 'open')
-            ->first();
-
-        if (!$shift) {
-            return response()->json(['message' => 'No active shift'], 404);
+        $nguoidung = $user->nguoidung;
+        if (!$nguoidung) {
+            return response()->json(['error' => 'Không tìm thấy hồ sơ người dùng'], 404);
         }
-        return response()->json($shift);
+
+        $request->validate([
+            'tien_mat_thuc_te' => 'required|numeric|min:0',
+        ]);
+
+        DB::statement('CALL sp_close_pos_shift(?, ?, @shift_id, @error)', [
+            $nguoidung->id,
+            $request->tien_mat_thuc_te,
+        ]);
+
+        $res = DB::select('SELECT @shift_id AS shift_id, @error AS error')[0];
+
+        if ($res->error) {
+            return response()->json(['error' => $res->error], 404);
+        }
+
+        $shift = PosShift::find($res->shift_id);
+        return response()->json(['message' => 'Đã chốt ca và đóng ca thành công', 'data' => $shift]);
+    }
+
+    /**
+     * Bán hàng & Thanh toán tại quầy POS (Thông qua Stored Procedure sp_pos_checkout & chống trùng Idempotency)
+     */
+    public function posCheckout(Request $request)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) return response()->json(['error' => 'Chưa đăng nhập'], 401);
+
+        $idempotencyKey = $request->header('X-Idempotency-Key') ?? $request->idempotency_key;
+
+        if ($idempotencyKey) {
+            $existing = IdempotencyKey::where('idempotency_key', $idempotencyKey)->first();
+            if ($existing) {
+                return response()->json(json_decode($existing->response_payload, true), $existing->status_code);
+            }
+        }
+
+        $request->validate([
+            'cuahang_id' => 'required|exists:cuahang,id',
+            'items' => 'required|array|min:1',
+            'items.*.sanpham_id' => 'required|exists:san_pham,id',
+            'items.*.so_luong' => 'required|integer|min:1',
+            'phuong_thuc_thanhtoan' => 'required|integer|in:0,1,2',
+        ]);
+
+        try {
+            DB::statement('CALL sp_pos_checkout(?, ?, ?, @donhang_id, @ma_don_hang, @error)', [
+                $request->cuahang_id,
+                $request->phuong_thuc_thanhtoan,
+                json_encode($request->items),
+            ]);
+
+            $res = DB::select('SELECT @donhang_id AS donhang_id, @ma_don_hang AS ma_don_hang, @error AS error')[0];
+
+            if ($res->error) {
+                return response()->json(['error' => 'Thanh toán POS thất bại: ' . $res->error], 500);
+            }
+
+            $donHang = DonHang::find($res->donhang_id);
+            $responseData = ['message' => 'Thanh toán POS thành công', 'data' => $donHang->load('chitiet')];
+
+            if ($idempotencyKey) {
+                IdempotencyKey::create([
+                    'idempotency_key' => $idempotencyKey,
+                    'request_path' => $request->path(),
+                    'request_hash' => md5(serialize($request->all())),
+                    'response_payload' => json_encode($responseData),
+                    'status_code' => 200,
+                    'expires_at' => now()->addHours(24),
+                ]);
+            }
+
+            return response()->json($responseData);
+
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Thanh toán POS thất bại: ' . $e->getMessage()], 500);
+        }
     }
 }

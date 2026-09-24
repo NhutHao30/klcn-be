@@ -2,23 +2,22 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class VaiTro extends Model
 {
+    use HasFactory;
+
     protected $table = 'vaitro';
-    protected $primaryKey = 'MAROLE';
-    public $incrementing = false;
-    protected $keyType = 'integer';
-    public $timestamps = false;
 
     protected $fillable = [
-        'MAROLE',
-        'MOTA',
+        'ten_vaitro',
+        'mo_ta',
     ];
 
-    public function taikhoans()
+    public function taiKhoans()
     {
-        return $this->hasMany(TaiKhoan::class, 'MAROLE', 'MAROLE');
+        return $this->hasMany(TaiKhoan::class, 'vaitro_id');
     }
 }

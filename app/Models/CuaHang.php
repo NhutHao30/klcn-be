@@ -2,28 +2,55 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class CuaHang extends Model
 {
+    use HasFactory;
+
     protected $table = 'cuahang';
-    protected $primaryKey = 'MACUAHANG';
 
     protected $fillable = [
-        'TENCUAHANG',
-        'DIACHI',
-        'SDT',
-        'TRANGTHAI',
-        'GHN_SHOP_ID',
+        'ten_cuahang',
+        'so_dien_thoai',
+        'dia_chi_chi_tiet',
+        'ma_tinh',
+        'ma_huyen',
+        'ma_xa',
+        'ghn_shop_id',
+        'trang_thai',
     ];
 
-    public function nhanviens()
+    protected $appends = ['MACUAHANG', 'TENCUAHANG'];
+
+    public function getMACUAHANGAttribute()
     {
-        return $this->hasMany(NhanVien::class, 'MACUAHANG', 'MACUAHANG');
+        return $this->attributes['id'] ?? null;
     }
 
-    public function hdbans()
+    public function getTENCUAHANGAttribute()
     {
-        return $this->hasMany(HdBan::class, 'MACUAHANG', 'MACUAHANG');
+        return $this->attributes['ten_cuahang'] ?? null;
+    }
+
+    public function nguoiDungs()
+    {
+        return $this->hasMany(NguoiDung::class, 'cuahang_id');
+    }
+
+    public function loHangs()
+    {
+        return $this->hasMany(LoHang::class, 'cuahang_id');
+    }
+
+    public function hoaDonNhaps()
+    {
+        return $this->hasMany(HoaDonNhap::class, 'cuahang_id');
+    }
+
+    public function bienBanHuys()
+    {
+        return $this->hasMany(BienBanHuy::class, 'cuahang_id');
     }
 }

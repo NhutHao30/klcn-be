@@ -6,51 +6,46 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 use App\Models\TaiKhoan;
-use App\Models\KhachHang;
-use Illuminate\Validation\Rules\Password;
-use App\Jobs\SendOtpEmailJob;
-use Carbon\Carbon;
-use App\Services\UploadService;
+use App\Models\NguoiDung;
 
 class AuthController extends Controller
 {
-    protected $uploadService;
-
-    public function __construct(UploadService $uploadService)
-    {
-        $this->uploadService = $uploadService;
-    }
     /**
      * API Login
      */
     public function login(Request $request)
     {
-        $request->validate([
-            'USERNAME' => 'required|string',
-            'PASSWORD' => 'required|string',
-        ]);
+        $loginInput = $request->input('username') 
+            ?? $request->input('USERNAME') 
+            ?? $request->input('email') 
+            ?? $request->input('EMAIL')
+            ?? $request->input('login');
+            
+        $password = $request->input('password') 
+            ?? $request->input('PASSWORD');
 
-        $credentials = [
-            'USERNAME' => $request->USERNAME,
-            'password' => $request->PASSWORD,
-        ];
+        if (!$loginInput || !$password) {
+            return response()->json(['error' => 'Vui lòng nhập tên đăng nhập và mật khẩu'], 422);
+        }
 
-        /** @var \Tymon\JWTAuth\JWTGuard $guard */
-        $guard = Auth::guard('api');
+        // Tìm tài khoản theo username hoặc email
+        $account = TaiKhoan::where('username', $loginInput)
+            ->orWhere('email', $loginInput)
+            ->first();
 
-        if (! $token = $guard->attempt($credentials)) {
+        if (!$account || !Hash::check($password, $account->password)) {
             return response()->json(['error' => 'Tài khoản hoặc mật khẩu không chính xác'], 401);
         }
 
-        $user = Auth::guard('api')->user();
-        if ($user->MAROLE == 1 || $user->MAROLE == 0 || $user->MAROLE == 2) {
-            $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-            if ($nhanVien && $nhanVien->TRANGTHAI === 'Nghỉ việc') {
-                $guard->logout();
-                return response()->json(['error' => 'Tài khoản của bạn đã bị vô hiệu hóa'], 403);
-            }
+        if ($account->trang_thai === 0) {
+            return response()->json(['error' => 'Tài khoản của bạn đã bị khóa'], 403);
         }
+
+        /** @var \Tymon\JWTAuth\JWTGuard $guard */
+        $guard = Auth::guard('api');
+        $token = $guard->login($account);
 
         return $this->respondWithToken($token);
     }
@@ -61,29 +56,31 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $request->validate([
-            'USERNAME' => 'required|string|unique:taikhoan,USERNAME',
-            'PASSWORD' => ['required', 'string', Password::min(12)->mixedCase()->numbers()->symbols()],
-            'EMAIL'    => 'required|email|unique:taikhoan,EMAIL',
-            'HOTEN'    => 'required|string',
-            'SDT'      => 'required|string|size:10',
+            'username' => 'required|string|unique:taikhoan,username',
+            'password' => 'required|string|min:6',
+            'email'    => 'required|email|unique:taikhoan,email',
+            'ho_ten'   => 'required|string',
+            'so_dien_thoai' => 'required|string|max:15',
         ]);
 
         DB::beginTransaction();
         try {
-            // 1. Create an account (Right 2 - Customer)
+            // 1. Tạo Tài khoản (Vai trò 6: CUSTOMER)
             $taikhoan = TaiKhoan::create([
-                'USERNAME' => $request->USERNAME,
-                'PASSWORD' => $request->PASSWORD,
-                'MAROLE'   => 3, // 3: Customer
-                'EMAIL'    => $request->EMAIL,
+                'username' => $request->username,
+                'email' => $request->email,
+                'password' => Hash::make($request->password),
+                'vaitro_id' => 6, // CUSTOMER
+                'trang_thai' => 1,
             ]);
 
-            // 2. Create Customer Information
-            KhachHang::create([
-                'MAKH'     => 'KH' . time(),
-                'HOTEN'    => $request->HOTEN,
-                'SDT'      => $request->SDT,
-                'USERNAME' => $taikhoan->USERNAME,
+            // 2. Tạo Hồ sơ Người dùng (Khách hàng)
+            NguoiDung::create([
+                'taikhoan_id' => $taikhoan->id,
+                'ho_ten' => $request->ho_ten,
+                'so_dien_thoai' => $request->so_dien_thoai,
+                'gioi_tinh' => $request->gioi_tinh ?? 0, // 0: Nữ, 1: Nam
+                'loai_nguoidung' => 0, // 0: Khách hàng
             ]);
 
             DB::commit();
@@ -96,22 +93,19 @@ class AuthController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['error' => 'Đăng ký thất bại, vui lòng thử lại!'], 500);
+            return response()->json(['error' => 'Đăng ký thất bại: ' . $e->getMessage()], 500);
         }
     }
 
     /**
-     * API to retrieve current user information.
+     * API to retrieve current user profile.
      */
     public function me()
     {
         /** @var \App\Models\TaiKhoan $user */
         $user = Auth::guard('api')->user();
-
-        if ($user->MAROLE == 3) {
-            $user->load('khachhang');
-        } else {
-            $user->load('nhanvien');
+        if ($user) {
+            $user->load(['vaitro', 'nguoidung.cuahang']);
         }
 
         return response()->json($user);
@@ -123,83 +117,23 @@ class AuthController extends Controller
     public function updateProfile(Request $request)
     {
         $user = Auth::guard('api')->user();
-
-        if ($user->MAROLE == 3) { // Khách Hàng
-            $request->validate([
-                'HOTEN' => 'required|string|max:255',
-                'SDT' => 'nullable|string|max:15',
-                'DIACHI' => 'nullable|string|max:255',
-                'GioiTinh' => 'nullable|string|in:Nam,Nữ',
-                'NGAYSINH' => 'nullable|date',
-                'EMAIL' => 'nullable|email|unique:taikhoan,EMAIL,'.$user->USERNAME.',USERNAME',
-                'AVATAR' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:5120',
-            ]);
-
-            $khachHang = \App\Models\KhachHang::where('USERNAME', $user->USERNAME)->first();
-            if ($khachHang) {
-                $khachHang->update($request->only(['HOTEN', 'SDT', 'DIACHI', 'GioiTinh', 'NGAYSINH']));
-            }
-
-            if ($request->has('EMAIL')) {
-                $user->EMAIL = $request->EMAIL;
-            }
-            if ($request->hasFile('AVATAR')) {
-                if ($user->AVATAR) {
-                    $this->uploadService->deleteImage($user->AVATAR);
-                }
-                $user->AVATAR = $this->uploadService->uploadImage($request->file('AVATAR'), 'avatars');
-            }
-            $user->save();
-
-            return response()->json(['message' => 'Cập nhật thông tin thành công', 'user' => $khachHang]);
-
-        } else { // Nhân Viên / Quản Lý
-            $request->validate([
-                'HOTEN' => 'required|string|max:255',
-                'SDT' => 'nullable|string|max:15',
-                'DIACHI' => 'nullable|string|max:255',
-                'GioiTinh' => 'nullable|string|in:Nam,Nữ',
-                'NGAYSINH' => 'nullable|date',
-                'CCCD_TRUOC' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:5120',
-                'CCCD_SAU' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:5120',
-                'EMAIL' => 'nullable|email|unique:taikhoan,EMAIL,'.$user->USERNAME.',USERNAME',
-                'AVATAR' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:5120',
-            ]);
-
-            $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-            if ($nhanVien) {
-                $dataUpdate = $request->only(['HOTEN', 'SDT', 'DIACHI', 'GioiTinh', 'NGAYSINH']);
-
-                if ($request->hasFile('CCCD_TRUOC')) {
-                    if ($nhanVien->CCCD_TRUOC) {
-                        $this->uploadService->deleteImage($nhanVien->CCCD_TRUOC);
-                    }
-                    $dataUpdate['CCCD_TRUOC'] = $this->uploadService->uploadImage($request->file('CCCD_TRUOC'), 'cccd');
-                }
-
-                if ($request->hasFile('CCCD_SAU')) {
-                    if ($nhanVien->CCCD_SAU) {
-                        $this->uploadService->deleteImage($nhanVien->CCCD_SAU);
-                    }
-                    $dataUpdate['CCCD_SAU'] = $this->uploadService->uploadImage($request->file('CCCD_SAU'), 'cccd');
-                }
-
-                $nhanVien->update($dataUpdate);
-            }
-
-            if ($request->has('EMAIL')) {
-                $user->EMAIL = $request->EMAIL;
-            }
-            if ($request->hasFile('AVATAR')) {
-                if ($user->AVATAR) {
-                    $this->uploadService->deleteImage($user->AVATAR);
-                }
-                $user->AVATAR = $this->uploadService->uploadImage($request->file('AVATAR'), 'avatars');
-            }
-            $user->save();
-
-            return response()->json(['message' => 'Cập nhật thông tin thành công', 'user' => $nhanVien]);
+        if (!$user) {
+            return response()->json(['error' => 'Chưa đăng nhập'], 401);
         }
+
+        $request->validate([
+            'ho_ten' => 'required|string|max:100',
+            'so_dien_thoai' => 'nullable|string|max:15',
+            'gioi_tinh' => 'nullable|integer|in:0,1,2',
+            'ngay_sinh' => 'nullable|date',
+        ]);
+
+        $nguoidung = $user->nguoidung;
+        if ($nguoidung) {
+            $nguoidung->update($request->only(['ho_ten', 'so_dien_thoai', 'gioi_tinh', 'ngay_sinh']));
+        }
+
+        return response()->json(['message' => 'Cập nhật thông tin thành công', 'user' => $nguoidung]);
     }
 
     /**
@@ -215,7 +149,7 @@ class AuthController extends Controller
     }
 
     /**
-     * API Refresh Tokens
+     * API Refresh Token
      */
     public function refresh()
     {
@@ -225,68 +159,6 @@ class AuthController extends Controller
         return $this->respondWithToken($guard->refresh());
     }
 
-    /**
-     * API Forgot Password - Send OTP
-     */
-    public function forgotPassword(Request $request)
-    {
-        $request->validate(['EMAIL' => 'required|email']);
-
-        $user = TaiKhoan::where('EMAIL', $request->EMAIL)->first();
-        if (!$user) {
-            return response()->json(['error' => 'Email không tồn tại trong hệ thống'], 404);
-        }
-
-        // Generate a 6-digit OTP.
-        $otp = rand(100000, 999999);
-        $user->update([
-            'OTP_CODE' => $otp,
-            'OTP_EXPIRES_AT' => Carbon::now()->addMinutes(15)
-        ]);
-
-        // Push Jobs into RabbitMQ
-        try {
-            SendOtpEmailJob::dispatch($user->EMAIL, $otp);
-            return response()->json(['message' => 'Mã OTP đã được đưa vào hàng đợi để gửi đến email của bạn']);
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Không thể kết nối đến RabbitMQ. Vui lòng đảm bảo RabbitMQ đang chạy. Lỗi: ' . $e->getMessage()], 500);
-        }
-    }
-
-    /**
-     * API Reset password with OTP
-     */
-    public function resetPassword(Request $request)
-    {
-        $request->validate([
-            'EMAIL' => 'required|email',
-            'OTP_CODE' => 'required|string',
-            'NEW_PASSWORD' => ['required', 'string', Password::min(12)->mixedCase()->numbers()->symbols()]
-        ]);
-
-        $user = TaiKhoan::where('EMAIL', $request->EMAIL)->first();
-
-        if (!$user || $user->OTP_CODE !== $request->OTP_CODE) {
-            return response()->json(['error' => 'Mã OTP không hợp lệ'], 400);
-        }
-
-        if (Carbon::now()->greaterThan($user->OTP_EXPIRES_AT)) {
-            return response()->json(['error' => 'Mã OTP đã hết hạn'], 400);
-        }
-
-        // Update your password and delete the OTP.
-        $user->update([
-            'PASSWORD' => $request->NEW_PASSWORD,
-            'OTP_CODE' => null,
-            'OTP_EXPIRES_AT' => null
-        ]);
-
-        return response()->json(['message' => 'Đặt lại mật khẩu thành công']);
-    }
-
-    /**
-     * A general function used to format the returned result.
-     */
     protected function respondWithToken($token)
     {
         /** @var \Tymon\JWTAuth\JWTGuard $guard */
@@ -296,7 +168,7 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type' => 'bearer',
             'expires_in' => $guard->factory()->getTTL() * 60,
-            'user' => $guard->user()
+            'user' => $guard->user()->load(['vaitro', 'nguoidung'])
         ]);
     }
 }

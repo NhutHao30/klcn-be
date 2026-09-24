@@ -315,9 +315,9 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
     });
 
     // ==========================================
-    // 🏭 QUẢN LÝ LÔ HÀNG & NHÀ CUNG CẤP (Quyền = 0, 1, 2)
+    // 🏭 QUẢN LÝ LÔ HÀNG, NHẬP HÀNG, HSD & CHỮ KÝ SỐ
     // ==========================================
-    Route::middleware(['role:0,1,2', 'log.activity'])->group(function () {
+    Route::middleware(['log.activity'])->group(function () {
 
         // ── Nhà Cung Cấp ──────────────────────────────────────────────────
         Route::prefix('nha-cung-cap')->group(function () {
@@ -328,32 +328,33 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
             Route::delete('/{id}', [\App\Http\Controllers\Api\NhaCungCapController::class, 'destroy']);
         });
 
-        // ── Lô Hàng ───────────────────────────────────────────────────────
+        // ── Lô Hàng & Cảnh Báo HSD ────────────────────────────────────────
         Route::prefix('lo-hang')->group(function () {
-            // Danh sách lô (có filter: masp, macuahang, trangthai, hsd_from, hsd_to, sap_het_han, search)
             Route::get('/', [\App\Http\Controllers\Api\LoHangController::class, 'index']);
-
-            // 🔴 Dashboard cảnh báo HSD — đặt trước {malohan} để không bị conflict
-            Route::get('/canh-bao', [\App\Http\Controllers\Api\LoHangController::class, 'canhBao']);
-
-            // Lịch sử lô của 1 sản phẩm
-            Route::get('/san-pham/{masp}', [\App\Http\Controllers\Api\LoHangController::class, 'loHangSanPham']);
-
-            // Nhập lô hàng mới (tích hợp phiếu nhập HdNhap)
-            Route::post('/nhap', [\App\Http\Controllers\Api\LoHangController::class, 'nhapLo']);
-
-            // Chi tiết lô
-            Route::get('/{malohan}', [\App\Http\Controllers\Api\LoHangController::class, 'show']);
-
-            // Hủy lô thủ công (tạo biên bản hủy)
-            Route::patch('/{malohan}/trang-thai', [\App\Http\Controllers\Api\LoHangController::class, 'updateTrangThai']);
+            Route::get('/canh-bao-hsd', [\App\Http\Controllers\Api\LoHangController::class, 'getExpiredBatches']);
+            Route::post('/', [\App\Http\Controllers\Api\LoHangController::class, 'store']);
+            Route::post('/nhap', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'store']);
+            Route::get('/{id}', [\App\Http\Controllers\Api\LoHangController::class, 'show']);
         });
 
-        // ── Biên Bản Hủy ──────────────────────────────────────────────────
+        // ── Hóa Đơn Nhập Hàng (Supplier Import) ─────────────────────────
+        Route::prefix('hoadon-nhap')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'store']);
+            Route::get('/{id}', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'show']);
+        });
+
+        // ── Biên Bản Hủy Sản Phẩm Hết Hạn ──────────────────────────────
         Route::prefix('bien-ban-huy')->group(function () {
             Route::get('/', [\App\Http\Controllers\Api\BienBanHuyController::class, 'index']);
-            Route::get('/thong-ke', [\App\Http\Controllers\Api\BienBanHuyController::class, 'thongKe']);
+            Route::post('/', [\App\Http\Controllers\Api\BienBanHuyController::class, 'store']);
             Route::get('/{id}', [\App\Http\Controllers\Api\BienBanHuyController::class, 'show']);
+        });
+
+        // ── Chữ Ký Số Đa Bên ──────────────────────────────────────────────
+        Route::prefix('chu-ky-so')->group(function () {
+            Route::post('/sign-role', [\App\Http\Controllers\Api\SignatureController::class, 'signRole']);
+            Route::post('/verify-document', [\App\Http\Controllers\Api\SignatureController::class, 'verifyDocumentSignatures']);
         });
     });
 

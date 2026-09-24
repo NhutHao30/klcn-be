@@ -4,26 +4,23 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use App\Models\InventoryMovement;
+use App\Models\NhatKyKho;
 
 class InventoryLedgerController extends Controller
 {
-    public function getMovements(Request $request)
+    public function index(Request $request)
     {
-        $query = InventoryMovement::with(['sanpham', 'user', 'cuahang'])->orderBy('created_at', 'desc');
+        $query = NhatKyKho::with(['cuahang', 'sanpham']);
 
-        if ($request->has('store_id')) {
-            $query->where('MACUAHANG', $request->store_id);
+        if ($request->filled('cuahang_id')) {
+            $query->where('cuahang_id', $request->cuahang_id);
         }
 
-        if ($request->has('product_id')) {
-            $query->where('MASP', $request->product_id);
+        if ($request->filled('sanpham_id')) {
+            $query->where('sanpham_id', $request->sanpham_id);
         }
 
-        if ($request->has('type')) {
-            $query->where('type', $request->type);
-        }
-
-        return response()->json($query->paginate(20));
+        $logs = $query->orderBy('id', 'desc')->paginate(15);
+        return response()->json($logs);
     }
 }

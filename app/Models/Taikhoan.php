@@ -11,32 +11,29 @@ class TaiKhoan extends Authenticatable implements JWTSubject
     use Notifiable;
 
     protected $table = 'taikhoan';
-    protected $primaryKey = 'USERNAME';
-    public $incrementing = false;
-    protected $keyType = 'string';
 
     protected $fillable = [
-        'USERNAME',
-        'PASSWORD',
-        'MAROLE',
-        'EMAIL',
-        'OTP_CODE',
-        'OTP_EXPIRES_AT',
-        'DEVICE_TOKEN',
-        'GOOGLE_ID',
-        'AVATAR',
+        'username',
+        'email',
+        'password',
+        'vaitro_id',
+        'google_id',
+        'trang_thai',
     ];
 
     protected $hidden = [
-        'PASSWORD',
+        'password',
         'remember_token',
+    ];
+
+    protected $appends = [
+        'MAROLE',
     ];
 
     protected function casts(): array
     {
         return [
-            'PASSWORD' => 'hashed', // Tự động mã hóa mật khẩu bằng Bcrypt
-            'OTP_EXPIRES_AT' => 'datetime',
+            'password' => 'hashed',
         ];
     }
 
@@ -48,31 +45,43 @@ class TaiKhoan extends Authenticatable implements JWTSubject
 
     public function getAuthPassword()
     {
-        return $this->PASSWORD;
+        return $this->password;
     }
 
     public function getJWTCustomClaims()
     {
         return [
-            'role' => $this->MAROLE,
-            'email' => $this->EMAIL
+            'role_id' => $this->vaitro_id,
+            'MAROLE' => $this->MAROLE,
+            'email' => $this->email,
+            'username' => $this->username,
         ];
     }
 
-    // --- MỐI QUAN HỆ ---
+    /**
+     * Map vaitro_id sang cờ MAROLE legacy cho Frontend Router:
+     * 0: ADMIN, 1: MANAGER, 2: WAREHOUSE/CASHIER, 4: CSKH, 3: CUSTOMER
+     */
+    public function getMAROLEAttribute()
+    {
+        return match ((int)$this->attributes['vaitro_id'] ?? 1) {
+            1 => 0, // ADMIN (Giao diện Quản trị)
+            2 => 1, // MANAGER (Quản lý chi nhánh)
+            3, 4 => 2, // WAREHOUSE / CASHIER (Nhân viên)
+            5 => 4, // CSKH
+            6 => 3, // CUSTOMER (Khách hàng)
+            default => 0,
+        };
+    }
 
+    // --- MỐI QUAN HỆ ---
     public function vaitro()
     {
-        return $this->belongsTo(VaiTro::class, 'MAROLE', 'MAROLE');
+        return $this->belongsTo(VaiTro::class, 'vaitro_id');
     }
 
-    public function nhanvien()
+    public function nguoidung()
     {
-        return $this->hasOne(NhanVien::class, 'USERNAME', 'USERNAME');
-    }
-
-    public function khachhang()
-    {
-        return $this->hasOne(KhachHang::class, 'USERNAME', 'USERNAME');
+        return $this->hasOne(NguoiDung::class, 'taikhoan_id');
     }
 }

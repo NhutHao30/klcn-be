@@ -3,528 +3,137 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\LoHangService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use App\Models\DonHang;
+use App\Models\ChiTietDonHang;
+use App\Models\LichSuTrangThaiDonHang;
+use App\Models\SanPham;
+use App\Models\Voucher;
+use App\Models\NhatKyKho;
+use App\Models\TonKhoChiNhanh;
 
 class OrderController extends Controller
 {
-    protected LoHangService $loHangService;
-
-    public function __construct(LoHangService $loHangService)
-    {
-        $this->loHangService = $loHangService;
-    }
-    public function storePOS(Request $request)
-    {
-        $request->validate([
-            'cart' => 'required|array',
-            'cart.*.id' => 'required|string',
-            'cart.*.quantity' => 'required|numeric|min:1',
-            'cart.*.price' => 'required|numeric|min:0',
-        ]);
-
-        \Illuminate\Support\Facades\DB::beginTransaction();
-        try {
-            // Tính tổng tiền
-            $total = 0;
-            foreach ($request->cart as $item) {
-                $total += $item['price'] * $item['quantity'];
-            }
-
-            // Create a sales invoice (HdBan) with a maximum length of 10 characters (varchar(10))
-            $mahd = 'HD' . substr(time(), -8);
-            // Identify the customer; if none exists, create a default visitor
-            $makh = $request->customerId;
-            if (empty($makh)) {
-                $defaultKhach = \App\Models\KhachHang::firstOrCreate(
-                    ['SDT' => '0000000000'],
-                    [
-                        'MAKH' => 'KH000000',
-                        'HOTEN' => 'Khách vãng lai (POS)',
-                        'DIEMTICHLUY' => 0
-                    ]
-                );
-                $makh = $defaultKhach->MAKH;
-            }
-
-            // Xác định chi nhánh lập hóa đơn dựa trên nhân viên đang đăng nhập
-            $maCuaHang = 1; // Mặc định là chi nhánh trung tâm
-            $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-            if ($user && in_array($user->MAROLE, [0, 1, 2])) { // Admin, Branch Manager, Staff
-                $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-                if ($nhanVien && $nhanVien->MACUAHANG) {
-                    $maCuaHang = $nhanVien->MACUAHANG;
-                }
-            }
-
-            \App\Models\HdBan::create([
-                'MAHD' => $mahd,
-                'NGAYLAP' => now(),
-                'TONGTIEN' => $total,
-                'PHUONGTHUCTHANHTOAN' => $request->paymentMethod === 'MOMO' ? 'Ví Momo P2P' : ($request->paymentMethod === 'VIETQR' ? 'Chuyển khoản VietQR' : ($request->paymentMethod === 'COD_GIAO' ? 'COD (Giao hàng)' : 'Tiền mặt')),
-                'TRANGTHAITHANHTOAN' => $request->paymentMethod === 'COD_GIAO' ? 'Đang giao' : 'Đã hoàn thành',
-                'GHICHU' => 'Khách mua tại quầy (POS)',
-                'MAKH' => $makh,
-                'MAVANDON' => null,
-                'MACUAHANG' => $maCuaHang,
-            ]);
-
-            // Set variables for inventory trigger
-            \Illuminate\Support\Facades\DB::statement('SET @inv_type = ?, @inv_ref_type = ?, @inv_ref_id = ?, @inv_username = ?', [
-                'POS_SALE', 'HdBan', $mahd, $user->USERNAME ?? null
-            ]);
-
-            // Save Sales Invoice Details
-            foreach ($request->cart as $item) {
-                \App\Models\ChiTietHdBan::create([
-                    'MAHD' => $mahd,
-                    'MASP' => $item['id'],
-                    'SOLUONG' => $item['quantity'],
-                    'DONGIA' => $item['price'],
-                ]);
-
-                // Trừ tồn kho tại cửa hàng hiện tại
-                // Trừ tồn kho bằng FEFO (ưu tiên lô gần hết hạn trước)
-                $fefoResult = $this->loHangService->getFefoLo($item['id'], $maCuaHang, $item['quantity']);
-
-                if (!empty($fefoResult)) {
-                    // Đủ hàng trong lô — trừ từng lô FEFO
-                    foreach ($fefoResult as $fefoItem) {
-                        $this->loHangService->consumeLo(
-                            $fefoItem['malohan'],
-                            $fefoItem['soLuong'],
-                            $mahd,
-                            $user?->USERNAME
-                        );
-                    }
-                    // Ghi MALOHAN (lô đầu tiên được dùng) vào chitiethdban
-                    $primaryLo = $fefoResult[0]['malohan'];
-                    \Illuminate\Support\Facades\DB::table('chitiethdban')
-                        ->where('MAHD', $mahd)
-                        ->where('MASP', $item['id'])
-                        ->update(['MALOHAN' => $primaryLo]);
-                } else {
-                    // Nếu sản phẩm đã có bảng lô hàng nhưng không có lô FEFO còn hạn -> Bị hết hạn
-                    $hasLoHang = \App\Models\LoHang::where('MASP', $item['id'])->where('MACUAHANG', $maCuaHang)->exists();
-                    if ($hasLoHang) {
-                        throw new \Exception("Sản phẩm {$item['id']} đã hết hạn sử dụng hoặc không đủ lô còn hạn để xuất cho khách!");
-                    }
-                    // Fallback: trừ tonkho_cuahang trực tiếp chỉ dành cho dữ liệu legacy không có lô
-                    $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $maCuaHang)
-                                ->where('MASP', $item['id'])->first();
-                    if ($tonKho) {
-                        \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                            ->where('MACUAHANG', $maCuaHang)
-                            ->where('MASP', $item['id'])
-                            ->update(['SOLUONG_TON' => max(0, $tonKho->SOLUONG_TON - $item['quantity'])]);
-                    }
-                }
-
-                // Trừ tồn kho thủ công (bảng sanpham) để tương thích ngược
-                $sp = \App\Models\SanPham::find($item['id']);
-                if ($sp) {
-                    $sp->SOLUONG -= $item['quantity'];
-                    $sp->save();
-                }
-            }
-
-            // Tích điểm cho khách hàng (Nếu không phải Khách vãng lai)
-            if ($makh !== 'KH000000') {
-                $khachHang = \App\Models\KhachHang::find($makh);
-                if ($khachHang) {
-                    $diemCong = floor($total / 10000); // 10k = 1 điểm
-                    $khachHang->DIEMTICHLUY += $diemCong;
-                    $khachHang->save();
-                }
-            }
-
-            \Illuminate\Support\Facades\DB::commit();
-
-            // Xóa cache vì tồn kho đã thay đổi
-            \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
-
-            return response()->json([
-                'message' => 'Thanh toán thành công',
-                'mahd' => $mahd
-            ], 200);
-
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\DB::rollBack();
-            return response()->json(['error' => 'Lỗi tạo hóa đơn: ' . $e->getMessage()], 500);
-        }
-    }
-
-    // Get the list of invoices
+    /**
+     * Customer & Admin: View order list
+     */
     public function index(Request $request)
     {
-        $query = \App\Models\HdBan::with(['khachhang', 'cuahang']);
-
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('MAHD', 'like', "%{$search}%")
-                  ->orWhere('MAKH', 'like', "%{$search}%");
-            });
+        $user = Auth::guard('api')->user();
+        if (!$user) {
+            return response()->json(['error' => 'Chưa đăng nhập'], 401);
         }
 
-        if ($request->has('trangThai') && !empty($request->trangThai)) {
-            $query->where('TRANGTHAITHANHTOAN', $request->trangThai);
+        $query = DonHang::with(['chitiet.sanpham', 'cuahang', 'voucher', 'timelineGHN']);
+
+        // Khách hàng chỉ xem đơn hàng của mình
+        if ($user->vaitro_id == 6) { // CUSTOMER
+            $nguoidung = $user->nguoidung;
+            $query->where('nguoidung_id', $nguoidung ? $nguoidung->id : 0);
         }
 
-        if ($request->has('maKH') && !empty($request->maKH)) {
-            $query->where('MAKH', $request->maKH);
+        if ($request->filled('trang_thai_don_hang')) {
+            $query->where('trang_thai_don_hang', $request->trang_thai_don_hang);
         }
 
-        // Nếu là Quản lý chi nhánh (Role 1) hoặc Nhân viên (Role 2), chỉ hiển thị hóa đơn của chi nhánh đó
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if ($user && in_array($user->MAROLE, [1, 2])) {
-            $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-            if ($nhanVien && $nhanVien->MACUAHANG) {
-                $query->where('MACUAHANG', $nhanVien->MACUAHANG);
-            }
-        }
-
-        $size = $request->input('size', 100);
-        $invoices = $query->orderBy('NGAYLAP', 'desc')->paginate($size);
-
-        // Normalize the response to the desired frontend format.
-        $formattedInvoices = collect($invoices->items())->map(function ($invoice) {
-            return [
-                'maHD' => $invoice->MAHD,
-                'ngayLap' => $invoice->NGAYLAP,
-                'tongTien' => $invoice->TONGTIEN,
-                'trangThai' => $invoice->TRANGTHAITHANHTOAN,
-                'ghiChu' => $invoice->GHICHU,
-                'donViVanChuyen' => $invoice->DonViVanChuyen,
-                'maVanDon' => $invoice->MAVANDON,
-                'maKH' => $invoice->MAKH,
-                'hoTenKH' => $invoice->khachhang ? $invoice->khachhang->HOTEN : 'Khách vãng lai',
-                'tenCuaHang' => $invoice->cuahang ? $invoice->cuahang->TENCUAHANG : 'Không rõ'
-            ];
-        });
-
-        return response()->json([
-            'content' => $formattedInvoices,
-            'totalElements' => $invoices->total(),
-            'totalPages' => $invoices->lastPage(),
-        ]);
-    }
-
-    public function show($id)
-    {
-        $invoice = \App\Models\HdBan::find($id);
-        if (!$invoice) {
-            return response()->json(['message' => 'Not found'], 404);
-        }
-        return response()->json($invoice);
-    }
-
-    public function getDetails($id)
-    {
-        $details = \App\Models\ChiTietHdBan::with('sanpham')->where('MAHD', $id)->get();
-        $formatted = $details->map(function ($item) {
-            return [
-                'maSP' => $item->MASP,
-                'tenSP' => $item->sanpham ? $item->sanpham->TENSP : 'Sản phẩm ' . $item->MASP,
-                'soLuong' => $item->SOLUONG,
-                'donGia' => $item->DONGIA,
-                'thanhTien' => $item->SOLUONG * $item->DONGIA // Tính lại
-            ];
-        });
-        return response()->json($formatted);
-    }
-
-    public function updateStatus(Request $request, $id)
-    {
-        $invoice = \App\Models\HdBan::find($id);
-        if (!$invoice) {
-            return response()->json(['message' => 'Not found'], 404);
-        }
-
-        if ($request->has('trangThai')) {
-            $newStatus = $request->trangThai;
-
-            // Validate using Database Function
-            $canTransition = \Illuminate\Support\Facades\DB::selectOne('SELECT fn_can_transition(?, ?) as can_transition', [$invoice->TRANGTHAITHANHTOAN, $newStatus])->can_transition;
-            
-            if (!$canTransition) {
-                return response()->json(['message' => 'Chuyển đổi trạng thái không hợp lệ'], 400);
-            }
-
-            // Gắn user thực hiện vào biến session DB để Trigger lưu Audit Log
-            $username = auth('api')->user()->USERNAME ?? 'system';
-            \Illuminate\Support\Facades\DB::statement('SET @audit_username = ?', [$username]);
-
-            // Nếu trạng thái là Đã duyệt/Đang giao và chưa có mã vận đơn GHN, thì đẩy sang GHN
-            if (in_array($newStatus, ['Đã duyệt', 'Đang giao', 'Đã xác nhận']) && empty($invoice->MAVANDON)) {
-
-                // Parse ward_code and district_id from GHICHU
-                $wardCode = null;
-                $districtId = null;
-                if (preg_match('/\[GHN_WARD:(.*?),GHN_DIST:(.*?)\]/', $invoice->GHICHU, $matches)) {
-                    $wardCode = $matches[1];
-                    $districtId = (int) $matches[2];
-                }
-
-                if ($wardCode && $districtId) {
-                    // Tách địa chỉ hiển thị khỏi chuỗi GHICHU
-                    $addressDisplay = preg_replace('/\[GHN_WARD:.*?\]/', '', $invoice->GHICHU);
-
-                    // Đẩy job tạo đơn vào hàng đợi
-                    \App\Jobs\PushOrderToGhnJob::dispatch($id, $wardCode, $districtId, $addressDisplay);
-                }
-            }
-
-            // Logic Hủy đơn hàng và hoàn kho
-            if ($newStatus === 'Đã hủy' && $invoice->TRANGTHAITHANHTOAN !== 'Đã hủy') {
-
-                // Nếu đơn hàng đã đẩy sang GHN, phải Hủy trên GHN
-                if (!empty($invoice->MAVANDON)) {
-                    $shopId = env('GHN_SHOP_ID');
-                    if ($invoice->MACUAHANG) {
-                        $cuaHang = \App\Models\CuaHang::find($invoice->MACUAHANG);
-                        if ($cuaHang && $cuaHang->GHN_SHOP_ID) {
-                            $shopId = $cuaHang->GHN_SHOP_ID;
-                        }
-                    }
-                    try {
-                        \Illuminate\Support\Facades\Http::withoutVerifying()->withHeaders([
-                            'Token' => env('GHN_API_TOKEN'),
-                            'ShopId' => (int)$shopId
-                        ])->post('https://online-gateway.ghn.vn/shiip/public-api/v2/switch-status/cancel', [
-                            'order_codes' => [$invoice->MAVANDON]
-                        ]);
-                    } catch (\Exception $e) {
-                        // Bỏ qua lỗi nếu không hủy được trên GHN
-                    }
-                }
-
-                // 1. Hoàn lại số lượng tồn kho
-                $items = \App\Models\ChiTietHdBan::where('MAHD', $id)->get();
-                foreach ($items as $item) {
-                    $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $invoice->MACUAHANG)
-                                ->where('MASP', $item->MASP)->first();
-                    if ($tonKho) {
-                        \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                            ->where('MACUAHANG', $invoice->MACUAHANG)
-                            ->where('MASP', $item->MASP)
-                            ->update(['SOLUONG_TON' => $tonKho->SOLUONG_TON + $item->SOLUONG]);
-                    }
-
-                    $sp = \App\Models\SanPham::find($item->MASP);
-                    if ($sp) {
-                        $sp->SOLUONG += $item->SOLUONG;
-                        $sp->save();
-                    }
-                }
-
-                // Xóa cache vì tồn kho đã thay đổi
-                \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
-
-                // 2. Hủy đơn trên GHN nếu đã có mã vận đơn
-                if (!empty($invoice->MAVANDON) && $invoice->DonViVanChuyen === 'Giao Hàng Nhanh') {
-                    \App\Jobs\CancelOrderOnGhnJob::dispatch($invoice->MAVANDON);
-                }
-            }
-
-            $invoice->TRANGTHAITHANHTOAN = $newStatus;
-            $invoice->save();
-        }
-        return response()->json(['message' => 'Cập nhật thành công', 'mavandon' => $invoice->MAVANDON]);
+        $orders = $query->orderBy('id', 'desc')->paginate(10);
+        return response()->json($orders);
     }
 
     /**
-     * Customer: Xem danh sách đơn hàng của mình
+     * Customer: Checkout Online (Thông qua Stored Procedure sp_checkout_online)
      */
-    public function myOrders()
+    public function checkoutOnline(Request $request)
     {
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if (!$user || $user->MAROLE != 3) {
-            return response()->json(['error' => 'Unauthorized'], 401);
-        }
-        $khachHang = \App\Models\KhachHang::where('USERNAME', $user->USERNAME)->first();
-        if (!$khachHang) {
-            return response()->json(['content' => []]);
+        $user = Auth::guard('api')->user();
+        if (!$user) {
+            return response()->json(['error' => 'Chưa đăng nhập'], 401);
         }
 
-        $orders = \App\Models\HdBan::with('cuahang')
-            ->where('MAKH', $khachHang->MAKH)
-            ->orderBy('NGAYLAP', 'desc')
-            ->get();
-
-        // Map data để Frontend dễ dùng (giống cấu trúc cũ)
-        $mapped = $orders->map(function ($order) {
-            return [
-                'maHD' => $order->MAHD,
-                'ngayLap' => $order->NGAYLAP,
-                'tongTien' => $order->TONGTIEN,
-                'hinhThucThanhToan' => $order->PHUONGTHUCTHANHTOAN,
-                'trangThai' => $order->TRANGTHAITHANHTOAN,
-                'diaChiGiao' => $order->GHICHU,
-                'maVanDon' => $order->MAVANDON,
-                'tenCuaHang' => $order->cuahang ? $order->cuahang->TENCUAHANG : 'Dola Bakery'
-            ];
-        });
-
-        return response()->json(['content' => $mapped]);
-    }
-
-    /**
-     * Customer: Xem chi tiết đơn hàng của mình
-     */
-    public function getMyOrderDetails($id)
-    {
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if (!$user || $user->MAROLE != 3) {
-            return response()->json(['error' => 'Unauthorized'], 401);
-        }
-        $khachHang = \App\Models\KhachHang::where('USERNAME', $user->USERNAME)->first();
-        if (!$khachHang) {
-            return response()->json(['error' => 'Không tìm thấy KH'], 404);
+        $nguoidung = $user->nguoidung;
+        if (!$nguoidung) {
+            return response()->json(['error' => 'Không tìm thấy hồ sơ người dùng'], 404);
         }
 
-        $order = \App\Models\HdBan::where('MAHD', $id)->where('MAKH', $khachHang->MAKH)->first();
-        if (!$order) {
-            return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
-        }
-
-        $details = \App\Models\ChiTietHdBan::with('sanpham')->where('MAHD', $id)->get();
-
-        $mapped = $details->map(function ($detail) {
-            return [
-                'maHD' => $detail->MAHD,
-                'maSP' => $detail->MASP,
-                'tenSP' => $detail->sanpham ? $detail->sanpham->TENSP : 'Sản phẩm đã bị xóa',
-                'hinhAnh' => $detail->sanpham ? $detail->sanpham->HINHANH : null,
-                'soLuong' => $detail->SOLUONG,
-                'donGia' => $detail->DONGIA,
-                'thanhTien' => $detail->SOLUONG * $detail->DONGIA
-            ];
-        });
-
-        return response()->json($mapped);
-    }
-
-    public function applyVoucher(Request $request)
-    {
         $request->validate([
-            'voucher_code' => 'required|string',
-            'subtotal' => 'required|numeric|min:0'
+            'cuahang_id' => 'required|exists:cuahang,id',
+            'items' => 'required|array|min:1',
+            'items.*.sanpham_id' => 'required|exists:san_pham,id',
+            'items.*.so_luong' => 'required|integer|min:1',
+            'dia_chi_giao_hang' => 'required|string|max:255',
+            'phuong_thuc_thanhtoan' => 'required|integer|in:0,1,2', // 0: COD, 1: VNPAY, 2: MOMO
+            'ma_voucher' => 'nullable|string',
         ]);
 
-        $code = $request->voucher_code;
-        $subtotal = $request->subtotal;
+        try {
+            DB::statement('CALL sp_checkout_online(?, ?, ?, ?, ?, ?, ?, @donhang_id, @ma_don_hang, @error)', [
+                $nguoidung->id,
+                $request->cuahang_id,
+                $request->dia_chi_giao_hang,
+                $request->phuong_thuc_thanhtoan,
+                $request->ma_voucher ?? null,
+                $request->ghi_chu ?? null,
+                json_encode($request->items),
+            ]);
 
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $khachHang = \App\Models\KhachHang::where('USERNAME', $user->USERNAME)->first();
+            $res = DB::select('SELECT @donhang_id AS donhang_id, @ma_don_hang AS ma_don_hang, @error AS error')[0];
 
-        if (!$khachHang) {
-            return response()->json(['error' => 'Bạn phải là khách hàng để dùng voucher'], 400);
-        }
-
-        $voucher = \App\Models\KhuyenMai::where('MA_VOUCHER', $code)->first();
-
-        if (!$voucher) {
-            return response()->json(['error' => 'Mã giảm giá không tồn tại'], 404);
-        }
-
-        if (!$voucher->is_valid) {
-            return response()->json(['error' => 'Mã giảm giá đã hết hạn, bị vô hiệu hóa hoặc hết lượt sử dụng'], 400);
-        }
-
-        if ($subtotal < $voucher->DON_TOI_THIEU) {
-            return response()->json(['error' => 'Đơn hàng chưa đạt giá trị tối thiểu để dùng mã này (' . number_format($voucher->DON_TOI_THIEU) . 'đ)'], 400);
-        }
-
-        // Check if user already used this voucher
-        $alreadyUsed = \App\Models\KhuyenMaiKhachHang::where('MA_VOUCHER', $code)
-            ->where('MAKH', $khachHang->MAKH)
-            ->exists();
-
-        if ($alreadyUsed) {
-            return response()->json(['error' => 'Bạn đã sử dụng mã giảm giá này rồi'], 400);
-        }
-
-        // Calculate discount
-        $discountAmount = 0;
-        if ($voucher->LOAI_GIAM === 'PHAN_TRAM') {
-            $discountAmount = $subtotal * ($voucher->GIA_TRI / 100);
-            if ($voucher->GIAM_TOI_DA && $discountAmount > $voucher->GIAM_TOI_DA) {
-                $discountAmount = $voucher->GIAM_TOI_DA;
+            if ($res->error) {
+                return response()->json(['error' => 'Đặt hàng thất bại: ' . $res->error], 500);
             }
-        } else {
-            $discountAmount = $voucher->GIA_TRI;
-        }
 
-        // Ensure discount doesn't exceed subtotal
-        if ($discountAmount > $subtotal) {
-            $discountAmount = $subtotal;
-        }
+            $donHang = DonHang::find($res->donhang_id);
+            return response()->json(['message' => 'Đặt hàng trực tuyến thành công', 'data' => $donHang->load('chitiet')], 201);
 
-        return response()->json([
-            'message' => 'Áp dụng mã giảm giá thành công',
-            'voucher_code' => $voucher->MA_VOUCHER,
-            'discount_amount' => $discountAmount,
-            'voucher_name' => $voucher->TEN_VOUCHER
-        ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Đặt hàng thất bại: ' . $e->getMessage()], 500);
+        }
     }
 
-    public function customerCancelOrder($mahd)
+    /**
+     * Customer: Cancel order if not yet shipped (Thông qua Stored Procedure sp_cancel_order)
+     */
+    public function cancelOrder($id)
     {
-        $user = auth('api')->user();
-        if (!$user || $user->MAROLE != 3) {
-            return response()->json(['error' => 'Unauthorized'], 401);
+        $user = Auth::guard('api')->user();
+        if (!$user) return response()->json(['error' => 'Chưa đăng nhập'], 401);
+
+        DB::statement('CALL sp_cancel_order(?, @error)', [$id]);
+
+        $res = DB::select('SELECT @error AS error')[0];
+
+        if ($res->error) {
+            return response()->json(['error' => $res->error], 400);
         }
 
-        $khachHang = \App\Models\KhachHang::where('USERNAME', $user->USERNAME)->first();
-        if (!$khachHang) {
-            return response()->json(['error' => 'Không tìm thấy thông tin khách hàng'], 404);
+        return response()->json(['message' => 'Đã hủy đơn hàng thành công']);
+    }
+
+    /**
+     * GHN Webhook Handler (Thông qua Stored Procedure sp_handle_ghn_webhook)
+     */
+    public function handleGHNWebhook(Request $request)
+    {
+        $maVanDon = $request->OrderCode ?? $request->ma_van_don;
+        $ghnStatusCode = $request->Status ?? $request->ghn_status_code;
+
+        if (!$maVanDon) {
+            return response()->json(['error' => 'Mã vận đơn không hợp lệ'], 400);
         }
 
-        $order = \App\Models\HdBan::where('MAHD', $mahd)->where('MAKH', $khachHang->MAKH)->first();
-        if (!$order) {
-            return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
-        }
-
-        // Call Stored Procedure for cancellation (Handles State Machine & Audit)
-        try {
-            \Illuminate\Support\Facades\DB::statement('CALL sp_cancel_order(?, ?)', [
-                $mahd, 
-                $user->USERNAME
-            ]);
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
-        }
-
-        // Hoàn lại số lượng tồn kho
-        $items = \App\Models\ChiTietHdBan::where('MAHD', $mahd)->get();
-        foreach ($items as $item) {
-            $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $order->MACUAHANG)
-                        ->where('MASP', $item->MASP)->first();
-            if ($tonKho) {
-                \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                    ->where('MACUAHANG', $order->MACUAHANG)
-                    ->where('MASP', $item->MASP)
-                    ->update(['SOLUONG_TON' => $tonKho->SOLUONG_TON + $item->SOLUONG]);
-            }
-
-            $sp = \App\Models\SanPham::find($item->MASP);
-            if ($sp) {
-                $sp->SOLUONG += $item->SOLUONG;
-                $sp->save();
-            }
-        }
-
-        // Xóa cache vì tồn kho đã thay đổi
-        \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
-
-        if ($order->MAVANDON) {
-            \App\Jobs\CancelOrderOnGhnJob::dispatch($order->MAVANDON);
-        }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Hủy đơn hàng thành công'
+        DB::statement('CALL sp_handle_ghn_webhook(?, ?, @donhang_id, @error)', [
+            $maVanDon,
+            $ghnStatusCode,
         ]);
+
+        $res = DB::select('SELECT @donhang_id AS donhang_id, @error AS error')[0];
+
+        if ($res->error) {
+            return response()->json(['error' => $res->error], 404);
+        }
+
+        return response()->json(['success' => true, 'message' => 'Cập nhật Webhook GHN thành công']);
     }
 }
