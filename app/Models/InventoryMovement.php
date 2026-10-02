@@ -19,11 +19,11 @@ class InventoryMovement extends Model
         'reference_id',
         'USERNAME',
         'note',
-        'created_at'
+        'createdAt'
     ];
 
     protected $casts = [
-        'created_at' => 'datetime',
+        'createdAt' => 'datetime',
     ];
 
     public function sanpham()

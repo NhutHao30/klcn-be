@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class ChamCong extends Model
 {
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
     protected $table = 'chamcong';
 
     protected $fillable = [
@@ -14,8 +17,13 @@ class ChamCong extends Model
         'TRANGTHAI',
     ];
 
+    public function taikhoan()
+    {
+        return $this->belongsTo(TaiKhoan::class, 'USERNAME', 'username');
+    }
+
     public function nhanvien()
     {
-        return $this->belongsTo(NhanVien::class, 'USERNAME', 'USERNAME');
+        return $this->belongsTo(NguoiDung::class, 'USERNAME', 'taiKhoanId');
     }
 }

@@ -2,64 +2,109 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class BienBanHuy extends Model
 {
-    protected $table = 'bien_ban_huy';
+    use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
+
+    protected $table = 'bienBanHuy';
 
     protected $fillable = [
-        'MALOHAN',
-        'MACUAHANG',
-        'USERNAME',
-        'SOLUONG_HUY',
-        'LY_DO',
-        'GHICHU',
-        'NGAY_HUY',
-        'KY_THU_KHO',
-        'KY_KE_TOAN',
-        'KY_GIAM_DOC',
-        'NGUOI_KY_KE_TOAN',
-        'NGUOI_KY_GIAM_DOC',
-        'TRANGTHAI_KY',
+        'ma_bien_ban',
+        'cuaHangId',
+        'nguoi_lap_id',
+        'ngay_lap',
+        'ly_do',
+        'tong_gia_tri_huy',
+        'trangThai',
     ];
 
     protected $casts = [
-        'NGAY_HUY'    => 'datetime',
-        'SOLUONG_HUY' => 'integer',
+        'ngay_lap' => 'datetime',
+        'tong_gia_tri_huy' => 'double',
     ];
 
-    public function loHang()
+    protected $appends = [
+        'MABIENBAN', 'MABBHUY', 'MACUAHANG', 'NGAY_HUY', 'NGAYLAP',
+        'LYDO_HUY', 'LYDO', 'TONGGIATRI_HUY', 'TRANGTHAI'
+    ];
+
+    public function getMABIENBANAttribute()
     {
-        return $this->belongsTo(LoHang::class, 'MALOHAN', 'MALOHAN');
+        return $this->attributes['ma_bien_ban'] ?? $this->attributes['id'] ?? null;
     }
 
-    public function cuahang()
+    public function getMABBHUYAttribute()
     {
-        return $this->belongsTo(CuaHang::class, 'MACUAHANG', 'MACUAHANG');
+        return $this->attributes['ma_bien_ban'] ?? $this->attributes['id'] ?? null;
     }
 
-    public function taikhoan()
+    public function getMACUAHANGAttribute()
     {
-        return $this->belongsTo(TaiKhoan::class, 'USERNAME', 'USERNAME');
+        return $this->attributes['cuaHangId'] ?? null;
     }
 
-    public function nhanvien()
+    public function getNGAYHUYAttribute()
     {
-        return $this->belongsTo(NhanVien::class, 'USERNAME', 'USERNAME');
+        return $this->attributes['ngay_lap'] ?? null;
+    }
+
+    public function getNGAYLAPAttribute()
+    {
+        return $this->attributes['ngay_lap'] ?? null;
+    }
+
+    public function getLYDOHUYAttribute()
+    {
+        return $this->attributes['ly_do'] ?? null;
+    }
+
+    public function getLYDOAttribute()
+    {
+        return $this->attributes['ly_do'] ?? null;
+    }
+
+    public function getTONGGIATRIHUYAttribute()
+    {
+        return $this->attributes['tong_gia_tri_huy'] ?? 0;
+    }
+
+    public function getTRANGTHAIAttribute()
+    {
+        return $this->attributes['trangThai'] ?? 0;
+    }
+
+    public function cuaHang()
+    {
+        return $this->belongsTo(CuaHang::class, 'cuaHangId');
+    }
+
+    public function nguoiLap()
+    {
+        return $this->belongsTo(NguoiDung::class, 'nguoi_lap_id');
+    }
+
+    public function chuKySos()
+    {
+        return $this->hasMany(ChuKySo::class, 'tai_lieu_id')->where('loai_tai_lieu', 2);
+    }
+
+    public function chiTiets()
+    {
+        return $this->hasMany(ChiTietBienBanHuy::class, 'bien_ban_huy_id');
     }
 
     /**
-     * Label tiếng Việt cho lý do hủy.
+     * Biên bản hủy yêu cầu đủ 2 chữ ký: Kế toán (1), Thủ kho (2).
      */
-    public function getLyDoLabelAttribute(): string
+    public function kiemTraDaKyDu(): bool
     {
-        return match ($this->LY_DO) {
-            'het_han'   => 'Hết hạn sử dụng',
-            'hong_hong'  => 'Hỏng hóc trong bảo quản',
-            'thu_hoi'    => 'Thu hồi từ nhà cung cấp',
-            'khac'       => 'Lý do khác',
-            default      => $this->LY_DO,
-        };
+        $signedRolesCount = $this->chuKySos()->where('trangThai', 1)->distinct('vai_tro_ky')->count('vai_tro_ky');
+        return $signedRolesCount >= 2;
     }
 }

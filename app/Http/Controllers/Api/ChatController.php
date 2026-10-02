@@ -32,10 +32,10 @@ class ChatController extends Controller
             }
 
             $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
-                $q->orderBy('created_at', 'desc')->take(1);
+                $q->orderBy('createdAt', 'desc')->take(1);
             }])
             ->where('MAKH', $khachHang->MAKH)
-            ->orderBy('updated_at', 'desc')
+            ->orderBy('updatedAt', 'desc')
             ->get();
 
             return response()->json($conversations);
@@ -44,9 +44,9 @@ class ChatController extends Controller
             // Nhân viên / Admin / CSKH -> Lấy đoạn chat
             // Tạm thời lấy tất cả, thực tế có thể lọc theo MACUAHANG
             $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
-                $q->orderBy('created_at', 'desc')->take(1);
+                $q->orderBy('createdAt', 'desc')->take(1);
             }])
-            ->orderBy('updated_at', 'desc')
+            ->orderBy('updatedAt', 'desc')
             ->get();
 
             return response()->json($conversations);
@@ -92,7 +92,7 @@ class ChatController extends Controller
     public function getMessages($conversationId)
     {
         $messages = TinNhan::where('MACUOCTROCHUYEN', $conversationId)
-                           ->orderBy('created_at', 'asc')
+                           ->orderBy('createdAt', 'asc')
                            ->get();
         return response()->json($messages);
     }
@@ -231,8 +231,8 @@ class ChatController extends Controller
             'channel_name' => $channel,
             'sender_username' => $userLogin->USERNAME,
             'message' => $request->NOIDUNG,
-            'created_at' => now(),
-            'updated_at' => now()
+            'createdAt' => now(),
+            'updatedAt' => now()
         ]);
 
         $msg = DB::table('internal_messages')->where('id', $id)->first();

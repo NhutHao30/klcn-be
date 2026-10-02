@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class TinNhan extends Model
 {
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
     protected $table = 'tinnhan';
     protected $primaryKey = 'MATINNHAN';
 

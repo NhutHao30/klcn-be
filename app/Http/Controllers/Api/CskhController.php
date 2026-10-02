@@ -43,9 +43,9 @@ class CskhController extends Controller
             return response()->json([]);
         }
 
-        $stockInfo = DB::table('tonkho_cuahang')
+        $stockInfo = DB::table('tonKhoChiNhanh')
             ->join('cuahang', 'tonkho_cuahang.MACUAHANG', '=', 'cuahang.MACUAHANG')
-            ->join('sanpham', 'tonkho_cuahang.MASP', '=', 'sanpham.MASP')
+            ->join('sanPham', 'tonkho_cuahang.MASP', '=', 'sanpham.MASP')
             ->where('tonkho_cuahang.MASP', $masp)
             ->select('cuahang.TENCUAHANG', 'cuahang.DIACHI', 'tonkho_cuahang.SOLUONG_TON', 'sanpham.TENSP')
             ->orderBy('tonkho_cuahang.SOLUONG_TON', 'desc')
@@ -100,7 +100,7 @@ class CskhController extends Controller
                 }
 
                 // Kiểm tra và trừ tồn kho
-                $tonKho = DB::table('tonkho_cuahang')
+                $tonKho = DB::table('tonKhoChiNhanh')
                     ->where('MACUAHANG', $request->MACUAHANG)
                     ->where('MASP', $itemReq['MASP'])
                     ->lockForUpdate()
@@ -110,7 +110,7 @@ class CskhController extends Controller
                     throw new \Exception('Cửa hàng không đủ số lượng tồn kho cho sản phẩm: ' . $sp->TENSP);
                 }
 
-                DB::table('tonkho_cuahang')
+                DB::table('tonKhoChiNhanh')
                     ->where('MACUAHANG', $request->MACUAHANG)
                     ->where('MASP', $itemReq['MASP'])
                     ->update(['SOLUONG_TON' => $tonKho->SOLUONG_TON - $itemReq['SOLUONG']]);

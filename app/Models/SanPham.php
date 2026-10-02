@@ -2,117 +2,95 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 
 class SanPham extends Model
 {
-    use SoftDeletes;
+    use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'sanpham';
-    protected $primaryKey = 'MASP';
-    public $incrementing = false;
-    protected $keyType = 'string';
+
+    protected $table = 'sanPham';
 
     protected $fillable = [
-        'MASP',
-        'TENSP',
-        'NSX',
-        'HSD',
-        'DVT',
-        'GIABAN',
-        'SOLUONG',
-        'GHICHU',
-        'HINHANH',
-        'MALOAI',
-        'IS_NEW',
-        'PHAN_TRAM_GIAM',
+        'loaiId',
+        'tenSanPham',
+        'slug',
+        'giaBan',
+        'hinhAnh',
+        'moTa',
+        'donViTinh',
+        'trangThai',
     ];
 
-    public function loaisanpham()
+    protected $casts = [
+        'giaBan' => 'double',
+    ];
+
+    protected $appends = ['MASP', 'TENSP', 'GIABAN', 'HINHANH', 'SOLUONG_TON', 'soLuongTon', 'TONKHO_THUCTE'];
+
+    public function getMASPAttribute()
     {
-        return $this->belongsTo(LoaiSanPham::class, 'MALOAI', 'MALOAI');
+        return $this->attributes['id'] ?? null;
     }
 
-    public function giamgia()
+    public function getTENSPAttribute()
     {
-        return $this->hasOne(GiamGia::class, 'MASP', 'MASP');
+        return $this->attributes['tenSanPham'] ?? null;
     }
 
-    public function chitiethdnhaps()
+    public function getGIABANAttribute()
     {
-        return $this->hasMany(ChiTietHdNhap::class, 'MASP', 'MASP');
+        return $this->attributes['giaBan'] ?? null;
     }
 
-    public function chitiethdbans()
+    public function getHINHANHAttribute()
     {
-        return $this->hasMany(ChiTietHdBan::class, 'MASP', 'MASP');
+        return $this->attributes['hinhAnh'] ?? null;
     }
 
-    public function chitietgiohangs()
+    public function getSoLuongTonAttribute()
     {
-        return $this->hasMany(ChiTietGioHang::class, 'MASP', 'MASP');
+        if ($this->relationLoaded('tonKhoChiNhanhs')) {
+            return (int) $this->tonKhoChiNhanhs->sum('soLuongTon');
+        }
+        return (int) $this->tonKhoChiNhanhs()->sum('soLuongTon');
+    }
+
+    public function getTonkhoThucteAttribute()
+    {
+        return $this->getSoLuongTonAttribute();
+    }
+
+    public function loaiSanPham()
+    {
+        return $this->belongsTo(LoaiSanPham::class, 'loaiId');
+    }
+
+    public function loai()
+    {
+        return $this->belongsTo(LoaiSanPham::class, 'loaiId');
     }
 
     public function loHangs()
     {
-        return $this->hasMany(LoHang::class, 'MASP', 'MASP');
+        return $this->hasMany(LoHang::class, 'sanPhamId');
     }
 
-    public function loHangsConHan()
+    public function tonKhoChiNhanhs()
     {
-        return $this->hasMany(LoHang::class, 'MASP', 'MASP')
-                    ->where('TRANGTHAI', 'con_hang')
-                    ->where('HSD', '>=', now()->toDateString())
-                    ->where('SOLUONG_CON', '>', 0);
+        return $this->hasMany(TonKhoChiNhanh::class, 'sanPhamId');
+    }
+
+    public function tonkho()
+    {
+        return $this->hasMany(TonKhoChiNhanh::class, 'sanPhamId');
     }
 
     public function lichSuGias()
     {
-        return $this->hasMany(LichSuGiaSanPham::class, 'MASP', 'MASP')->orderBy('created_at', 'desc');
-    }
-
-    protected static function booted()
-    {
-        static::created(function ($sanPham) {
-            $user = auth('api')->user();
-            LichSuGiaSanPham::create([
-                'MASP' => $sanPham->MASP,
-                'GIA_CU' => null,
-                'GIA_MOI' => $sanPham->GIABAN,
-                'PHAN_TRAM_GIAM' => $sanPham->PHAN_TRAM_GIAM ?? 0,
-                'LY_DO' => 'Khởi tạo sản phẩm mới',
-                'USERNAME_NV' => $user ? $user->USERNAME : null,
-                'NGAY_AP_DUNG' => now(),
-            ]);
-        });
-
-        static::updated(function ($sanPham) {
-            if ($sanPham->isDirty('GIABAN') || $sanPham->isDirty('PHAN_TRAM_GIAM')) {
-                $user = auth('api')->user();
-                $giaCu = $sanPham->getOriginal('GIABAN');
-                $giaMoi = $sanPham->GIABAN;
-                $phanTramCu = $sanPham->getOriginal('PHAN_TRAM_GIAM') ?? 0;
-                $phanTramMoi = $sanPham->PHAN_TRAM_GIAM ?? 0;
-
-                $lyDo = 'Điều chỉnh giá niêm yết';
-                if ($sanPham->isDirty('PHAN_TRAM_GIAM')) {
-                    $lyDo = "Cập nhật % giảm giá từ {$phanTramCu}% thành {$phanTramMoi}%";
-                }
-                if ($sanPham->isDirty('GIABAN') && $sanPham->isDirty('PHAN_TRAM_GIAM')) {
-                    $lyDo = "Cập nhật giá bán ({$giaCu} -> {$giaMoi}) & % giảm ({$phanTramCu}% -> {$phanTramMoi}%)";
-                }
-
-                LichSuGiaSanPham::create([
-                    'MASP' => $sanPham->MASP,
-                    'GIA_CU' => $giaCu,
-                    'GIA_MOI' => $giaMoi,
-                    'PHAN_TRAM_GIAM' => $phanTramMoi,
-                    'LY_DO' => $lyDo,
-                    'USERNAME_NV' => $user ? $user->USERNAME : null,
-                    'NGAY_AP_DUNG' => now(),
-                ]);
-            }
-        });
+        return $this->hasMany(LichSuGiaSanPham::class, 'sanPhamId')->orderBy('createdAt', 'desc');
     }
 }

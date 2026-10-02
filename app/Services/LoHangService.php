@@ -314,34 +314,34 @@ class LoHangService
             $type, $referenceType, $referenceId, $username
         ]);
 
-        $exists = DB::table('tonkho_cuahang')
+        $exists = DB::table('tonKhoChiNhanh')
             ->where('MACUAHANG', $maCuaHang)
             ->where('MASP', $masp)
             ->exists();
 
         if ($exists) {
-            DB::table('tonkho_cuahang')
+            DB::table('tonKhoChiNhanh')
                 ->where('MACUAHANG', $maCuaHang)
                 ->where('MASP', $masp)
                 ->update([
                     'SOLUONG_TON' => DB::raw("GREATEST(0, SOLUONG_TON + {$delta})"),
-                    'updated_at'  => now(),
+                    'updatedAt'  => now(),
                 ]);
         } else if ($delta > 0) {
-            DB::table('tonkho_cuahang')->insert([
+            DB::table('tonKhoChiNhanh')->insert([
                 'MACUAHANG'   => $maCuaHang,
                 'MASP'        => $masp,
                 'SOLUONG_TON' => $delta,
-                'created_at'  => now(),
-                'updated_at'  => now(),
+                'createdAt'  => now(),
+                'updatedAt'  => now(),
             ]);
             // Do insert không kích hoạt UPDATE trigger nên chủ động ghi 1 log cho bản ghi mới
             $this->recordMovement($masp, $maCuaHang, $type, $delta, $username, $referenceId, $referenceType, null);
         }
 
         // Đồng bộ tổng tồn kho sang bảng sanpham
-        $totalStock = DB::table('tonkho_cuahang')->where('MASP', $masp)->sum('SOLUONG_TON');
-        DB::table('sanpham')->where('MASP', $masp)->update(['SOLUONG' => max(0, $totalStock)]);
+        $totalStock = DB::table('tonKhoChiNhanh')->where('MASP', $masp)->sum('SOLUONG_TON');
+        DB::table('sanPham')->where('MASP', $masp)->update(['SOLUONG' => max(0, $totalStock)]);
 
         // Reset session variables
         DB::statement("SET @inv_type = NULL, @inv_ref_type = NULL, @inv_ref_id = NULL, @inv_username = NULL");
@@ -360,7 +360,7 @@ class LoHangService
         ?string $referenceType,
         ?string $note = null
     ): void {
-        $current = DB::table('tonkho_cuahang')
+        $current = DB::table('tonKhoChiNhanh')
             ->where('MACUAHANG', $maCuaHang)
             ->where('MASP', $masp)
             ->value('SOLUONG_TON') ?? 0;
@@ -376,7 +376,7 @@ class LoHangService
             'reference_id'   => $referenceId,
             'USERNAME'       => $username,
             'note'           => $note,
-            'created_at'     => now(),
+            'createdAt'     => now(),
         ]);
     }
 }

@@ -2,22 +2,39 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class LoaiSanPham extends Model
 {
-    protected $table = 'loaisanpham';
-    protected $primaryKey = 'MALOAI';
-    public $incrementing = false;
-    protected $keyType = 'string';
+    use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
+
+    protected $table = 'loaiSanPham';
 
     protected $fillable = [
-        'MALOAI',
-        'TENLOAI',
+        'tenLoai',
+        'slug',
+        'hinhAnh',
+        'trangThai',
     ];
 
-    public function sanphams()
+    protected $appends = ['MALOAI', 'TENLOAI'];
+
+    public function getMALOAIAttribute()
     {
-        return $this->hasMany(SanPham::class, 'MALOAI', 'MALOAI');
+        return $this->attributes['id'] ?? null;
+    }
+
+    public function getTENLOAIAttribute()
+    {
+        return $this->attributes['tenLoai'] ?? null;
+    }
+
+    public function sanPhams()
+    {
+        return $this->hasMany(SanPham::class, 'loaiId');
     }
 }

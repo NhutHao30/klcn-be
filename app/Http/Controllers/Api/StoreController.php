@@ -5,195 +5,137 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\CuaHang;
-use App\Models\NhanVien;
-use App\Models\HdBan;
-use App\Models\TonKhoCuaHang;
-use Illuminate\Support\Facades\DB;
 
 class StoreController extends Controller
 {
-    /**
-     * Get all active stores for public frontend
-     */
     public function publicIndex()
     {
-        $stores = CuaHang::where('TRANGTHAI', 'Đang hoạt động')->select('MACUAHANG', 'TENCUAHANG', 'DIACHI', 'SDT')->get();
-        return response()->json($stores);
+        $stores = CuaHang::where('trangThai', 1)->get();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Lấy danh sách cửa hàng thành công',
+            'data' => $stores,
+        ]);
     }
+
     public function index()
     {
-        $stores = CuaHang::all();
-        $result = [];
+        $stores = CuaHang::with(['nguoiDungs', 'loHangs.sanPham'])->get();
 
-        foreach ($stores as $store) {
-            // Tính tổng doanh thu
-            $revenue = HdBan::where('MACUAHANG', $store->MACUAHANG)
-                            ->whereIn('TRANGTHAITHANHTOAN', ['Đã hoàn thành', 'Đã duyệt', 'Đang giao'])
-                            ->sum('TONGTIEN');
-
-            // Đếm số lượng khách hàng duy nhất đã mua tại cửa hàng này
-            $customerCount = HdBan::where('MACUAHANG', $store->MACUAHANG)
-                                  ->distinct('MAKH')
-                                  ->count('MAKH');
-
-            // Danh sách nhân viên
-            $employees = NhanVien::where('MACUAHANG', $store->MACUAHANG)
-                                 ->where('TRANGTHAI', '!=', 'Nghỉ việc')
-                                 ->select('USERNAME', 'HOTEN', 'CHUCVU', 'LUONG')
-                                 ->get();
-
-            // Tồn kho sản phẩm
-            $inventory = TonKhoCuaHang::where('MACUAHANG', $store->MACUAHANG)
-                                      ->join('sanpham', 'tonkho_cuahang.MASP', '=', 'sanpham.MASP')
-                                      ->select('sanpham.MASP', 'sanpham.TENSP', 'tonkho_cuahang.SOLUONG_TON')
-                                      ->get();
-
-            $totalSalary = $employees->sum('LUONG');
-
-            // Lấy thông tin chấm công tháng hiện tại của nhân viên trong cửa hàng
-            $usernames = $employees->pluck('USERNAME');
-            $chamcongs = \App\Models\ChamCong::whereIn('USERNAME', $usernames)
-                                ->whereMonth('NGAYCHAMCONG', now()->month)
-                                ->whereYear('NGAYCHAMCONG', now()->year)
-                                ->get();
-            $totalDaysWorked = $chamcongs->where('TRANGTHAI', 1)->count();
-            $totalDaysOff = $chamcongs->where('TRANGTHAI', 0)->count();
-
-            // Tính số ngày công/nghỉ cho TỪNG nhân viên
-            foreach ($employees as $emp) {
-                $emp->workingDays = $chamcongs->where('USERNAME', $emp->USERNAME)->where('TRANGTHAI', 1)->count();
-                $emp->absentDays = $chamcongs->where('USERNAME', $emp->USERNAME)->where('TRANGTHAI', 0)->count();
-            }
-
-            $newCustomers = \App\Models\KhachHang::where('MACUAHANG', $store->MACUAHANG)
-                                ->where('created_at', '>=', now()->subDays(30))
-                                ->count();
-
-            // Biểu đồ Doanh thu và Hóa đơn trong 30 ngày gần nhất
-            $startDate = now()->subDays(29)->startOfDay();
-            $dailyStats = \App\Models\HdBan::where('MACUAHANG', $store->MACUAHANG)
-                                ->whereIn('TRANGTHAITHANHTOAN', ['Đã hoàn thành', 'Đã duyệt', 'Đang giao'])
-                                ->where('NGAYLAP', '>=', $startDate)
-                                ->select(
-                                    DB::raw('DATE(NGAYLAP) as date'),
-                                    DB::raw('SUM(TONGTIEN) as total'),
-                                    DB::raw('COUNT(MAHD) as count')
-                                )
-                                ->groupBy('date')
-                                ->get()
-                                ->keyBy('date');
-
-            $revenueChart = [];
-            $invoiceChart = [];
-            for ($i = 29; $i >= 0; $i--) {
-                $dateStr = now()->subDays($i)->format('Y-m-d');
-                $revenueChart[] = [
-                    'date' => now()->subDays($i)->format('d/m'),
-                    'total' => isset($dailyStats[$dateStr]) ? $dailyStats[$dateStr]->total : 0
-                ];
-                $invoiceChart[] = [
-                    'date' => now()->subDays($i)->format('d/m'),
-                    'count' => isset($dailyStats[$dateStr]) ? $dailyStats[$dateStr]->count : 0
-                ];
-            }
-
-            $result[] = [
-                'id' => $store->MACUAHANG,
-                'name' => $store->TENCUAHANG,
-                'address' => $store->DIACHI,
-                'phone' => $store->SDT,
-                'status' => $store->TRANGTHAI,
-                'revenue' => $revenue,
-                'customerCount' => $customerCount,
-                'newCustomers' => $newCustomers,
-                'totalSalary' => $totalSalary,
-                'totalDaysWorked' => $totalDaysWorked,
-                'totalDaysOff' => $totalDaysOff,
-                'employees' => $employees,
-                'inventory' => $inventory,
-                'revenueChart' => $revenueChart,
-                'invoiceChart' => $invoiceChart,
-                'GHN_SHOP_ID' => $store->GHN_SHOP_ID,
-            ];
-        }
-
-        return response()->json($result);
+        return response()->json([
+            'success' => true,
+            'message' => 'Lấy danh sách quản lý cửa hàng thành công',
+            'data' => $stores,
+        ]);
     }
 
-    public function updateStatus(Request $request, $id)
+    public function show($id)
     {
-        $request->validate([
-            'status' => 'required|string|in:Đang hoạt động,Tạm đóng cửa,Đóng cửa vĩnh viễn'
-        ]);
+        $store = CuaHang::with(['nguoiDungs', 'loHangs.sanPham', 'hoaDonNhaps'])->find($id);
 
-        $store = CuaHang::find($id);
         if (!$store) {
-            return response()->json(['error' => 'Store not found'], 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy chi nhánh',
+            ], 404);
         }
 
-        $store->TRANGTHAI = $request->status;
-        $store->save();
-
-        return response()->json(['message' => 'Cập nhật trạng thái thành công']);
+        return response()->json([
+            'success' => true,
+            'message' => 'Chi tiết chi nhánh cửa hàng',
+            'data' => $store,
+        ]);
     }
 
     public function store(Request $request)
     {
-        $request->validate([
-            'TENCUAHANG' => 'required|string',
-            'DIACHI' => 'required|string',
-            'SDT' => 'required|string',
-            'GHN_SHOP_ID' => 'nullable|string|unique:cuahang,GHN_SHOP_ID',
-        ], [
-            'GHN_SHOP_ID.unique' => 'Mã GHN Shop ID này đã được cấu hình cho một chi nhánh khác.'
+        $request->merge([
+            'ten_cuahang' => $request->input('ten_cuahang') ?? $request->input('TENCUAHANG'),
+            'diaChiChiTiet' => $request->input('diaChiChiTiet') ?? $request->input('DIACHI') ?? $request->input('address'),
+            'soDienThoai' => $request->input('soDienThoai') ?? $request->input('SDT') ?? $request->input('phone'),
+            'ghn_shop_id' => $request->input('ghn_shop_id') ?? $request->input('GHN_SHOP_ID'),
         ]);
 
-        DB::beginTransaction();
-        try {
-            $store = CuaHang::create([
-                'TENCUAHANG' => $request->TENCUAHANG,
-                'DIACHI' => $request->DIACHI,
-                'SDT' => $request->SDT,
-                'GHN_SHOP_ID' => $request->GHN_SHOP_ID,
-                'TRANGTHAI' => 'Đang hoạt động'
-            ]);
+        $validated = $request->validate([
+            'ten_cuahang' => 'required|string|max:150',
+            'diaChiChiTiet' => 'required|string|max:255',
+            'soDienThoai' => 'nullable|string|max:20',
+            'maTinh' => 'nullable|integer',
+            'maHuyen' => 'nullable|integer',
+            'maXa' => 'nullable|string',
+            'ghn_shop_id' => 'nullable|string|max:50',
+        ]);
 
-            // Add all products to this store's inventory with 0 stock
-            $products = \App\Models\SanPham::all();
-            foreach ($products as $p) {
-                TonKhoCuaHang::create([
-                    'MACUAHANG' => $store->MACUAHANG,
-                    'MASP' => $p->MASP,
-                    'SOLUONG_TON' => 0
-                ]);
-            }
-            DB::commit();
-            return response()->json(['message' => 'Tạo chi nhánh thành công', 'store' => $store], 201);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json(['error' => 'Lỗi tạo chi nhánh: ' . $e->getMessage()], 500);
-        }
+        $store = CuaHang::create(array_merge([
+            'maTinh' => 79,
+            'maHuyen' => 760,
+            'maXa' => '26740',
+            'trangThai' => 1,
+        ], $validated));
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Tạo chi nhánh cửa hàng mới thành công',
+            'data' => $store,
+        ], 201);
     }
 
     public function update(Request $request, $id)
     {
-        $request->validate([
-            'GHN_SHOP_ID' => 'nullable|string|unique:cuahang,GHN_SHOP_ID,' . $id . ',MACUAHANG'
-        ], [
-            'GHN_SHOP_ID.unique' => 'Mã GHN Shop ID này đã được cấu hình cho một chi nhánh khác.'
+        $store = CuaHang::find($id);
+
+        if (!$store) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy chi nhánh',
+            ], 404);
+        }
+
+        $request->merge([
+            'ten_cuahang' => $request->input('ten_cuahang') ?? $request->input('TENCUAHANG') ?? $store->ten_cuahang,
+            'diaChiChiTiet' => $request->input('diaChiChiTiet') ?? $request->input('DIACHI') ?? $store->diaChiChiTiet,
+            'soDienThoai' => $request->input('soDienThoai') ?? $request->input('SDT') ?? $store->soDienThoai,
+            'ghn_shop_id' => $request->input('ghn_shop_id') ?? $request->input('GHN_SHOP_ID') ?? $store->ghn_shop_id,
         ]);
 
+        $validated = $request->validate([
+            'ten_cuahang' => 'sometimes|string|max:150',
+            'diaChiChiTiet' => 'sometimes|string|max:255',
+            'soDienThoai' => 'nullable|string|max:20',
+            'ghn_shop_id' => 'nullable|string|max:50',
+            'trangThai' => 'sometimes|integer|in:0,1',
+        ]);
+
+        $store->update($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Cập nhật thông tin chi nhánh thành công',
+            'data' => $store,
+        ]);
+    }
+
+    public function updateStatus(Request $request, $id)
+    {
         $store = CuaHang::find($id);
+
         if (!$store) {
-            return response()->json(['error' => 'Không tìm thấy chi nhánh'], 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy chi nhánh',
+            ], 404);
         }
 
-        if ($request->has('GHN_SHOP_ID')) {
-            $store->GHN_SHOP_ID = $request->GHN_SHOP_ID;
-        }
+        $statusStr = $request->input('status');
+        $newStatus = ($statusStr === 'Đang hoạt động' || $statusStr == 1) ? 1 : 0;
 
-        $store->save();
+        $store->update(['trangThai' => $newStatus]);
 
-        return response()->json(['message' => 'Cập nhật chi nhánh thành công', 'store' => $store]);
+        return response()->json([
+            'success' => true,
+            'message' => 'Cập nhật trạng thái chi nhánh thành công',
+            'data' => $store,
+        ]);
     }
 }

@@ -4,415 +4,407 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use App\Models\GioHang;
 use App\Models\ChiTietGioHang;
 use App\Models\SanPham;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
+use App\Models\DonHang;
+use App\Models\ChiTietDonHang;
+use App\Models\KhuyenMai;
+use App\Models\TonKhoChiNhanh;
 
 class CartController extends Controller
 {
-    /**
-     * Get or create the cart for the authenticated user.
-     */
     private function getCart()
     {
-        $user = Auth::user(); // TaiKhoan
-        $khachHang = \App\Models\KhachHang::where('USERNAME', $user->USERNAME)->first();
+        $user = Auth::guard('api')->user();
+        if (!$user) return null;
 
-        if (!$khachHang) {
-            throw new \Exception("Vui lòng cập nhật thông tin khách hàng trước khi mua sắm.");
-        }
+        $nguoidung = $user->nguoidung;
+        if (!$nguoidung) return null;
 
-        $cart = GioHang::firstOrCreate(
-            ['MAKH' => $khachHang->MAKH],
-            ['MAGIOHANG' => 'GH' . substr(time(), -8), 'NGAYTAO' => now()]
-        );
-
-        return $cart;
+        return GioHang::firstOrCreate(['nguoidungId' => $nguoidung->id]);
     }
 
-    /**
-     * Lấy danh sách sản phẩm trong giỏ hàng
-     */
     public function index()
     {
-        try {
-            $cart = $this->getCart();
-            $items = ChiTietGioHang::with('sanpham')->where('MAGIOHANG', $cart->MAGIOHANG)->get();
-
-            $formatted = $items->map(function ($item) {
-                return [
-                    'id' => $item->MASP,
-                    'name' => $item->sanpham ? $item->sanpham->TENSP : 'Sản phẩm ' . $item->MASP,
-                    'price' => $item->DonGia,
-                    'quantity' => $item->SOLUONG,
-                    'image' => $item->sanpham ? $item->sanpham->HINHANH : null,
-                    'note' => $item->GHICHU
-                ];
-            });
-
-            return response()->json(['cartId' => $cart->MAGIOHANG, 'items' => $formatted]);
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
+        $cart = $this->getCart();
+        if (!$cart) {
+            return response()->json(['error' => 'Chưa xác thực người dùng'], 401);
         }
+
+        $items = ChiTietGioHang::with('sanpham')->where('gioHangId', $cart->id)->get();
+        return response()->json(['cart_id' => $cart->id, 'items' => $items]);
     }
 
-    /**
-     * Thêm sản phẩm vào giỏ hàng
-     */
-    public function add(Request $request)
+    public function addToCart(Request $request)
     {
-        try {
-            $request->validate([
-                'masp' => 'required|string',
-                'quantity' => 'required|integer|min:1'
+        $cart = $this->getCart();
+        if (!$cart) {
+            return response()->json(['error' => 'Chưa xác thực người dùng'], 401);
+        }
+
+        $request->merge([
+            'sanPhamId' => $request->input('sanPhamId') ?? $request->input('masp') ?? $request->input('MASP') ?? $request->input('product_id'),
+            'soLuong' => $request->input('soLuong') ?? $request->input('quantity') ?? $request->input('soluong') ?? 1,
+        ]);
+
+        $request->validate([
+            'sanPhamId' => 'required|exists:sanPham,id',
+            'soLuong' => 'required|integer|min:1',
+        ]);
+
+        $item = ChiTietGioHang::where('gioHangId', $cart->id)
+            ->where('sanPhamId', $request->sanPhamId)
+            ->first();
+
+        $product = SanPham::find($request->sanPhamId);
+        $stock = $product ? (int) $product->soLuong_ton : 0;
+        $existingQty = $item ? (int) $item->soLuong : 0;
+        $totalRequested = $existingQty + (int) $request->soLuong;
+
+        if ($stock <= 0) {
+            return response()->json(['error' => 'Sản phẩm này hiện tại đã hết hàng!'], 400);
+        }
+
+        if ($totalRequested > $stock) {
+            return response()->json(['error' => "Số lượng sản phẩm trong kho không đủ (Rất tiếc hiện tại chỉ còn {$stock} sản phẩm)!"], 400);
+        }
+
+        if ($item) {
+            $item->increment('soLuong', $request->soLuong);
+        } else {
+            $item = ChiTietGioHang::create([
+                'gioHangId' => $cart->id,
+                'sanPhamId' => $request->sanPhamId,
+                'soLuong' => $request->soLuong,
             ]);
-
-            $cart = $this->getCart();
-            $sp = SanPham::find($request->masp);
-
-            if (!$sp) {
-                return response()->json(['error' => 'Sản phẩm không tồn tại'], 404);
-            }
-
-            $maxStock = (new \App\Http\Controllers\Api\ProductController)->calculateStock($request->masp);
-            if ($maxStock < $request->quantity) {
-                return response()->json(['error' => 'Sản phẩm đã hết hạn sử dụng hoặc không đủ tồn kho còn hạn!'], 400);
-            }
-
-            // Check if item exists in cart
-            $item = ChiTietGioHang::where('MAGIOHANG', $cart->MAGIOHANG)->where('MASP', $request->masp)->first();
-
-            if ($item) {
-                $item->SOLUONG += $request->quantity;
-                if ($item->SOLUONG > $maxStock) {
-                    return response()->json(['error' => 'Vượt quá số lượng tồn kho'], 400);
-                }
-                $item->save();
-            } else {
-                ChiTietGioHang::create([
-                    'MAGIOHANG' => $cart->MAGIOHANG,
-                    'MASP' => $sp->MASP,
-                    'SOLUONG' => $request->quantity,
-                    'DonGia' => $sp->GIABAN,
-                    'GHICHU' => $request->note ?? null
-                ]);
-            }
-
-            return response()->json(['message' => 'Đã thêm vào giỏ hàng']);
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
         }
+
+        return response()->json(['message' => 'Đã thêm sản phẩm vào giỏ hàng', 'data' => $item]);
     }
 
-    /**
-     * Cập nhật số lượng
-     */
-    public function updateQuantity(Request $request)
+    public function updateCart(Request $request, $id)
     {
-        try {
-            $request->validate([
-                'masp' => 'required|string',
-                'quantity' => 'required|integer|min:1'
+        $cart = $this->getCart();
+        if (!$cart) {
+            return response()->json(['error' => 'Chưa xác thực người dùng'], 401);
+        }
+
+        $request->merge([
+            'soLuong' => $request->input('soLuong') ?? $request->input('quantity') ?? $request->input('soluong') ?? 1,
+        ]);
+
+        $request->validate([
+            'soLuong' => 'required|integer|min:1',
+        ]);
+
+        $item = ChiTietGioHang::where('gioHangId', $cart->id)
+            ->where(function($q) use ($id) {
+                $q->where('id', $id)->orWhere('sanPhamId', $id);
+            })->first();
+
+        if (!$item) {
+            return response()->json(['error' => 'Không tìm thấy món trong giỏ'], 404);
+        }
+
+        $product = SanPham::find($item->sanPhamId);
+        $stock = $product ? (int) $product->soLuong_ton : 0;
+        if ((int) $request->soLuong > $stock) {
+            return response()->json(['error' => "Số lượng sản phẩm trong kho không đủ (Rất tiếc hiện tại chỉ còn {$stock} sản phẩm)!"], 400);
+        }
+
+        $item->update(['soLuong' => $request->soLuong]);
+        return response()->json(['message' => 'Đã cập nhật số lượng', 'data' => $item]);
+    }
+
+    public function removeFromCart($id)
+    {
+        $cart = $this->getCart();
+        if (!$cart) {
+            return response()->json(['error' => 'Chưa xác thực người dùng'], 401);
+        }
+
+        ChiTietGioHang::where('gioHangId', $cart->id)
+            ->where(function($q) use ($id) {
+                $q->where('id', $id)->orWhere('sanPhamId', $id);
+            })
+            ->delete();
+        return response()->json(['message' => 'Đã xóa khỏi giỏ hàng']);
+    }
+
+    public function clearCart()
+    {
+        $cart = $this->getCart();
+        if ($cart) {
+            ChiTietGioHang::where('gioHangId', $cart->id)->delete();
+        }
+
+        return response()->json(['message' => 'Đã xóa sạch giỏ hàng']);
+    }
+
+    public function checkout(Request $request)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) {
+            return response()->json(['error' => 'Bạn chưa đăng nhập!'], 401);
+        }
+
+        $nguoidung = $user->nguoidung;
+        if (!$nguoidung) {
+            $nguoidung = \App\Models\NguoiDung::create([
+                'taiKhoanId' => $user->id,
+                'hoTen' => $user->username ?? 'Khách hàng',
+                'soDienThoai' => '0900000000',
+                'loaiNguoiDung' => 0,
             ]);
-
-            $cart = $this->getCart();
-            $item = ChiTietGioHang::where('MAGIOHANG', $cart->MAGIOHANG)->where('MASP', $request->masp)->first();
-            if (!$item) {
-                return response()->json(['error' => 'Không tìm thấy sản phẩm trong giỏ'], 404);
-            }
-
-            $sp = SanPham::find($request->masp);
-            $maxStock = (new \App\Http\Controllers\Api\ProductController)->calculateStock($request->masp);
-            if ($request->quantity > $maxStock) {
-                return response()->json(['error' => 'Vượt quá số lượng tồn kho còn hạn sử dụng'], 400);
-            }
-
-            $item->SOLUONG = $request->quantity;
-            $item->save();
-
-            return response()->json(['message' => 'Đã cập nhật giỏ hàng']);
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
         }
-    }
 
-    /**
-     * Xóa sản phẩm khỏi giỏ
-     */
-    public function remove($masp)
-    {
-        try {
-            $cart = $this->getCart();
-            ChiTietGioHang::where('MAGIOHANG', $cart->MAGIOHANG)->where('MASP', $masp)->delete();
-            return response()->json(['message' => 'Đã xóa khỏi giỏ hàng']);
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
+        $cart = GioHang::where('nguoidungId', $nguoidung->id)->first();
+        if (!$cart) {
+            return response()->json(['error' => 'Giỏ hàng của bạn đang trống!'], 400);
         }
-    }
 
-    /**
-     * Thanh toán Online (Khách hàng đặt hàng)
-     */
-    public function checkoutOnline(Request $request)
-    {
-        try {
-            $cart = $this->getCart();
-            $items = ChiTietGioHang::where('MAGIOHANG', $cart->MAGIOHANG)->get();
+        $cartItems = ChiTietGioHang::with('sanpham')->where('gioHangId', $cart->id)->get();
+        if ($cartItems->isEmpty()) {
+            return response()->json(['error' => 'Giỏ hàng của bạn đang trống!'], 400);
+        }
 
-            if ($items->isEmpty()) {
-                return response()->json(['error' => 'Giỏ hàng trống'], 400);
-            }
+        $paymentMethodStr = $request->input('paymentMethod') ?? $request->input('phuongThucThanhToan') ?? 'COD';
+        $pmCode = 0; // 0: COD, 1: VIETQR/CK, 2: MOMO
+        if ($paymentMethodStr === 'VIETQR' || $paymentMethodStr === '1' || $paymentMethodStr == 1) {
+            $pmCode = 1;
+        } else if ($paymentMethodStr === 'MOMO' || $paymentMethodStr === '2' || $paymentMethodStr == 2) {
+            $pmCode = 2;
+        }
 
-            $paymentMethod = $request->input('paymentMethod', 'COD');
-            $address = $request->input('address', 'Giao tới địa chỉ mặc định');
-            $note = $request->input('note', 'Khách hàng đặt online');
-            $voucherCode = $request->input('voucher_code');
+        $shippingFee = (float)($request->input('shippingFee') ?? 30000);
+        $address = $request->input('address') ?? $request->input('diaChiGiaoHang') ?? 'Địa chỉ mặc định';
+        $note = $request->input('note') ?? $request->input('ghiChu') ?? '';
+        $maDonHang = $request->input('mahd') ?? ('HD' . date('YmdHis') . rand(100, 999));
 
-            $khachHang = \App\Models\KhachHang::find($cart->MAKH);
-            if (!$khachHang) {
-                return response()->json(['error' => 'Không tìm thấy thông tin khách hàng'], 404);
-            }
+        $subtotal = 0;
+        foreach ($cartItems as $ci) {
+            $sp = $ci->sanpham;
+            $price = $sp ? (float)$sp->giaBan : 0;
+            $subtotal += $price * (int)$ci->soLuong;
+        }
 
-            DB::beginTransaction();
-
-            $total = 0;
-
-            // Tìm cửa hàng có đủ hàng cho TẤT CẢ sản phẩm trong giỏ
-            $cuahangs = \App\Models\CuaHang::where('TRANGTHAI', 'Đang hoạt động')->get();
-            $eligibleStores = [];
-
-            foreach ($cuahangs as $ch) {
-                $isEnoughStock = true;
-                foreach ($items as $item) {
-                    $avail = (new \App\Http\Controllers\Api\ProductController)->calculateStock($item->MASP, $ch->MACUAHANG);
-                    if ($avail < $item->SOLUONG) {
-                        $isEnoughStock = false;
-                        break;
-                    }
-                }
-                if ($isEnoughStock) {
-                    $eligibleStores[] = $ch;
-                }
-            }
-
-            if (empty($eligibleStores)) {
-                throw new \Exception("Hiện tại không có cửa hàng nào còn đủ hàng cho toàn bộ giỏ hàng của bạn.");
-            }
-
-            $selectedStoreId = null;
-            $minFee = -1;
-
-            // GHN API Token
-            $ghnToken = env('GHN_API_TOKEN');
-
-            // Tính cước phí để chọn cửa hàng gần nhất (cước phí rẻ nhất = gần nhất)
-            foreach ($eligibleStores as $ch) {
-                $fee = 999999; // Default max fee
-                $shopId = $ch->GHN_SHOP_ID ?? env('GHN_SHOP_ID'); // Fallback to default if not set
-
-                if ($shopId) {
-                    try {
-                        $feePayload = [
-                            'to_ward_code' => (string)$request->to_ward_code,
-                            'to_district_id' => (int)$request->to_district_id,
-                            'weight' => 1000,
-                            'length' => 20,
-                            'width' => 20,
-                            'height' => 10
-                        ];
-
-                        $serviceTypes = [2, 5, 1]; // 2: Chuẩn, 5: Tiết kiệm, 1: Nhanh
-                        foreach ($serviceTypes as $serviceType) {
-                            $response = \Illuminate\Support\Facades\Http::withoutVerifying()->withHeaders([
-                                'Token' => $ghnToken,
-                                'ShopId' => (int)$shopId
-                            ])->post('https://online-gateway.ghn.vn/shiip/public-api/v2/shipping-order/fee', array_merge($feePayload, ['service_type_id' => $serviceType]));
-
-                            $feeData = $response->json();
-                            if (isset($feeData['code']) && $feeData['code'] === 200 && isset($feeData['data']['total'])) {
-                                $fee = $feeData['data']['total'];
-                                break; // Thoát vòng lặp nếu lấy phí thành công
-                            }
-                        }
-                    } catch (\Exception $e) {
-                        // Ignore error, keep fee at 999999
-                    }
-                }
-
-                if ($minFee === -1 || $fee < $minFee) {
-                    $minFee = $fee;
-                    $selectedStoreId = $ch->MACUAHANG;
-                }
-            }
-
-            if (!$selectedStoreId) {
-                $selectedStoreId = $eligibleStores[0]->MACUAHANG; // Fallback
-            }
-
-            // Trừ tồn kho lô FEFO còn hạn tại cửa hàng được chọn và tính tổng tiền
-            $loService = new \App\Services\LoHangService();
-            foreach ($items as $item) {
-                $fefoResult = $loService->getFefoLo($item->MASP, $selectedStoreId, $item->SOLUONG, 0);
-                if (!empty($fefoResult)) {
-                    foreach ($fefoResult as $fefoItem) {
-                        $loService->consumeLo(
-                            $fefoItem['malohan'],
-                            $fefoItem['soLuong'],
-                            $request->mahd ?? null,
-                            $user?->USERNAME
-                        );
+        $voucherDiscount = 0;
+        $voucherId = null;
+        $voucherCode = $request->input('voucher_code');
+        if ($voucherCode) {
+            $km = KhuyenMai::where('maVoucher', $voucherCode)->where('trangThai', 1)->first();
+            if ($km) {
+                $voucherId = $km->id;
+                if ($km->loaiGiamGia === 'PHAN_TRAM') {
+                    $voucherDiscount = ($subtotal * $km->giaTriGiam) / 100;
+                    if ($km->giamToiDa > 0 && $voucherDiscount > $km->giamToiDa) {
+                        $voucherDiscount = $km->giamToiDa;
                     }
                 } else {
-                    // Fallback trừ tonkho_cuahang nếu sản phẩm chưa được khởi tạo bảng lo_hang
-                    $hasLoHang = \App\Models\LoHang::where('MASP', $item->MASP)->where('MACUAHANG', $selectedStoreId)->exists();
-                    if ($hasLoHang) {
-                        throw new \Exception("Sản phẩm {$item->MASP} đã hết hạn sử dụng hoặc không đủ lô còn hạn!");
-                    }
-                    $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $selectedStoreId)
-                                ->where('MASP', $item->MASP)->lockForUpdate()->first();
-                    if ($tonKho) {
-                        \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                            ->where('MACUAHANG', $selectedStoreId)
-                            ->where('MASP', $item->MASP)
-                            ->update(['SOLUONG_TON' => max(0, $tonKho->SOLUONG_TON - $item->SOLUONG)]);
-                    }
-                }
-
-                $sp = SanPham::find($item->MASP);
-                if ($sp) {
-                    $sp->SOLUONG = max(0, $sp->SOLUONG - $item->SOLUONG);
-                    $sp->save();
-                }
-
-                $total += $item->SOLUONG * $item->DonGia;
-            }
-
-            $mahd = $request->mahd ?? ('HD' . substr(time(), -8));
-            $mavandon = null;
-
-            $discountAmount = 0;
-            $appliedVoucher = null;
-
-            // Handle Voucher
-            if ($voucherCode) {
-                $voucher = \App\Models\KhuyenMai::where('MA_VOUCHER', $voucherCode)->first();
-                if ($voucher && $voucher->is_valid && $total >= $voucher->DON_TOI_THIEU) {
-                    $alreadyUsed = \App\Models\KhuyenMaiKhachHang::where('MA_VOUCHER', $voucherCode)
-                        ->where('MAKH', $khachHang->MAKH)
-                        ->exists();
-
-                    if (!$alreadyUsed) {
-                        if ($voucher->LOAI_GIAM === 'PHAN_TRAM') {
-                            $discountAmount = $total * ($voucher->GIA_TRI / 100);
-                            if ($voucher->GIAM_TOI_DA && $discountAmount > $voucher->GIAM_TOI_DA) {
-                                $discountAmount = $voucher->GIAM_TOI_DA;
-                            }
-                        } else {
-                            $discountAmount = $voucher->GIA_TRI;
-                        }
-
-                        if ($discountAmount > $total) {
-                            $discountAmount = $total;
-                        }
-
-                        $appliedVoucher = $voucher;
-                    }
+                    $voucherDiscount = $km->giaTriGiam;
                 }
             }
+        }
 
-            // Logic mới: Tất cả đơn hàng (COD hay Chuyển khoản) đều chờ Admin xác nhận
-            // Tuyệt đối KHÔNG đẩy sang GHN ngay lập tức để tránh Shipper đến lấy hàng ảo.
+        $totalPayment = max(0, ($subtotal + $shippingFee) - $voucherDiscount);
+        
+        // Dynamically find nearest store with sufficient stock for ALL cart items
+        $storeId = $request->input('cuaHangId') ?? $this->findBestFulfillingStore($cartItems, $address);
 
-            \App\Models\HdBan::create([
-                'MAHD' => $mahd,
-                'NGAYLAP' => now(),
-                'TONGTIEN' => $total - $discountAmount + ($request->shippingFee ?? 0),
-                'PHUONGTHUCTHANHTOAN' => $paymentMethod === 'MOMO' ? 'Ví Momo P2P' : ($paymentMethod === 'VIETQR' ? 'Chuyển khoản VietQR' : 'COD (Giao hàng)'),
-                'TRANGTHAITHANHTOAN' => $paymentMethod === 'COD' ? 'Chờ xử lý' : 'Đang xử lý (Chờ xác nhận CK)',
-                'GHICHU' => "Đơn hàng Online. Giao tới: {$address}. Ghi chú: {$note} [GHN_WARD:{$request->to_ward_code},GHN_DIST:{$request->to_district_id}]",
-                'MAKH' => $cart->MAKH,
-                'MAVANDON' => $mavandon,
-                'DonViVanChuyen' => 'Giao Hàng Nhanh',
-                'MACUAHANG' => $selectedStoreId,
-                'MA_VOUCHER' => $appliedVoucher ? $appliedVoucher->MA_VOUCHER : null,
-                'SOTIEN_GIAM_VOUCHER' => $discountAmount,
+        DB::beginTransaction();
+        try {
+            $donHang = DonHang::create([
+                'maDonHang' => $maDonHang,
+                'nguoidungId' => $nguoidung->id,
+                'cuaHangId' => $storeId,
+                'voucherId' => $voucherId,
+                'loaiDonHang' => 0,
+                'tongTienHang' => $subtotal,
+                'soTienGiam' => $voucherDiscount,
+                'phiVanChuyen' => $shippingFee,
+                'tongThanhToan' => $totalPayment,
+                'phuongThucThanhToan' => $pmCode,
+                'trangThaiThanhToan' => $pmCode == 0 ? 0 : 1,
+                'trangThaiDonHang' => 1,
+                'diaChiGiaoHang' => $address,
+                'toWardCode' => $request->input('to_ward_code'),
+                'toDistrictId' => $request->input('to_district_id') ? (int)$request->input('to_district_id') : null,
+                'ghiChu' => $note,
             ]);
 
-            if ($appliedVoucher) {
-                // Record voucher usage
-                \App\Models\KhuyenMaiKhachHang::create([
-                    'MA_VOUCHER' => $appliedVoucher->MA_VOUCHER,
-                    'MAKH' => $khachHang->MAKH,
-                    'MAHD' => $mahd,
-                    'NGAY_SU_DUNG' => now(),
+            foreach ($cartItems as $ci) {
+                $sp = $ci->sanpham;
+                $price = $sp ? (float)$sp->giaBan : 0;
+                ChiTietDonHang::create([
+                    'donHangId' => $donHang->id,
+                    'sanPhamId' => $ci->sanPhamId,
+                    'soLuong' => $ci->soLuong,
+                    'donGia' => $price,
+                    'thanhTien' => $price * $ci->soLuong,
                 ]);
 
-                // Increment voucher usage count
-                \Illuminate\Support\Facades\DB::table('khuyenmai')
-                    ->where('MA_VOUCHER', $appliedVoucher->MA_VOUCHER)
-                    ->increment('SO_LUONG_DA_DUNG');
+                $stockItem = TonKhoChiNhanh::where('cuaHangId', $storeId)
+                    ->where('sanPhamId', $ci->sanPhamId)
+                    ->first();
+                if ($stockItem && $stockItem->soLuongTon >= $ci->soLuong) {
+                    $stockItem->decrement('soLuongTon', $ci->soLuong);
+                }
             }
 
-            // Set variables for inventory trigger
-            \Illuminate\Support\Facades\DB::statement('SET @inv_type = ?, @inv_ref_type = ?, @inv_ref_id = ?, @inv_username = ?', [
-                'SALE', 'HdBan', $mahd, $khachHang->USERNAME ?? null
-            ]);
+            // Clear cart items
+            ChiTietGioHang::where('gioHangId', $cart->id)->delete();
 
-            // Chuyển chi tiết giỏ hàng sang chi tiết hóa đơn
-            foreach ($items as $item) {
-                \App\Models\ChiTietHdBan::create([
-                    'MAHD' => $mahd,
-                    'MASP' => $item->MASP,
-                    'SOLUONG' => $item->SOLUONG,
-                    'DONGIA' => $item->DonGia,
-                ]);
-            }
-
-            // Xóa giỏ hàng sau khi đặt thành công
-            ChiTietGioHang::where('MAGIOHANG', $cart->MAGIOHANG)->delete();
-
-            // Tích điểm cho khách hàng (Ví dụ: 10.000 VNĐ = 1 điểm)
-            if ($khachHang) {
-                $diemCong = floor($total / 10000);
-                $khachHang->DIEMTICHLUY += $diemCong;
-                $khachHang->save();
+            // Handle payment receipt file if uploaded in checkout request
+            if ($request->hasFile('receipt') || $request->hasFile('bill') || $request->hasFile('minhChung') || $request->hasFile('image')) {
+                $file = $request->file('receipt') ?? $request->file('bill') ?? $request->file('minhChung') ?? $request->file('image');
+                try {
+                    $uploadService = new \App\Services\UploadService();
+                    $receiptUrl = $uploadService->uploadImage($file, 'receipts');
+                    $donHang->minhChungThanhToan = $receiptUrl;
+                    $donHang->trangThaiThanhToan = 1;
+                    $donHang->save();
+                } catch (\Exception $uploadErr) {
+                    \Illuminate\Support\Facades\Log::warning('Lỗi lưu receipt khi checkout: ' . $uploadErr->getMessage());
+                }
             }
 
             DB::commit();
 
-            // Gửi email xác nhận qua RabbitMQ
-            $user = \Illuminate\Support\Facades\Auth::user();
-            $email = null;
-            if ($khachHang && $khachHang->taikhoan) {
-                $email = $khachHang->taikhoan->EMAIL;
-            } elseif ($khachHang && $khachHang->USERNAME) {
-                $tk = \App\Models\TaiKhoan::where('USERNAME', $khachHang->USERNAME)->first();
-                if ($tk) {
-                    $email = $tk->EMAIL;
-                }
-            }
-            if (!$email && $user && isset($user->EMAIL)) {
-                $email = $user->EMAIL;
-            }
-
-            if ($email) {
+            // Dispatch Order Confirmation Email to Customer
+            $userEmail = $user->email ?? ($nguoidung->taikhoan ? $nguoidung->taikhoan->email : null);
+            if (!empty($userEmail)) {
                 try {
-                    \App\Jobs\SendOrderEmailJob::dispatch($email, $mahd, $total + ($request->shippingFee ?? 0), $khachHang->HOTEN);
-                } catch (\Exception $e) {
-                    \Illuminate\Support\Facades\Log::error('Lỗi khi gửi email xác nhận đơn hàng qua RabbitMQ: ' . $e->getMessage());
+                    \App\Jobs\SendOrderEmailJob::dispatch($userEmail, $donHang->maDonHang, $donHang->tongThanhToan, $nguoidung->hoTen ?? 'Khách hàng');
+                } catch (\Exception $emailError) {
+                    \Illuminate\Support\Facades\Log::warning('Không thể khởi chạy job gửi email đơn hàng: ' . $emailError->getMessage());
                 }
             }
 
-            // Xóa cache vì tồn kho đã thay đổi
-            \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
-
-            return response()->json(['message' => 'Đặt hàng thành công', 'mahd' => $mahd]);
+            return response()->json([
+                'message' => 'Đặt hàng thành công!',
+                'data' => $donHang->load('chitiet')
+            ], 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['error' => 'Lỗi đặt hàng: ' . $e->getMessage()], 500);
+            return response()->json(['error' => 'Lỗi xử lý đơn hàng: ' . $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Dynamically route order to the nearest active branch that has sufficient stock for ALL items
+     */
+    private function findBestFulfillingStore($cartItems, $addressString)
+    {
+        $stores = \App\Models\CuaHang::where('trangThai', 1)->get();
+        if ($stores->isEmpty()) {
+            return 1;
+        }
+
+        $eligibleStores = [];
+        foreach ($stores as $store) {
+            $hasAllStock = true;
+            foreach ($cartItems as $ci) {
+                $stockItem = TonKhoChiNhanh::where('cuaHangId', $store->id)
+                    ->where('sanPhamId', $ci->sanPhamId)
+                    ->first();
+                if (!$stockItem || $stockItem->soLuongTon < $ci->soLuong) {
+                    $hasAllStock = false;
+                    break;
+                }
+            }
+            if ($hasAllStock) {
+                $eligibleStores[] = $store;
+            }
+        }
+
+        $candidatePool = count($eligibleStores) > 0 ? $eligibleStores : $stores;
+
+        $bestStore = null;
+        $bestScore = -1;
+        $addrLower = mb_strtolower($addressString ?? '', 'UTF-8');
+
+        foreach ($candidatePool as $store) {
+            $score = 0;
+            $storeAddr = mb_strtolower(($store->diaChiChiTiet ?? '') . ' ' . ($store->tenCuaHang ?? ''), 'UTF-8');
+
+            $parts = explode(',', $addrLower);
+            foreach ($parts as $part) {
+                $partTrim = trim($part);
+                if (mb_strlen($partTrim, 'UTF-8') > 3 && str_contains($storeAddr, $partTrim)) {
+                    $score += 10;
+                }
+            }
+
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestStore = $store;
+            }
+        }
+
+        return $bestStore ? $bestStore->id : 1;
+    }
+
+    /**
+     * Upload Payment Proof Receipt (Bill VietQR / Momo) for Customer Order to MinIO
+     */
+    public function uploadPaymentReceipt(Request $request, $id)
+    {
+        $donHang = DonHang::where('id', $id)->orWhere('maDonHang', $id)->first();
+        if (!$donHang) {
+            return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
+        }
+
+        $receiptUrl = null;
+        if ($request->hasFile('receipt') || $request->hasFile('bill') || $request->hasFile('minhChung') || $request->hasFile('image')) {
+            $file = $request->file('receipt') ?? $request->file('bill') ?? $request->file('minhChung') ?? $request->file('image');
+            try {
+                $uploadService = new \App\Services\UploadService();
+                $receiptUrl = $uploadService->uploadImage($file, 'receipts');
+            } catch (\Exception $e) {
+                $filename = time() . '_receipt_' . preg_replace('/[^a-zA-Z0-9_\.-]/', '_', $file->getClientOriginalName());
+                $file->move(public_path('assets/receipts'), $filename);
+                $receiptUrl = '/assets/receipts/' . $filename;
+            }
+        } else if ($request->input('minhChungThanhToan') || $request->input('receipt_url')) {
+            $receiptUrl = $request->input('minhChungThanhToan') ?? $request->input('receipt_url');
+        }
+
+        if ($receiptUrl) {
+            $donHang->minhChungThanhToan = $receiptUrl;
+            $donHang->trangThaiThanhToan = 1; // Mark as paid / pending verification
+            $donHang->save();
+
+            return response()->json([
+                'message' => 'Tải ảnh hóa đơn / ủy nhiệm chi thành công! Hệ thống đã ghi nhận thanh toán.',
+                'data' => $donHang
+            ]);
+        }
+
+        return response()->json(['error' => 'Vui lòng đính kèm file hình ảnh hóa đơn chuyển khoản'], 400);
+    }
+
+    public function checkoutOnline(Request $request)
+    {
+        return $this->checkout($request);
+    }
+
+    // Alias methods for compatibility
+    public function add(Request $request)
+    {
+        return $this->addToCart($request);
+    }
+
+    public function updateQuantity(Request $request, $id = null)
+    {
+        return $this->updateCart($request, $id);
+    }
+
+    public function remove($id)
+    {
+        return $this->removeFromCart($id);
     }
 }

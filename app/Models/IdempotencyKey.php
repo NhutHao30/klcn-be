@@ -6,29 +6,24 @@ use Illuminate\Database\Eloquent\Model;
 
 class IdempotencyKey extends Model
 {
-    public $timestamps = false; // Only created_at
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
+    protected $table = 'idempotencykeys';
 
     protected $fillable = [
-        'idempotency_key',
-        'USERNAME',
-        'endpoint',
-        'request_hash',
-        'status',
-        'response_code',
-        'response_body',
-        'resource_type',
-        'resource_id',
-        'expires_at',
-        'created_at'
+        'idempotencyKey',
+        'requestPath',
+        'requestHash',
+        'responsePayload',
+        'statusCode',
+        'expiresAt',
     ];
 
     protected $casts = [
-        'expires_at' => 'datetime',
-        'created_at' => 'datetime',
+        'expiresAt' => 'datetime',
+        'createdAt' => 'datetime',
+        'updatedAt' => 'datetime',
     ];
-
-    public function user()
-    {
-        return $this->belongsTo(TaiKhoan::class, 'USERNAME', 'USERNAME');
-    }
 }
+

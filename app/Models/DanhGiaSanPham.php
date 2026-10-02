@@ -8,8 +8,11 @@ use Illuminate\Database\Eloquent\Model;
 class DanhGiaSanPham extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'danhgia_sanpham';
+
+    protected $table = 'danhGiaSanPham';
     protected $primaryKey = 'MADG';
 
     public $incrementing = true;

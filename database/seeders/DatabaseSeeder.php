@@ -3,14 +3,8 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\VaiTro;
-use App\Models\TaiKhoan;
-use App\Models\NhanVien;
-use App\Models\LoaiSanPham;
-use App\Models\SanPham;
-use App\Models\GiamGia;
-use App\Models\TinTuc;
-use App\Models\ChiTietTinTuc;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Carbon\Carbon;
 
 class DatabaseSeeder extends Seeder
@@ -19,115 +13,114 @@ class DatabaseSeeder extends Seeder
     {
         $now = Carbon::now();
 
-        // 1. Vai Trò
-        VaiTro::insert([
-            ['MAROLE' => 0, 'MOTA' => 'admin', 'created_at' => $now, 'updated_at' => $now],
-            ['MAROLE' => 1, 'MOTA' => 'nhanvien', 'created_at' => $now, 'updated_at' => $now],
-            ['MAROLE' => 3, 'MOTA' => 'khachhang', 'created_at' => $now, 'updated_at' => $now],
-            ['MAROLE' => 4, 'MOTA' => 'cskh', 'created_at' => $now, 'updated_at' => $now],
+        // 1. Vai trò (Roles)
+        DB::table('vaitro')->insert([
+            ['id' => 1, 'ten_vaitro' => 'ADMIN', 'mo_ta' => 'Quản trị hệ thống', 'created_at' => $now, 'updated_at' => $now],
+            ['id' => 2, 'ten_vaitro' => 'MANAGER', 'mo_ta' => 'Quản lý cửa hàng', 'created_at' => $now, 'updated_at' => $now],
+            ['id' => 3, 'ten_vaitro' => 'CASHIER', 'mo_ta' => 'Nhân viên bán hàng POS', 'created_at' => $now, 'updated_at' => $now],
+            ['id' => 4, 'ten_vaitro' => 'WAREHOUSE', 'mo_ta' => 'Nhân viên kho', 'created_at' => $now, 'updated_at' => $now],
+            ['id' => 5, 'ten_vaitro' => 'CSKH', 'mo_ta' => 'Nhân viên tư vấn CSKH', 'created_at' => $now, 'updated_at' => $now],
+            ['id' => 6, 'ten_vaitro' => 'CUSTOMER', 'mo_ta' => 'Khách hàng mua sắm', 'created_at' => $now, 'updated_at' => $now],
         ]);
 
-        // 2. Tài khoản Admin mẫu
-        TaiKhoan::create([
-            'USERNAME' => 'admin',
-            'PASSWORD' => '123456',
-            'MAROLE' => 0,
-            'EMAIL' => 'admin@dolabakery.com',
-        ]);
-        NhanVien::create([
-            'USERNAME' => 'admin',
-            'HOTEN' => 'Quản Trị Viên',
-            'CHUCVU' => 'Quản lý',
-            'LUONG' => 15000000,
-        ]);
-
-        // 3. Loại Sản Phẩm
-        LoaiSanPham::insert([
-            ['MALOAI' => 'LSP001', 'TENLOAI' => 'BÁNH KEM', 'created_at' => $now, 'updated_at' => $now],
-            ['MALOAI' => 'LSP002', 'TENLOAI' => 'BÁNH NGỌT', 'created_at' => $now, 'updated_at' => $now],
-            ['MALOAI' => 'LSP003', 'TENLOAI' => 'BÁNH MÌ', 'created_at' => $now, 'updated_at' => $now],
-            ['MALOAI' => 'LSP004', 'TENLOAI' => 'BÁNH TRÁNG MIỆNG', 'created_at' => $now, 'updated_at' => $now],
-            ['MALOAI' => 'LSP005', 'TENLOAI' => 'BÁNH KHÔ', 'created_at' => $now, 'updated_at' => $now],
-            ['MALOAI' => 'LSP006', 'TENLOAI' => 'BÁNH ĐÔNG LẠNH', 'created_at' => $now, 'updated_at' => $now],
-            ['MALOAI' => 'LSP007', 'TENLOAI' => 'BÁNH THEO MÙA', 'created_at' => $now, 'updated_at' => $now],
+        // 2. Chi nhánh Cửa hàng mẫu
+        $cuahangId = DB::table('cuahang')->insertGetId([
+            'ten_cuahang' => 'Givral Nguyễn Trãi',
+            'so_dien_thoai' => '02838351234',
+            'dia_chi_chi_tiet' => '282 Nguyễn Trãi, Phường 8, Quận 5',
+            'ma_tinh' => 202,
+            'ma_huyen' => 1442,
+            'ma_xa' => '20101',
+            'ghn_shop_id' => 123456,
+            'trang_thai' => 1,
+            'created_at' => $now,
+            'updated_at' => $now,
         ]);
 
-        // 4. Sản Phẩm
+        // 3. Tài khoản Admin & Hồ sơ người dùng
+        $adminTkId = DB::table('taikhoan')->insertGetId([
+            'username' => 'admin',
+            'email' => 'admin@givralbakery.com',
+            'password' => Hash::make('123456'),
+            'vaitro_id' => 1, // ADMIN
+            'trang_thai' => 1,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        DB::table('nguoidung')->insert([
+            'taikhoan_id' => $adminTkId,
+            'cuahang_id' => $cuahangId,
+            'ho_ten' => 'Quản Trị Viên Givral',
+            'so_dien_thoai' => '0909123456',
+            'gioi_tinh' => 1, // 1: Nam
+            'loai_nguoidung' => 1, // 1: Nhân viên
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        // 4. Danh mục Sản phẩm
+        $categories = [
+            ['id' => 1, 'ten_loai' => 'Bánh Kem', 'slug' => 'banh-kem', 'trang_thai' => 1],
+            ['id' => 2, 'ten_loai' => 'Bánh Ngọt', 'slug' => 'banh-ngot', 'trang_thai' => 1],
+            ['id' => 3, 'ten_loai' => 'Bánh Mì', 'slug' => 'banh-mi', 'trang_thai' => 1],
+            ['id' => 4, 'ten_loai' => 'Bánh Khô', 'slug' => 'banh-kho', 'trang_thai' => 1],
+            ['id' => 5, 'ten_loai' => 'Bánh Tráng Miệng', 'slug' => 'banh-trang-mieng', 'trang_thai' => 1],
+            ['id' => 6, 'ten_loai' => 'Bánh Theo Mùa', 'slug' => 'banh-theo-mua', 'trang_thai' => 1],
+        ];
+        foreach ($categories as $cat) {
+            DB::table('loai_san_pham')->insert(array_merge($cat, ['created_at' => $now, 'updated_at' => $now]));
+        }
+
+        // 5. Sản phẩm mẫu
         $products = [
-            ['SP001','BÁNH CUỘN VANI','2025-11-01','2025-11-11','CÁI',35000,20,'Thông tin sản phẩm đang cập nhật','productnew4.webp','LSP001'],
-            ['SP002','BÁNH DONUT 45G','2025-10-15','2025-11-05','CÁI',20000,50,'Bột mỳ, sô cô la trắng, bột trà xanh','productnew7.webp','LSP005'],
-            ['SP003','BÁNH DONUT DÂU 45G','2025-11-01','2025-11-08','CÁI',15000,30,'Bột mỳ, sô cô la trắng','productSale_8.webp','LSP005'],
-            ['SP004','BÁNH HOÀNG KIM','2025-11-02','2025-11-06','CÁI',40000,20,'Thành phần: Bánh kem tươi cốt bánh 3 lớp vani','productSale_10.webp','LSP002'],
-            ['SP005','BÁNH MOUSSE CHOCOLATE','2025-11-03','2025-11-20','CÁI',270000,5,'Bánh mousse socola, cốt bánh 1 lớp chiffon sô cô la chip','productMenu_6.webp','LSP001'],
-            ['SP006','BÁNH KEM PRINCESS','2025-11-02','2025-11-06','CÁI',40000,20,'Bánh kem tươi cốt bánh 4 lớp chiffon trà bá tước','productMenu_8.webp','LSP001'],
-            ['SP007','MOUSSE','2025-11-02','2025-11-06','CÁI',31000,20,'Thành phần: Kem sữa, kem thực vật, sữa tươi, đường','productMenu-14.webp','LSP007'],
-            ['SP008','BÁNH PANNA COTTA','2025-11-02','2025-11-06','CÁI',22000,20,'Thành phần: Sữa tươi, kem sữa, đường, mứt phúc bồn tử.','productMenu-13.webp','LSP002'],
-            ['SP009','BÁNH MÌ NƯỚNG PHÔ MAI QUE','2025-11-02','2025-11-06','CÁI',15000,20,'Thành phần: Bột mì, nước, phô mai bột','productMenu_9.webp','LSP003'],
-            ['SP010','BÁNH QUY DỪA','2025-11-02','2025-11-06','CÁI',42000,20,'Thành phần: Bột mì, trứng gà, bơ, đường, bột dừa','productnew2.webp','LSP005'],
-            ['SP011','MOUSSE CHANH LEO','2025-11-02','2025-11-06','CÁI',31000,20,'Thành phần: Kem sữa, kem thực vật, chanh leo','productSale_5.webp','LSP002'],
-            ['SP012','CARAMEN','2025-11-02','2025-11-06','CÁI',13000,20,'Thông tin sản phẩm đang được cập nhật.','productSale_4.webp','LSP002'],
-            ['SP013','BÁNH OPERA 90G','2025-11-02','2025-11-06','CÁI',40000,20,'Thành phần: Bột mỳ, đường, trứng, cà phê','productSale_6.webp','LSP007'],
-            ['SP014','BÁNH QUY BƠ MỨT DÂU','2025-11-02','2025-11-06','CÁI',42000,20,'Thành phần: Bột mỳ, bơ, đường, trứng, mứt dâu.','productSale_3.webp','LSP005'],
-            ['SP015','BÁNH MÌ NƯỚNG CARAMEN','2025-11-02','2025-11-06','CÁI',15000,20,'Thành phần: Bột mì, nước, sữa tươi, bơ, đường caramen','productSale_2.webp','LSP003'],
-            ['SP016','BÁNH SỪNG BÒ MINI','2025-11-02','2025-11-10','CÁI',40000,20,'Thành phần: Bột mỳ, bơ, đường, sữa tươi, vừng trắng','productSale_1.webp','LSP005'],
-            ['SP017','BÁNH GATO SOCOLA SỮA','2025-11-02','2025-11-06','CÁI',50000,20,'Thành phần: Trứng gà, bột mỳ, sô cô la, bơ','productSale_7.webp','LSP005'],
-            ['SP018','BÁNH RED VELVET 90G','2025-11-02','2025-11-06','CÁI',58000,20,'Thành phần: Bơ, đường, trứng, bột mì, cacao, phô mai kem','productBestSale-2.webp','LSP007'],
-            ['SP019','BÁNH SU KEM NHÂN SOCOLA','2025-11-02','2025-11-06','CÁI',30000,20,'Thành phần: Trứng gà, bột mỳ, bơ, nước, sô cô la','productBestSale-3.webp','LSP002'],
-            ['SP020','BÁNH CUỘN','2025-11-02','2025-11-06','CÁI',39000,20,'Thành phần: Trứng gà, đường, bột mỳ, bột ca cao','productMenu-15.webp','LSP007'],
-            ['SP021','BÁNH MÌ NƯỚNG BƠ TỎI','2025-11-02','2025-11-06','CÁI',15000,20,'Thông tin sản phẩm đang cập nhật','productMenu_10.webp','LSP003'],
-            ['SP022','BÁNH QUY HẠNH NHÂN','2025-11-02','2025-11-06','CÁI',42000,20,'Thông tin sản phẩm đang cập nhật','product-Menu-11.webp','LSP002'],
-            ['SP023','BÁNH LADY FINGER','2025-11-02','2025-11-06','CÁI',42000,20,'Thông tin sản phẩm đang cập nhật','productMenu-12.webp','LSP002'],
-            ['SP024','BÁNH SU KEM NHÂN VANI','2025-11-02','2025-11-06','CÁI',29000,20,'Thông tin sản phẩm đang cập nhật','productnew3.webp','LSP002'],
+            ['ten_san_pham' => 'Bánh Cuộn Vani', 'slug' => 'banh-cuon-vani', 'loai_id' => 1, 'gia_ban' => 35000, 'don_vi_tinh' => 'Cái', 'hinh_anh' => 'productnew4.webp', 'mo_ta' => 'Bánh cuộn thơm ngon vị vani truyền thống Givral.'],
+            ['ten_san_pham' => 'Bánh Donut Chocolate 45g', 'slug' => 'banh-donut-chocolate-45g', 'loai_id' => 4, 'gia_ban' => 20000, 'don_vi_tinh' => 'Cái', 'hinh_anh' => 'productnew7.webp', 'mo_ta' => 'Bột mỳ, sô cô la trắng, bột trà xanh.'],
+            ['ten_san_pham' => 'Bánh Donut Dâu 45g', 'slug' => 'banh-donut-dau-45g', 'loai_id' => 4, 'gia_ban' => 15000, 'don_vi_tinh' => 'Cái', 'hinh_anh' => 'productSale_8.webp', 'mo_ta' => 'Bột mỳ, sô cô la dâu tươi.'],
+            ['ten_san_pham' => 'Bánh Hoàng Kim', 'slug' => 'banh-hoang-kim', 'loai_id' => 2, 'gia_ban' => 40000, 'don_vi_tinh' => 'Cái', 'hinh_anh' => 'productSale_10.webp', 'mo_ta' => 'Bánh kem tươi cốt bánh 3 lớp vani.'],
+            ['ten_san_pham' => 'Bánh Mousse Chocolate', 'slug' => 'banh-mousse-chocolate', 'loai_id' => 1, 'gia_ban' => 270000, 'don_vi_tinh' => 'Cái', 'hinh_anh' => 'productMenu_6.webp', 'mo_ta' => 'Bánh mousse socola béo ngậy.'],
+            ['ten_san_pham' => 'Bánh Kem Princess', 'slug' => 'banh-kem-princess', 'loai_id' => 1, 'gia_ban' => 400000, 'don_vi_tinh' => 'Cái', 'hinh_anh' => 'productMenu_8.webp', 'mo_ta' => 'Bánh kem tươi 4 lớp chiffon trà bá tước.'],
         ];
 
-        $sanphamData = [];
         foreach ($products as $p) {
-            $sanphamData[] = [
-                'MASP' => $p[0],
-                'TENSP' => $p[1],
-                'NSX' => $p[2],
-                'HSD' => $p[3],
-                'DVT' => $p[4],
-                'GIABAN' => $p[5],
-                'SOLUONG' => $p[6],
-                'GHICHU' => $p[7],
-                'HINHANH' => $p[8],
-                'MALOAI' => $p[9],
+            $spId = DB::table('san_pham')->insertGetId(array_merge($p, [
+                'trang_thai' => 1,
                 'created_at' => $now,
                 'updated_at' => $now
-            ];
+            ]));
+
+            // Tạo kho hàng ban đầu tại chi nhánh
+            DB::table('tonkho_chinhanh')->insert([
+                'cuahang_id' => $cuahangId,
+                'sanpham_id' => $spId,
+                'so_luong_ton' => 50,
+                'created_at' => $now,
+                'updated_at' => $now
+            ]);
         }
-        SanPham::insert($sanphamData);
 
-        // 5. Giảm Giá
-        GiamGia::insert([
-            ['MASP' => 'SP002', 'GIAM' => 10, 'THOIGIANGIAM' => '2026-11-30', 'created_at' => $now, 'updated_at' => $now],
-            ['MASP' => 'SP003', 'GIAM' => 0, 'THOIGIANGIAM' => '2026-11-25', 'created_at' => $now, 'updated_at' => $now],
-            ['MASP' => 'SP005', 'GIAM' => 20, 'THOIGIANGIAM' => '2026-12-31', 'created_at' => $now, 'updated_at' => $now],
-            ['MASP' => 'SP010', 'GIAM' => 5, 'THOIGIANGIAM' => '2026-11-15', 'created_at' => $now, 'updated_at' => $now],
-            ['MASP' => 'SP013', 'GIAM' => 0, 'THOIGIANGIAM' => '2026-01-01', 'created_at' => $now, 'updated_at' => $now],
+        // 6. Voucher Khuyến mãi mẫu
+        DB::table('voucher')->insert([
+            'ma_voucher' => 'GIVRAL2026',
+            'loai_giam_gia' => 0, // 0: %
+            'gia_tri_giam' => 10.0,
+            'don_hang_toi_thieu' => 100000,
+            'giam_toi_da' => 50000,
+            'so_luong' => 100,
+            'da_su_dung' => 0,
+            'ngay_bat_dau' => $now,
+            'ngay_ket_thuc' => $now->copy()->addMonths(6),
+            'trang_thai' => 1,
+            'created_at' => $now,
+            'updated_at' => $now
         ]);
 
-        // 6. Tin Tức
-        TinTuc::insert([
-            ['MATINTUC' => 'TT01', 'HINHANH' => 'post_img-1.webp', 'NGAYDANG' => '2026-01-01', 'TIEUDE' => 'Donut chỉ từ 8k tại Dola', 'MOTA' => 'Nhắc đến bánh Donut dân sành thưởng thức hẳn không còn xa lạ gì với món ăn vặt rất phổ biến ở các nước phương Tây này. Dù có nguồn...', 'created_at' => $now, 'updated_at' => $now],
-            ['MATINTUC' => 'TT02', 'HINHANH' => 'post_img-2.webp', 'NGAYDANG' => '2026-01-01', 'TIEUDE' => 'Croissant ngàn lớp - đa dạng cách...', 'MOTA' => 'Những chiếc bánh sừng bò với hương bơ thơm béo đặc trưng lại còn đưa miệng với độ giòn xốp, dai dai từ "ngàn" lớp bánh. Nổi bật với hình...', 'created_at' => $now, 'updated_at' => $now],
-            ['MATINTUC' => 'TT03', 'HINHANH' => 'post_img-3.webp', 'NGAYDANG' => '2026-01-01', 'TIEUDE' => 'Bánh Tart thơm ngậy không thể bỏ...', 'MOTA' => 'Tart trứng là loại bánh đường phố nổi tiếng ở Hong Kong được rất nhiều người yêu thích. Không những thế, trong bảng xếp hạng 50 loại món ăn ngon...', 'created_at' => $now, 'updated_at' => $now],
-            ['MATINTUC' => 'TT04', 'HINHANH' => 'post_img-4.webp', 'NGAYDANG' => '2026-01-01', 'TIEUDE' => 'Bánh đông lạnh tiện lợi - ngon...', 'MOTA' => 'Bánh đông lạnh đã dần trở thành một sản phẩm quen thuộc cho các Mẹ Đảm sau một thời gian dài giãn cách. Sở dĩ, bánh đông lạnh được nhiều...', 'created_at' => $now, 'updated_at' => $now],
-            ['MATINTUC' => 'TT05', 'HINHANH' => 'post_img-5.webp', 'NGAYDANG' => '2026-01-01', 'TIEUDE' => 'Bánh ngọt - Các loại bánh ngọt được...', 'MOTA' => 'Đối với những người có niềm đam mê với đồ ngọt thì chắc chắn bánh ngọt đã trở thành một phần không thể thiếu. Những chiếc bánh ngọt hớp hồn...', 'created_at' => $now, 'updated_at' => $now],
-            ['MATINTUC' => 'TT06', 'HINHANH' => 'post_img-6.webp', 'NGAYDANG' => '2026-01-01', 'TIEUDE' => 'Khám phá menu bánh quy khô thơm...', 'MOTA' => 'Bánh quy khô là món ăn thơm ngon, bổ dưỡng, được nhiều người tiêu dùng ưa thích lựa chọn. Không giống những loại bánh khác, bánh quy đặc biệt với hương...', 'created_at' => $now, 'updated_at' => $now],
+        // 7. Chạy Seeders mở rộng
+        $this->call([
+            CustomerSeeder::class,
+            SupplierSeeder::class,
+            BatchSeeder::class,
         ]);
-
-        // 7. Chi Tiết Tin Tức
-        ChiTietTinTuc::insert([
-            ['MATINTUC' => 'TT01', 'BOCUC' => 'Nguồn gốc của chiếc bánh vòng', 'ARTICLE' => 'Donut là loại bánh ngọt rán hoặc nướng dùng như món tráng miệng hay món ăn vặt.', 'HINHANH' => 'post_img-1.webp', 'created_at' => $now, 'updated_at' => $now],
-            ['MATINTUC' => 'TT01', 'BOCUC' => 'Hương vị đa dạng tại Dola', 'ARTICLE' => 'Tại Dola Bakery, chúng tôi biến tấu Donut với hàng chục loại topping khác nhau.', 'HINHANH' => null, 'created_at' => $now, 'updated_at' => $now],
-            ['MATINTUC' => 'TT01', 'BOCUC' => 'Ưu đãi đặc biệt', 'ARTICLE' => 'Chỉ với 8.000đ, bạn đã có thể sở hữu một chiếc Donut thơm ngon.', 'HINHANH' => null, 'created_at' => $now, 'updated_at' => $now],
-            ['MATINTUC' => 'TT02', 'BOCUC' => 'Kết cấu ngàn lớp độc đáo', 'ARTICLE' => 'Bánh sừng bò (Croissant) là niềm tự hào của ẩm thực Pháp.', 'HINHANH' => 'post_img-2.webp', 'created_at' => $now, 'updated_at' => $now],
-            ['MATINTUC' => 'TT03', 'BOCUC' => 'Món quà từ Hong Kong', 'ARTICLE' => 'Tart trứng Hong Kong sở hữu lớp vỏ bánh quy giòn tan.', 'HINHANH' => 'post_img-3.webp', 'created_at' => $now, 'updated_at' => $now],
-        ]);
-
-        // 8. Chạy seeder khách hàng
-        $this->call(CustomerSeeder::class);
     }
 }
+

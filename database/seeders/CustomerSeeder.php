@@ -4,47 +4,56 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-use App\Models\TaiKhoan;
-use App\Models\KhachHang;
+use Illuminate\Support\Facades\Hash;
+use Carbon\Carbon;
 
 class CustomerSeeder extends Seeder
 {
     public function run(): void
     {
-        // Vô hiệu hóa kiểm tra khóa ngoại
-        DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+        $now = Carbon::now();
 
-        // Danh sách tài khoản khách hàng mẫu
         $customers = [
-            'khachhang_01',
-            'customer1',
-            'khachhang_02'
+            [
+                'username' => 'khachhang_01',
+                'email' => 'khachhang01@gmail.com',
+                'ho_ten' => 'Nguyễn Văn An',
+                'so_dien_thoai' => '0987654321',
+                'gioi_tinh' => 1, // Nam
+            ],
+            [
+                'username' => 'khachhang_02',
+                'email' => 'khachhang02@gmail.com',
+                'ho_ten' => 'Trần Thị Bình',
+                'so_dien_thoai' => '0987654322',
+                'gioi_tinh' => 0, // Nữ
+            ]
         ];
 
-        foreach ($customers as $index => $username) {
-            // Xóa cũ nếu có để tránh lỗi
-            KhachHang::where('USERNAME', $username)->delete();
-            TaiKhoan::where('USERNAME', $username)->delete();
+        foreach ($customers as $c) {
+            // Check nếu đã tồn tại thì bỏ qua
+            $exists = DB::table('taikhoan')->where('username', $c['username'])->first();
+            if (!$exists) {
+                $tkId = DB::table('taikhoan')->insertGetId([
+                    'username' => $c['username'],
+                    'email' => $c['email'],
+                    'password' => Hash::make('123456'),
+                    'vaitro_id' => 6, // CUSTOMER
+                    'trang_thai' => 1,
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ]);
 
-            // 1. Tạo tài khoản
-            $tk = TaiKhoan::create([
-                'USERNAME' => $username,
-                'PASSWORD' => '123456', // Sẽ được tự động hash nhờ cast 'hashed'
-                'MAROLE'   => 2,
-                'EMAIL'    => $username . '@gmail.com',
-            ]);
-
-            // 2. Tạo thông tin khách hàng
-            KhachHang::create([
-                'MAKH'     => 'KH_SEED_' . ($index + 1),
-                'HOTEN'    => 'Khách Hàng ' . ($index + 1),
-                'SDT'      => '098765432' . $index,
-                'USERNAME' => $tk->USERNAME,
-                'DIEMTICHLUY' => 500,
-            ]);
+                DB::table('nguoidung')->insert([
+                    'taikhoan_id' => $tkId,
+                    'ho_ten' => $c['ho_ten'],
+                    'so_dien_thoai' => $c['so_dien_thoai'],
+                    'gioi_tinh' => $c['gioi_tinh'], // 0: Nữ, 1: Nam
+                    'loai_nguoidung' => 0, // 0: Khách hàng
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ]);
+            }
         }
-
-        // Bật lại kiểm tra khóa ngoại
-        DB::statement('SET FOREIGN_KEY_CHECKS=1;');
     }
 }
