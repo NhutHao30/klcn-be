@@ -34,19 +34,19 @@ class HoaDonNhapController extends Controller
         $userId = auth('api')->id() ?? $request->input('nguoi_nhap_id') ?? 1;
 
         $request->merge([
-            'nhacungcap_id' => $request->input('nhacungcap_id') ?? $request->input('MANCC'),
-            'cuahang_id' => $request->input('cuahang_id') ?? $request->input('MACUAHANG_NHAP') ?? $request->input('MACUAHANG'),
+            'nhaCungCapId' => $request->input('nhaCungCapId') ?? $request->input('MANCC'),
+            'cuaHangId' => $request->input('cuaHangId') ?? $request->input('MACUAHANG_NHAP') ?? $request->input('MACUAHANG'),
             'nguoi_nhap_id' => $userId,
-            'ghi_chu' => $request->input('ghi_chu') ?? $request->input('GHICHU'),
+            'ghiChu' => $request->input('ghiChu') ?? $request->input('GHICHU'),
         ]);
 
         $rawItems = $request->input('items') ?? $request->input('chi_tiet') ?? [];
         $items = array_map(function ($item) {
             return [
-                'sanpham_id' => $item['sanpham_id'] ?? $item['MASP'] ?? null,
-                'so_luong' => $item['so_luong'] ?? $item['SOLUONGTN'] ?? $item['SOLUONGTCT'] ?? $item['SOLUONG'] ?? 1,
+                'sanPhamId' => $item['sanPhamId'] ?? $item['MASP'] ?? null,
+                'soLuong' => $item['soLuong'] ?? $item['SOLUONGTN'] ?? $item['SOLUONGTCT'] ?? $item['SOLUONG'] ?? 1,
                 'don_gia_nhap' => $item['don_gia_nhap'] ?? $item['DONGIANHAP'] ?? 0,
-                'ngay_san_xuat' => $item['ngay_san_xuat'] ?? $item['NGAYSX'] ?? $item['NGAYSANXUAT'] ?? $item['ngay_san_xuat'] ?? null,
+                'ngaySanXuat' => $item['ngaySanXuat'] ?? $item['NGAYSX'] ?? $item['NGAYSANXUAT'] ?? $item['ngaySanXuat'] ?? null,
                 'hsd' => $item['hsd'] ?? $item['HSD_LO'] ?? $item['HSD'] ?? $item['HANSUDUNG'] ?? $item['han_su_dung'] ?? null,
             ];
         }, $rawItems);
@@ -54,13 +54,13 @@ class HoaDonNhapController extends Controller
         $request->merge(['items' => $items]);
 
         $validated = $request->validate([
-            'nhacungcap_id' => 'required|exists:nha_cung_cap,id',
-            'cuahang_id' => 'required|exists:cuahang,id',
+            'nhaCungCapId' => 'required|exists:nhaCungCap,id',
+            'cuaHangId' => 'required|exists:cuahang,id',
             'nguoi_nhap_id' => 'required|exists:nguoidung,id',
-            'ghi_chu' => 'nullable|string',
+            'ghiChu' => 'nullable|string',
             'auto_sign_all' => 'nullable|boolean',
             'items' => 'required|array|min:1',
-            'items.*.sanpham_id' => 'required|exists:san_pham,id',
+            'items.*.sanpham_id' => 'required|exists:sanPham,id',
             'items.*.so_luong' => 'required|integer|min:1',
             'items.*.don_gia_nhap' => 'required|numeric|min:0',
             'items.*.ngay_san_xuat' => 'nullable|date',
@@ -72,10 +72,10 @@ class HoaDonNhapController extends Controller
 
         try {
             DB::statement('CALL sp_create_hoadon_nhap(?, ?, ?, ?, ?, ?, ?, @hoadon_id, @ma_hoadon, @error)', [
-                $validated['nhacungcap_id'],
-                $validated['cuahang_id'],
+                $validated['nhaCungCapId'],
+                $validated['cuaHangId'],
                 $validated['nguoi_nhap_id'],
-                $validated['ghi_chu'] ?? null,
+                $validated['ghiChu'] ?? null,
                 $autoSign,
                 $kyNcc ?? null,
                 json_encode($validated['items']),

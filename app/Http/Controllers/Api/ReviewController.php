@@ -13,7 +13,7 @@ class ReviewController extends Controller
     public function getProductReviews($sanphamId)
     {
         $reviews = DanhGiaSanPham::with(['nguoidung'])
-            ->where('sanpham_id', $sanphamId)
+            ->where('sanPhamId', $sanphamId)
             ->orderBy('id', 'desc')
             ->get();
         return response()->json($reviews);
@@ -27,21 +27,21 @@ class ReviewController extends Controller
         }
 
         $request->validate([
-            'donhang_id' => 'required|exists:don_hang,id',
-            'sanpham_id' => 'required|exists:san_pham,id',
+            'donHangId' => 'required|exists:donHang,id',
+            'sanPhamId' => 'required|exists:sanPham,id',
             'so_sao' => 'required|integer|min:1|max:5',
             'noi_dung' => 'nullable|string',
         ]);
 
-        $donHang = DonHang::find($request->donhang_id);
-        if ($donHang->trang_thai_don_hang != 5) { // 5: DA_GIAO_THANH_CONG
+        $donHang = DonHang::find($request->donHangId);
+        if ($donHang->trangThai_don_hang != 5) { // 5: DA_GIAO_THANH_CONG
             return response()->json(['error' => 'Chỉ có thể đánh giá sản phẩm khi đơn hàng đã giao thành công'], 400);
         }
 
         $review = DanhGiaSanPham::create([
-            'donhang_id' => $request->donhang_id,
-            'sanpham_id' => $request->sanpham_id,
-            'nguoidung_id' => $user->nguoidung->id,
+            'donHangId' => $request->donHangId,
+            'sanPhamId' => $request->sanPhamId,
+            'nguoidungId' => $user->nguoidung->id,
             'so_sao' => $request->so_sao,
             'noi_dung' => $request->noi_dung ?? null,
         ]);

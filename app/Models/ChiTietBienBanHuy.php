@@ -9,21 +9,21 @@ class ChiTietBienBanHuy extends Model
 {
     use HasFactory;
 
-    protected $table = 'chitiet_bien_ban_huy';
+    protected $table = 'chiTietBienBanHuy';
     public $timestamps = false;
 
     protected $fillable = [
         'bien_ban_huy_id',
-        'lohang_id',
-        'sanpham_id',
+        'loHangId',
+        'sanPhamId',
         'so_luong_huy',
-        'don_gia',
-        'thanh_tien',
+        'donGia',
+        'thanhTien',
     ];
 
     protected $casts = [
-        'don_gia' => 'double',
-        'thanh_tien' => 'double',
+        'donGia' => 'double',
+        'thanhTien' => 'double',
     ];
 
     public function bienBanHuy()
@@ -33,11 +33,11 @@ class ChiTietBienBanHuy extends Model
 
     public function loHang()
     {
-        return $this->belongsTo(LoHang::class, 'lohang_id');
+        return $this->belongsTo(LoHang::class, 'loHangId');
     }
 
     public function sanPham()
     {
-        return $this->belongsTo(SanPham::class, 'sanpham_id');
+        return $this->belongsTo(SanPham::class, 'sanPhamId');
     }
 }

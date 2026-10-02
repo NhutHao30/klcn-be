@@ -13,16 +13,16 @@ class LoHangController extends Controller
     {
         $query = LoHang::with(['sanPham', 'cuaHang', 'nhaCungCap']);
 
-        if ($request->has('cuahang_id')) {
-            $query->where('cuahang_id', $request->cuahang_id);
+        if ($request->has('cuaHangId')) {
+            $query->where('cuaHangId', $request->cuaHangId);
         }
 
-        if ($request->has('sanpham_id')) {
-            $query->where('sanpham_id', $request->sanpham_id);
+        if ($request->has('sanPhamId')) {
+            $query->where('sanPhamId', $request->sanPhamId);
         }
 
-        if ($request->has('trang_thai')) {
-            $query->where('trang_thai', $request->trang_thai);
+        if ($request->has('trangThai')) {
+            $query->where('trangThai', $request->trangThai);
         }
 
         $batches = $query->latest()->paginate($request->get('per_page', 15));
@@ -42,15 +42,15 @@ class LoHangController extends Controller
 
         // 1. Quá hạn sử dụng (Expired)
         $expired = LoHang::with(['sanPham', 'cuaHang', 'nhaCungCap'])
-            ->where('so_luong_con', '>', 0)
-            ->where('trang_thai', '!=', 3) // Chưa hủy
+            ->where('soLuongCon', '>', 0)
+            ->where('trangThai', '!=', 3) // Chưa hủy
             ->where('hsd', '<', $today)
             ->get();
 
         // 2. Sắp hết hạn (Near expiry)
         $nearExpiry = LoHang::with(['sanPham', 'cuaHang', 'nhaCungCap'])
-            ->where('so_luong_con', '>', 0)
-            ->where('trang_thai', '!=', 3)
+            ->where('soLuongCon', '>', 0)
+            ->where('trangThai', '!=', 3)
             ->whereBetween('hsd', [$today, $thresholdDate])
             ->get();
 
@@ -67,34 +67,34 @@ class LoHangController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'ma_lo_hang' => 'required|string|max:50|unique:lo_hang,ma_lo_hang',
-            'sanpham_id' => 'required|exists:san_pham,id',
-            'cuahang_id' => 'required|exists:cuahang,id',
-            'nhacungcap_id' => 'nullable|exists:nha_cung_cap,id',
-            'so_luong_nhap' => 'required|integer|min:1',
-            'ngay_san_xuat' => 'nullable|date',
+            'maLoHang' => 'required|string|max:50|unique:loHang,ma_lo_hang',
+            'sanPhamId' => 'required|exists:sanPham,id',
+            'cuaHangId' => 'required|exists:cuahang,id',
+            'nhaCungCapId' => 'nullable|exists:nhaCungCap,id',
+            'soLuongNhap' => 'required|integer|min:1',
+            'ngaySanXuat' => 'nullable|date',
             'hsd' => 'required|date',
-            'gia_nhap' => 'nullable|numeric|min:0',
+            'giaNhap' => 'nullable|numeric|min:0',
         ]);
 
         $batch = LoHang::create(array_merge($validated, [
-            'so_luong_con' => $validated['so_luong_nhap'],
-            'trang_thai' => 0, // Con_hang
+            'soLuongCon' => $validated['soLuongNhap'],
+            'trangThai' => 0, // Con_hang
         ]));
 
         $tonKho = \App\Models\TonKhoChiNhanh::firstOrCreate(
-            ['cuahang_id' => $validated['cuahang_id'], 'sanpham_id' => $validated['sanpham_id']],
-            ['so_luong_ton' => 0]
+            ['cuaHangId' => $validated['cuaHangId'], 'sanPhamId' => $validated['sanPhamId']],
+            ['soLuongTon' => 0]
         );
-        $tonKho->increment('so_luong_ton', $validated['so_luong_nhap']);
+        $tonKho->increment('soLuongTon', $validated['soLuongNhap']);
 
         \App\Models\NhatKyKho::create([
-            'cuahang_id' => $validated['cuahang_id'],
-            'sanpham_id' => $validated['sanpham_id'],
+            'cuaHangId' => $validated['cuaHangId'],
+            'sanPhamId' => $validated['sanPhamId'],
             'loai_bien_dong' => 4,
-            'so_luong_thay_doi' => $validated['so_luong_nhap'],
-            'so_luong_ton_sau' => $tonKho->so_luong_ton,
-            'ma_tham_chieu' => $validated['ma_lo_hang'],
+            'so_luong_thay_doi' => $validated['soLuongNhap'],
+            'so_luong_ton_sau' => $tonKho->soLuong_ton,
+            'ma_tham_chieu' => $validated['maLoHang'],
         ]);
 
         return response()->json([

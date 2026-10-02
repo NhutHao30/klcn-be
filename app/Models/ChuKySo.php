@@ -8,8 +8,11 @@ use Illuminate\Database\Eloquent\Model;
 class ChuKySo extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'chu_ky_so';
+
+    protected $table = 'chuKySo';
 
     protected $fillable = [
         'ma_chu_ky',
@@ -20,9 +23,9 @@ class ChuKySo extends Model
         'ten_nguoi_ky',
         'digital_signature_hash',
         'public_key',
-        'trang_thai',
+        'trangThai',
         'ngay_ky',
-        'ghi_chu',
+        'ghiChu',
     ];
 
     protected $casts = [

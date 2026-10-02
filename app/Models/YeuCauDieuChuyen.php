@@ -8,30 +8,33 @@ use Illuminate\Database\Eloquent\Model;
 class YeuCauDieuChuyen extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'yeucau_dieuchuyen';
+
+    protected $table = 'yeuCauDieuChuyen';
 
     protected $fillable = [
-        'cuahang_xuat_id',
-        'cuahang_nhap_id',
+        'cuaHangXuatId',
+        'cuaHangNhapId',
         'nguoi_tao_id',
         'nguoi_duyet_id',
-        'trang_thai', // 0: Chờ duyệt, 1: Đang vận chuyển, 2: Đã nhận thành công, 3: Từ chối/Hủy
-        'ghi_chu',
+        'trangThai', // 0: Chờ duyệt, 1: Đang vận chuyển, 2: Đã nhận thành công, 3: Từ chối/Hủy
+        'ghiChu',
     ];
 
     protected $casts = [
-        'trang_thai' => 'integer',
+        'trangThai' => 'integer',
     ];
 
     public function cuahangXuat()
     {
-        return $this->belongsTo(CuaHang::class, 'cuahang_xuat_id');
+        return $this->belongsTo(CuaHang::class, 'cuaHangXuatId');
     }
 
     public function cuahangNhap()
     {
-        return $this->belongsTo(CuaHang::class, 'cuahang_nhap_id');
+        return $this->belongsTo(CuaHang::class, 'cuaHangNhapId');
     }
 
     public function nguoiTao()
@@ -46,6 +49,6 @@ class YeuCauDieuChuyen extends Model
 
     public function chitiet()
     {
-        return $this->hasMany(ChiTietDieuChuyen::class, 'yeucau_id');
+        return $this->hasMany(ChiTietDieuChuyen::class, 'yeuCauId');
     }
 }

@@ -8,30 +8,33 @@ use Illuminate\Database\Eloquent\Model;
 class ChiTietDonHang extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'chitiet_don_hang';
+
+    protected $table = 'chiTietDonHang';
 
     protected $fillable = [
-        'donhang_id',
-        'sanpham_id',
-        'so_luong',
-        'don_gia',
-        'thanh_tien',
+        'donHangId',
+        'sanPhamId',
+        'soLuong',
+        'donGia',
+        'thanhTien',
     ];
 
     protected $casts = [
-        'so_luong' => 'integer',
-        'don_gia' => 'double',
-        'thanh_tien' => 'double',
+        'soLuong' => 'integer',
+        'donGia' => 'double',
+        'thanhTien' => 'double',
     ];
 
     public function donhang()
     {
-        return $this->belongsTo(DonHang::class, 'donhang_id');
+        return $this->belongsTo(DonHang::class, 'donHangId');
     }
 
     public function sanpham()
     {
-        return $this->belongsTo(SanPham::class, 'sanpham_id');
+        return $this->belongsTo(SanPham::class, 'sanPhamId');
     }
 }

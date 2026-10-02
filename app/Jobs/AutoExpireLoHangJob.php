@@ -50,8 +50,8 @@ class AutoExpireLoHangJob implements ShouldQueue
                     'HANHONG'     => "AutoExpire: {$result['expired_count']} lô hàng hết hạn đã bị hủy tự động. Tổng SL: {$result['total_quantity_disposed']}",
                     'THOIGIAN'    => now(),
                     'USERNAME'    => 'SYSTEM',
-                    'created_at'  => now(),
-                    'updated_at'  => now(),
+                    'createdAt'  => now(),
+                    'updatedAt'  => now(),
                 ]);
             }
         } catch (\Exception $e) {

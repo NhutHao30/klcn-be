@@ -12,12 +12,12 @@ class InventoryLedgerController extends Controller
     {
         $query = NhatKyKho::with(['cuahang', 'sanpham']);
 
-        if ($request->filled('cuahang_id')) {
-            $query->where('cuahang_id', $request->cuahang_id);
+        if ($request->filled('cuaHangId')) {
+            $query->where('cuaHangId', $request->cuaHangId);
         }
 
-        if ($request->filled('sanpham_id')) {
-            $query->where('sanpham_id', $request->sanpham_id);
+        if ($request->filled('sanPhamId')) {
+            $query->where('sanPhamId', $request->sanPhamId);
         }
 
         $logs = $query->orderBy('id', 'desc')->paginate(15);

@@ -22,20 +22,20 @@ class NhaCungCapController extends Controller
     public function store(Request $request)
     {
         $request->merge([
-            'ten_ncc' => $request->input('ten_ncc') ?? $request->input('TENNCC'),
-            'so_dien_thoai' => $request->input('so_dien_thoai') ?? $request->input('DIENTHOAI'),
+            'tenNcc' => $request->input('tenNcc') ?? $request->input('TENNCC'),
+            'soDienThoai' => $request->input('soDienThoai') ?? $request->input('DIENTHOAI'),
             'email' => $request->input('email') ?? $request->input('EMAIL'),
             'dia_chi' => $request->input('dia_chi') ?? $request->input('DIACHI'),
         ]);
 
         $validated = $request->validate([
-            'ten_ncc' => 'required|string|max:150',
-            'so_dien_thoai' => 'nullable|string|max:15',
+            'tenNcc' => 'required|string|max:150',
+            'soDienThoai' => 'nullable|string|max:15',
             'email' => 'nullable|email|max:100',
             'dia_chi' => 'nullable|string|max:255',
         ]);
 
-        $supplier = NhaCungCap::create(array_merge($validated, ['trang_thai' => 1]));
+        $supplier = NhaCungCap::create(array_merge($validated, ['trangThai' => 1]));
 
         return response()->json([
             'success' => true,
@@ -76,18 +76,18 @@ class NhaCungCapController extends Controller
         }
 
         $request->merge([
-            'ten_ncc' => $request->input('ten_ncc') ?? $request->input('TENNCC'),
-            'so_dien_thoai' => $request->input('so_dien_thoai') ?? $request->input('DIENTHOAI'),
+            'tenNcc' => $request->input('tenNcc') ?? $request->input('TENNCC'),
+            'soDienThoai' => $request->input('soDienThoai') ?? $request->input('DIENTHOAI'),
             'email' => $request->input('email') ?? $request->input('EMAIL'),
             'dia_chi' => $request->input('dia_chi') ?? $request->input('DIACHI'),
         ]);
 
         $validated = $request->validate([
-            'ten_ncc' => 'sometimes|string|max:150',
-            'so_dien_thoai' => 'nullable|string|max:15',
+            'tenNcc' => 'sometimes|string|max:150',
+            'soDienThoai' => 'nullable|string|max:15',
             'email' => 'nullable|email|max:100',
             'dia_chi' => 'nullable|string|max:255',
-            'trang_thai' => 'sometimes|integer|in:0,1',
+            'trangThai' => 'sometimes|integer|in:0,1',
         ]);
 
         $supplier->update($validated);

@@ -11,20 +11,20 @@ class CategoryController extends Controller
 {
     public function index()
     {
-        return response()->json(LoaiSanPham::where('trang_thai', 1)->get());
+        return response()->json(LoaiSanPham::where('trangThai', 1)->get());
     }
 
     public function store(Request $request)
     {
         $request->validate([
-            'ten_loai' => 'required|string|max:100',
+            'tenLoai' => 'required|string|max:100',
         ]);
 
         $category = LoaiSanPham::create([
-            'ten_loai' => $request->ten_loai,
-            'slug' => Str::slug($request->ten_loai) . '-' . time(),
-            'hinh_anh' => $request->hinh_anh,
-            'trang_thai' => 1,
+            'tenLoai' => $request->tenLoai,
+            'slug' => Str::slug($request->tenLoai) . '-' . time(),
+            'hinhAnh' => $request->hinhAnh,
+            'trangThai' => 1,
         ]);
 
         return response()->json(['message' => 'Thêm danh mục thành công', 'data' => $category], 201);
@@ -38,13 +38,13 @@ class CategoryController extends Controller
         }
 
         $request->validate([
-            'ten_loai' => 'required|string|max:100',
+            'tenLoai' => 'required|string|max:100',
         ]);
 
         $category->update([
-            'ten_loai' => $request->ten_loai,
-            'slug' => Str::slug($request->ten_loai),
-            'hinh_anh' => $request->hinh_anh ?? $category->hinh_anh,
+            'tenLoai' => $request->tenLoai,
+            'slug' => Str::slug($request->tenLoai),
+            'hinhAnh' => $request->hinhAnh ?? $category->hinhAnh,
         ]);
 
         return response()->json(['message' => 'Cập nhật danh mục thành công', 'data' => $category]);

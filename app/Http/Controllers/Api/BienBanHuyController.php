@@ -31,12 +31,12 @@ class BienBanHuyController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'cuahang_id' => 'required|exists:cuahang,id',
+            'cuaHangId' => 'required|exists:cuahang,id',
             'nguoi_lap_id' => 'required|exists:nguoidung,id',
             'ly_do' => 'required|string|max:255',
             'auto_sign_all' => 'nullable|boolean',
             'items' => 'required|array|min:1',
-            'items.*.lohang_id' => 'required|exists:lo_hang,id',
+            'items.*.lohang_id' => 'required|exists:loHang,id',
             'items.*.so_luong_huy' => 'required|integer|min:1',
         ]);
 
@@ -44,7 +44,7 @@ class BienBanHuyController extends Controller
 
         try {
             DB::statement('CALL sp_create_bien_ban_huy(?, ?, ?, ?, ?, @bienban_id, @ma_bien_ban, @error)', [
-                $validated['cuahang_id'],
+                $validated['cuaHangId'],
                 $validated['nguoi_lap_id'],
                 $validated['ly_do'],
                 $autoSign,

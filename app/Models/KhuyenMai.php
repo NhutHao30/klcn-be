@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class KhuyenMai extends Model
 {
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
     protected $table = 'khuyenmai';
     protected $primaryKey = 'MA_VOUCHER';
     public $incrementing = false;

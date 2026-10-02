@@ -8,17 +8,20 @@ use Illuminate\Database\Eloquent\Model;
 class BienBanHuy extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'bien_ban_huy';
+
+    protected $table = 'bienBanHuy';
 
     protected $fillable = [
         'ma_bien_ban',
-        'cuahang_id',
+        'cuaHangId',
         'nguoi_lap_id',
         'ngay_lap',
         'ly_do',
         'tong_gia_tri_huy',
-        'trang_thai',
+        'trangThai',
     ];
 
     protected $casts = [
@@ -43,7 +46,7 @@ class BienBanHuy extends Model
 
     public function getMACUAHANGAttribute()
     {
-        return $this->attributes['cuahang_id'] ?? null;
+        return $this->attributes['cuaHangId'] ?? null;
     }
 
     public function getNGAYHUYAttribute()
@@ -73,12 +76,12 @@ class BienBanHuy extends Model
 
     public function getTRANGTHAIAttribute()
     {
-        return $this->attributes['trang_thai'] ?? 0;
+        return $this->attributes['trangThai'] ?? 0;
     }
 
     public function cuaHang()
     {
-        return $this->belongsTo(CuaHang::class, 'cuahang_id');
+        return $this->belongsTo(CuaHang::class, 'cuaHangId');
     }
 
     public function nguoiLap()
@@ -101,7 +104,7 @@ class BienBanHuy extends Model
      */
     public function kiemTraDaKyDu(): bool
     {
-        $signedRolesCount = $this->chuKySos()->where('trang_thai', 1)->distinct('vai_tro_ky')->count('vai_tro_ky');
+        $signedRolesCount = $this->chuKySos()->where('trangThai', 1)->distinct('vai_tro_ky')->count('vai_tro_ky');
         return $signedRolesCount >= 2;
     }
 }

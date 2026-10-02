@@ -20,8 +20,8 @@ class TransferController extends Controller
     {
         $query = YeuCauDieuChuyen::with(['cuahangXuat', 'cuahangNhap', 'nguoiTao', 'nguoiDuyet', 'chitiet.sanpham']);
 
-        if ($request->filled('trang_thai')) {
-            $query->where('trang_thai', $request->trang_thai);
+        if ($request->filled('trangThai')) {
+            $query->where('trangThai', $request->trangThai);
         }
 
         $transfers = $query->orderBy('id', 'desc')->paginate(10);
@@ -39,19 +39,19 @@ class TransferController extends Controller
         }
 
         $request->validate([
-            'cuahang_xuat_id' => 'required|exists:cuahang,id',
-            'cuahang_nhap_id' => 'required|exists:cuahang,id|different:cuahang_xuat_id',
+            'cuaHangXuatId' => 'required|exists:cuahang,id',
+            'cuaHangNhapId' => 'required|exists:cuahang,id|different:cuahang_xuat_id',
             'items' => 'required|array|min:1',
-            'items.*.sanpham_id' => 'required|exists:san_pham,id',
+            'items.*.sanpham_id' => 'required|exists:sanPham,id',
             'items.*.so_luong_chuyen' => 'required|integer|min:1',
         ]);
 
         try {
             DB::statement('CALL sp_create_transfer_request(?, ?, ?, ?, ?, @yeucau_id, @error)', [
-                $request->cuahang_xuat_id,
-                $request->cuahang_nhap_id,
+                $request->cuaHangXuatId,
+                $request->cuaHangNhapId,
                 $user->nguoidung->id,
-                $request->ghi_chu ?? null,
+                $request->ghiChu ?? null,
                 json_encode($request->items),
             ]);
 
@@ -61,7 +61,7 @@ class TransferController extends Controller
                 return response()->json(['error' => 'Thất bại: ' . $res->error], 500);
             }
 
-            $yeuCau = YeuCauDieuChuyen::find($res->yeucau_id);
+            $yeuCau = YeuCauDieuChuyen::find($res->yeuCauId);
             return response()->json(['message' => 'Lập yêu cầu điều chuyển kho thành công', 'data' => $yeuCau->load('chitiet')], 201);
 
         } catch (\Exception $e) {
@@ -80,13 +80,13 @@ class TransferController extends Controller
         }
 
         $request->validate([
-            'trang_thai' => 'required|integer|in:1,2,3', // 1: DANG_VAN_CHUYEN, 2: HOAN_THANH, 3: TU_CHOI
+            'trangThai' => 'required|integer|in:1,2,3', // 1: DANG_VAN_CHUYEN, 2: HOAN_THANH, 3: TU_CHOI
         ]);
 
         try {
             DB::statement('CALL sp_update_transfer_status(?, ?, ?, @error)', [
                 $id,
-                $request->trang_thai,
+                $request->trangThai,
                 $user->nguoidung->id,
             ]);
 

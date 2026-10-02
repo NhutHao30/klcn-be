@@ -8,26 +8,29 @@ use Illuminate\Database\Eloquent\Model;
 class LoHang extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'lo_hang';
+
+    protected $table = 'loHang';
 
     protected $fillable = [
-        'ma_lo_hang',
-        'sanpham_id',
-        'cuahang_id',
-        'nhacungcap_id',
-        'so_luong_nhap',
-        'so_luong_con',
-        'ngay_san_xuat',
+        'maLoHang',
+        'sanPhamId',
+        'cuaHangId',
+        'nhaCungCapId',
+        'soLuongNhap',
+        'soLuongCon',
+        'ngaySanXuat',
         'hsd',
-        'gia_nhap',
-        'trang_thai',
+        'giaNhap',
+        'trangThai',
     ];
 
     protected $casts = [
-        'ngay_san_xuat' => 'date',
+        'ngaySanXuat' => 'date',
         'hsd' => 'date',
-        'gia_nhap' => 'double',
+        'giaNhap' => 'double',
     ];
 
     protected $appends = [
@@ -37,7 +40,7 @@ class LoHang extends Model
 
     public function getMALOHANAttribute()
     {
-        return $this->attributes['ma_lo_hang'] ?? $this->attributes['id'] ?? null;
+        return $this->attributes['maLoHang'] ?? $this->attributes['id'] ?? null;
     }
 
     public function getMAHDNHAPAttribute()
@@ -47,37 +50,37 @@ class LoHang extends Model
 
     public function getMASPAttribute()
     {
-        return $this->attributes['sanpham_id'] ?? null;
+        return $this->attributes['sanPhamId'] ?? null;
     }
 
     public function getMACUAHANGAttribute()
     {
-        return $this->attributes['cuahang_id'] ?? null;
+        return $this->attributes['cuaHangId'] ?? null;
     }
 
     public function getMANCCAttribute()
     {
-        return $this->attributes['nhacungcap_id'] ?? null;
+        return $this->attributes['nhaCungCapId'] ?? null;
     }
 
     public function getSOLUONGCONAttribute()
     {
-        return $this->attributes['so_luong_con'] ?? 0;
+        return $this->attributes['soLuongCon'] ?? 0;
     }
 
     public function getSOLUONGNHAPAttribute()
     {
-        return $this->attributes['so_luong_nhap'] ?? 0;
+        return $this->attributes['soLuongNhap'] ?? 0;
     }
 
     public function getDONGIANHAPAttribute()
     {
-        return $this->attributes['gia_nhap'] ?? 0;
+        return $this->attributes['giaNhap'] ?? 0;
     }
 
     public function getNGAYSXAttribute()
     {
-        return $this->attributes['ngay_san_xuat'] ?? null;
+        return $this->attributes['ngaySanXuat'] ?? null;
     }
 
     public function getHSDAttribute()
@@ -92,17 +95,17 @@ class LoHang extends Model
 
     public function sanPham()
     {
-        return $this->belongsTo(SanPham::class, 'sanpham_id');
+        return $this->belongsTo(SanPham::class, 'sanPhamId');
     }
 
     public function cuaHang()
     {
-        return $this->belongsTo(CuaHang::class, 'cuahang_id');
+        return $this->belongsTo(CuaHang::class, 'cuaHangId');
     }
 
     public function nhaCungCap()
     {
-        return $this->belongsTo(NhaCungCap::class, 'nhacungcap_id');
+        return $this->belongsTo(NhaCungCap::class, 'nhaCungCapId');
     }
 
     public function kiemTraHetHan(): bool

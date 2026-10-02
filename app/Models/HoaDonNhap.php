@@ -8,18 +8,21 @@ use Illuminate\Database\Eloquent\Model;
 class HoaDonNhap extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'hoadon_nhap';
+
+    protected $table = 'hoaDonNhap';
 
     protected $fillable = [
         'ma_hoadon_nhap',
-        'nhacungcap_id',
-        'cuahang_id',
+        'nhaCungCapId',
+        'cuaHangId',
         'nguoi_nhap_id',
         'ngay_nhap',
         'tong_tien',
-        'ghi_chu',
-        'trang_thai',
+        'ghiChu',
+        'trangThai',
     ];
 
     protected $casts = [
@@ -38,12 +41,12 @@ class HoaDonNhap extends Model
 
     public function getMANCCAttribute()
     {
-        return $this->attributes['nhacungcap_id'] ?? null;
+        return $this->attributes['nhaCungCapId'] ?? null;
     }
 
     public function getMACUAHANGAttribute()
     {
-        return $this->attributes['cuahang_id'] ?? null;
+        return $this->attributes['cuaHangId'] ?? null;
     }
 
     public function getNGAYLAPAttribute()
@@ -63,17 +66,17 @@ class HoaDonNhap extends Model
 
     public function getTRANGTHAIAttribute()
     {
-        return $this->attributes['trang_thai'] ?? 0;
+        return $this->attributes['trangThai'] ?? 0;
     }
 
     public function nhaCungCap()
     {
-        return $this->belongsTo(NhaCungCap::class, 'nhacungcap_id');
+        return $this->belongsTo(NhaCungCap::class, 'nhaCungCapId');
     }
 
     public function cuaHang()
     {
-        return $this->belongsTo(CuaHang::class, 'cuahang_id');
+        return $this->belongsTo(CuaHang::class, 'cuaHangId');
     }
 
     public function nguoiNhap()
@@ -96,7 +99,7 @@ class HoaDonNhap extends Model
      */
     public function kiemTraDaKyDu(): bool
     {
-        $signedRolesCount = $this->chuKySos()->where('trang_thai', 1)->distinct('vai_tro_ky')->count('vai_tro_ky');
+        $signedRolesCount = $this->chuKySos()->where('trangThai', 1)->distinct('vai_tro_ky')->count('vai_tro_ky');
         return $signedRolesCount >= 4;
     }
 }

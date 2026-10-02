@@ -4,107 +4,136 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use App\Models\KhachHang;
+use App\Models\NguoiDung;
+use App\Models\TaiKhoan;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
 class CustomerController extends Controller
 {
     public function index()
     {
-        $customers = KhachHang::withTrashed()
-            ->withCount('hdbans as totalOrders')
-            ->select('*')
-            ->selectSub(function ($query) {
-                $query->from('hdban')
-                      ->whereColumn('hdban.MAKH', 'khachhang.MAKH')
-                      ->whereIn('TRANGTHAITHANHTOAN', ['Đã hoàn thành', 'Đã duyệt', 'Đang giao'])
-                      ->selectRaw('COALESCE(SUM(TONGTIEN), 0)');
-            }, 'totalSpent')
+        $customers = NguoiDung::where('loaiNguoiDung', 0)
+            ->with(['taikhoan', 'donhang'])
             ->get();
 
         return response()->json($customers->map(function ($c) {
+            $totalOrders = $c->donhang ? $c->donhang->count() : 0;
+            $totalSpent = $c->donhang ? $c->donhang->whereIn('trangThaiThanhToan', [1])->sum('tongThanhToan') : 0;
+
+            $diemTichLuy = (int) floor($totalSpent / 10000);
             $rank = 'Đồng';
-            if ($c->DIEMTICHLUY >= 1000) {
+            if ($diemTichLuy >= 1000) {
                 $rank = 'Thách đấu';
-            } elseif ($c->DIEMTICHLUY >= 500) {
+            } elseif ($diemTichLuy >= 500) {
                 $rank = 'Kim cương';
-            } elseif ($c->DIEMTICHLUY >= 200) {
+            } elseif ($diemTichLuy >= 200) {
                 $rank = 'Vàng';
-            } elseif ($c->DIEMTICHLUY >= 50) {
+            } elseif ($diemTichLuy >= 50) {
                 $rank = 'Bạc';
             }
 
             return [
-                'maKH' => $c->MAKH,
-                'hoTen' => $c->HOTEN,
-                'sdt' => $c->SDT,
-                'email' => $c->taikhoan ? $c->taikhoan->EMAIL : null,
-                'ngaySinh' => $c->NGAYSINH,
-                'gioiTinh' => $c->GioiTinh,
-                'diaChi' => $c->DIACHI,
-                'diemTichLuy' => $c->DIEMTICHLUY,
+                'id' => $c->id,
+                'maKH' => 'KH' . sprintf('%06d', $c->id),
+                'hoTen' => $c->hoTen,
+                'sdt' => $c->soDienThoai,
+                'email' => $c->taikhoan ? $c->taikhoan->email : null,
+                'ngaySinh' => $c->ngaySinh,
+                'gioiTinh' => $c->gioiTinh,
+                'diaChi' => $c->diachi->first()->diaChiChiTiet ?? null,
+                'diemTichLuy' => $diemTichLuy,
                 'membershipRank' => $rank,
-                'totalOrders' => $c->totalOrders,
-                'totalSpent' => $c->totalSpent,
-                'macuahang' => $c->MACUAHANG,
-                'deleted_at' => $c->deleted_at
+                'totalOrders' => $totalOrders,
+                'totalSpent' => (float) $totalSpent,
+                'macuahang' => $c->cuaHangId,
             ];
         }));
     }
 
     public function store(Request $request)
     {
-        $hoTen = $request->input('hoTen', $request->input('HOTEN'));
-        $sdt = $request->input('sdt', $request->input('SDT'));
+        $hoTen = $request->input('hoTen', $request->input('HoTen', $request->input('HOTEN')));
+        $sdt = $request->input('sdt', $request->input('Sdt', $request->input('SDT')));
         $ngaySinh = $request->input('ngaySinh', $request->input('NGAYSINH'));
-        $gioiTinh = $request->input('gioiTinh', $request->input('GioiTinh', $request->input('GIOITINH')));
+        $gioiTinh = $request->input('gioiTinh', $request->input('GioiTinh', $request->input('GIOITINH', 0)));
         $diaChi = $request->input('diaChi', $request->input('DIACHI'));
 
         if (!$hoTen || !$sdt) {
             return response()->json(['message' => 'Họ tên và Số điện thoại là bắt buộc.'], 422);
         }
 
-        $maCuaHang = $request->input('macuahang', $request->input('MACUAHANG', 1));
+        $existing = NguoiDung::where('soDienThoai', $sdt)->first();
+        if ($existing) {
+            return response()->json([
+                'id' => $existing->id,
+                'maKH' => 'KH' . sprintf('%06d', $existing->id),
+                'hoTen' => $existing->hoTen,
+                'sdt' => $existing->soDienThoai,
+                'message' => 'Khách hàng với số điện thoại này đã tồn tại.'
+            ], 200);
+        }
 
-        // Nếu admin/staff đang login, lấy MACUAHANG của họ
+        $maCuaHang = $request->input('macuahang', $request->input('MACUAHANG', 1));
         $user = Auth::guard('api')->user();
-        if ($user && in_array($user->MAROLE, [0, 1, 2])) {
-            $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-            if ($nhanVien && $nhanVien->MACUAHANG) {
-                $maCuaHang = $nhanVien->MACUAHANG;
+        if ($user) {
+            $staffProfile = NguoiDung::where('taiKhoanId', $user->id)->first();
+            if ($staffProfile && $staffProfile->cuaHangId) {
+                $maCuaHang = $staffProfile->cuaHangId;
             }
         }
 
-        $maKH = 'KH' . substr(time(), -8);
-        $kh = KhachHang::create([
-            'MAKH' => $maKH,
-            'HOTEN' => $hoTen,
-            'SDT' => $sdt,
-            'NGAYSINH' => $ngaySinh,
-            'GioiTinh' => $gioiTinh,
-            'DIACHI' => $diaChi,
-            'DIEMTICHLUY' => 0,
-            'MACUAHANG' => $maCuaHang
-        ]);
+        return DB::transaction(function () use ($hoTen, $sdt, $ngaySinh, $gioiTinh, $diaChi, $maCuaHang) {
+            $username = 'kh_' . preg_replace('/[^0-9]/', '', $sdt);
+            if (TaiKhoan::where('username', $username)->exists()) {
+                $username = $username . '_' . time();
+            }
+            $email = $username . '@customer.dolabakery.com';
 
-        return response()->json($kh);
+            $taiKhoan = TaiKhoan::create([
+                'username' => $username,
+                'email' => $email,
+                'password' => Hash::make('123456'),
+                'vaiTroId' => 6, // CUSTOMER role
+                'trangThai' => 1,
+            ]);
+
+            $nguoiDung = NguoiDung::create([
+                'taiKhoanId' => $taiKhoan->id,
+                'cuaHangId' => $maCuaHang,
+                'hoTen' => $hoTen,
+                'soDienThoai' => $sdt,
+                'gioiTinh' => (int) $gioiTinh,
+                'ngaySinh' => $ngaySinh ? date('Y-m-d', strtotime($ngaySinh)) : null,
+                'loaiNguoiDung' => 0, // 0: Khách hàng
+            ]);
+
+            return response()->json([
+                'id' => $nguoiDung->id,
+                'maKH' => 'KH' . sprintf('%06d', $nguoiDung->id),
+                'hoTen' => $nguoiDung->hoTen,
+                'sdt' => $nguoiDung->soDienThoai,
+                'email' => $taiKhoan->email,
+                'diemTichLuy' => 0,
+                'membershipRank' => 'Đồng',
+            ]);
+        });
     }
-
 
     public function update(Request $request, $id)
     {
-        $kh = KhachHang::find($id);
+        $kh = NguoiDung::find($id);
         if (!$kh) {
             return response()->json(['error' => 'Not found'], 404);
         }
 
         $kh->update([
-            'HOTEN' => $request->hoTen ?? $kh->HOTEN,
-            'SDT' => $request->sdt ?? $kh->SDT,
-            'NGAYSINH' => $request->ngaySinh ?? $kh->NGAYSINH,
-            'GioiTinh' => $request->gioiTinh ?? $kh->GioiTinh,
-            'DIACHI' => $request->diaChi ?? $kh->DIACHI,
-            'MACUAHANG' => $request->macuahang ?? $kh->MACUAHANG
+            'hoTen' => $request->hoTen ?? $request->HoTen ?? $kh->hoTen,
+            'soDienThoai' => $request->sdt ?? $request->Sdt ?? $kh->soDienThoai,
+            'ngaySinh' => $request->ngaySinh ?? $kh->ngaySinh,
+            'gioiTinh' => $request->gioiTinh ?? $kh->gioiTinh,
+            'cuaHangId' => $request->macuahang ?? $kh->cuaHangId
         ]);
 
         return response()->json($kh);
@@ -112,7 +141,7 @@ class CustomerController extends Controller
 
     public function destroy($id)
     {
-        $kh = KhachHang::find($id);
+        $kh = NguoiDung::find($id);
         if ($kh) {
             $kh->delete();
         }
@@ -121,7 +150,7 @@ class CustomerController extends Controller
 
     public function restore($id)
     {
-        $kh = KhachHang::withTrashed()->find($id);
+        $kh = NguoiDung::withTrashed()->find($id);
         if ($kh) {
             $kh->restore();
             return response()->json(['message' => 'Đã khôi phục tài khoản khách hàng']);
@@ -129,31 +158,32 @@ class CustomerController extends Controller
         return response()->json(['error' => 'Không tìm thấy khách hàng'], 404);
     }
 
-    /**
-     * Tra cứu khách hàng theo SĐT — dùng cho form đặt hàng trước
-     * GET /customers/lookup?sdt=09xxxxxxxx
-     */
     public function lookupBySdt(Request $request)
     {
         $sdt = $request->input('sdt');
-        if (!$sdt || strlen(trim($sdt)) < 9) {
+        if (!$sdt || strlen(trim($sdt)) < 3) {
             return response()->json(['found' => false, 'customer' => null]);
         }
 
-        $kh = KhachHang::where('SDT', $sdt)->first();
+        $kh = NguoiDung::where('soDienThoai', 'LIKE', '%' . trim($sdt) . '%')->first();
 
         if (!$kh) {
             return response()->json(['found' => false, 'customer' => null]);
         }
 
+        $totalSpent = $kh->donhang ? $kh->donhang->whereIn('trangThaiThanhToan', [1])->sum('tongThanhToan') : 0;
+        $diemTichLuy = (int) floor($totalSpent / 10000);
+
         return response()->json([
             'found' => true,
             'customer' => [
-                'maKH'       => $kh->MAKH,
-                'hoTen'      => $kh->HOTEN,
-                'sdt'        => $kh->SDT,
-                'diemTichLuy'=> $kh->DIEMTICHLUY,
+                'id'         => $kh->id,
+                'maKH'       => $kh->id,
+                'hoTen'      => $kh->hoTen,
+                'sdt'        => $kh->soDienThoai,
+                'diemTichLuy'=> $diemTichLuy,
             ],
         ]);
     }
 }
+

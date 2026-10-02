@@ -19,11 +19,11 @@ class SignatureController extends Controller
     public function signRole(Request $request)
     {
         $validated = $request->validate([
-            'chu_ky_so_id' => 'required|exists:chu_ky_so,id',
+            'chu_ky_so_id' => 'required|exists:chuKySo,id',
             'nguoi_ky_id' => 'required|exists:nguoidung,id',
             'raw_payload' => 'required|string',
             'public_key' => 'nullable|string',
-            'ghi_chu' => 'nullable|string',
+            'ghiChu' => 'nullable|string',
         ]);
 
         try {
@@ -32,7 +32,7 @@ class SignatureController extends Controller
                 $validated['nguoi_ky_id'],
                 $validated['raw_payload'],
                 $validated['public_key'] ?? 'SYSTEM_RSA_PUBLIC_KEY',
-                $validated['ghi_chu'] ?? 'Đã ký xác nhận thành công',
+                $validated['ghiChu'] ?? 'Đã ký xác nhận thành công',
             ]);
 
             $res = DB::select('SELECT @is_fully_signed AS is_fully_signed, @error AS error')[0];
@@ -80,7 +80,7 @@ class SignatureController extends Controller
             ->get();
 
         $totalRequired = ($validated['loai_tai_lieu'] == 1) ? 4 : 2;
-        $signedCount = $signatures->where('trang_thai', 1)->count();
+        $signedCount = $signatures->where('trangThai', 1)->count();
 
         return response()->json([
             'success' => true,

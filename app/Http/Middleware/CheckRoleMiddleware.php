@@ -21,7 +21,7 @@ class CheckRoleMiddleware
 
         $user = Auth::guard('api')->user();
         $maRole = (string)$user->MAROLE;
-        $vaitroId = (string)$user->vaitro_id;
+        $vaitroId = (string)$user->vaiTroId;
 
         // Admin (MAROLE = 0 hoặc vaitro_id = 1) có full quyền truy cập các route Admin
         if ($maRole === '0' || $vaitroId === '1') {

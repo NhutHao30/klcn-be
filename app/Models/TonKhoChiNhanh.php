@@ -8,26 +8,29 @@ use Illuminate\Database\Eloquent\Model;
 class TonKhoChiNhanh extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'tonkho_chinhanh';
+
+    protected $table = 'tonKhoChiNhanh';
 
     protected $fillable = [
-        'cuahang_id',
-        'sanpham_id',
-        'so_luong_ton',
+        'cuaHangId',
+        'sanPhamId',
+        'soLuongTon',
     ];
 
     protected $casts = [
-        'so_luong_ton' => 'integer',
+        'soLuongTon' => 'integer',
     ];
 
     public function cuahang()
     {
-        return $this->belongsTo(CuaHang::class, 'cuahang_id');
+        return $this->belongsTo(CuaHang::class, 'cuaHangId');
     }
 
     public function sanpham()
     {
-        return $this->belongsTo(SanPham::class, 'sanpham_id');
+        return $this->belongsTo(SanPham::class, 'sanPhamId');
     }
 }

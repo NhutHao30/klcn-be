@@ -8,25 +8,28 @@ use Illuminate\Database\Eloquent\Model;
 class SanPham extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'san_pham';
+
+    protected $table = 'sanPham';
 
     protected $fillable = [
-        'loai_id',
-        'ten_san_pham',
+        'loaiId',
+        'tenSanPham',
         'slug',
-        'gia_ban',
-        'hinh_anh',
-        'mo_ta',
-        'don_vi_tinh',
-        'trang_thai',
+        'giaBan',
+        'hinhAnh',
+        'moTa',
+        'donViTinh',
+        'trangThai',
     ];
 
     protected $casts = [
-        'gia_ban' => 'double',
+        'giaBan' => 'double',
     ];
 
-    protected $appends = ['MASP', 'TENSP', 'GIABAN', 'HINHANH', 'SOLUONG_TON', 'so_luong_ton', 'TONKHO_THUCTE'];
+    protected $appends = ['MASP', 'TENSP', 'GIABAN', 'HINHANH', 'SOLUONG_TON', 'soLuongTon', 'TONKHO_THUCTE'];
 
     public function getMASPAttribute()
     {
@@ -35,25 +38,25 @@ class SanPham extends Model
 
     public function getTENSPAttribute()
     {
-        return $this->attributes['ten_san_pham'] ?? null;
+        return $this->attributes['tenSanPham'] ?? null;
     }
 
     public function getGIABANAttribute()
     {
-        return $this->attributes['gia_ban'] ?? null;
+        return $this->attributes['giaBan'] ?? null;
     }
 
     public function getHINHANHAttribute()
     {
-        return $this->attributes['hinh_anh'] ?? null;
+        return $this->attributes['hinhAnh'] ?? null;
     }
 
     public function getSoLuongTonAttribute()
     {
         if ($this->relationLoaded('tonKhoChiNhanhs')) {
-            return (int) $this->tonKhoChiNhanhs->sum('so_luong_ton');
+            return (int) $this->tonKhoChiNhanhs->sum('soLuongTon');
         }
-        return (int) $this->tonKhoChiNhanhs()->sum('so_luong_ton');
+        return (int) $this->tonKhoChiNhanhs()->sum('soLuongTon');
     }
 
     public function getTonkhoThucteAttribute()
@@ -63,21 +66,31 @@ class SanPham extends Model
 
     public function loaiSanPham()
     {
-        return $this->belongsTo(LoaiSanPham::class, 'loai_id');
+        return $this->belongsTo(LoaiSanPham::class, 'loaiId');
+    }
+
+    public function loai()
+    {
+        return $this->belongsTo(LoaiSanPham::class, 'loaiId');
     }
 
     public function loHangs()
     {
-        return $this->hasMany(LoHang::class, 'sanpham_id');
+        return $this->hasMany(LoHang::class, 'sanPhamId');
     }
 
     public function tonKhoChiNhanhs()
     {
-        return $this->hasMany(TonKhoChiNhanh::class, 'sanpham_id');
+        return $this->hasMany(TonKhoChiNhanh::class, 'sanPhamId');
+    }
+
+    public function tonkho()
+    {
+        return $this->hasMany(TonKhoChiNhanh::class, 'sanPhamId');
     }
 
     public function lichSuGias()
     {
-        return $this->hasMany(LichSuGiaSanPham::class, 'sanpham_id')->orderBy('created_at', 'desc');
+        return $this->hasMany(LichSuGiaSanPham::class, 'sanPhamId')->orderBy('createdAt', 'desc');
     }
 }

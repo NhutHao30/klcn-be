@@ -16,28 +16,42 @@ class AdminController extends Controller
     public function listUsers()
     {
         $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $query = TaiKhoan::with('khachhang.cuahang', 'nhanvien.cuahang', 'vaitro');
+        $query = TaiKhoan::with(['nguoidung.cuahang', 'vaitro']);
 
-        if ($user && $user->MAROLE == 1) {
-            $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-            $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
+        if ($user && $user->vaiTroId == 2) {
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first();
+            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
 
             $query->where(function ($q) use ($macuahang, $user) {
-                // Thấy tất cả Khách hàng
-                $q->where('MAROLE', 3)
-                  // Thấy Nhân viên (Role 2) thuộc cùng chi nhánh
+                $q->where('vaiTroId', 6)
                   ->orWhere(function ($q2) use ($macuahang) {
-                      $q2->where('MAROLE', 2)
-                         ->whereHas('nhanvien', function ($q3) use ($macuahang) {
-                             $q3->where('MACUAHANG', $macuahang);
+                      $q2->whereIn('vaiTroId', [3, 4])
+                         ->whereHas('nguoidung', function ($q3) use ($macuahang) {
+                             $q3->where('cuaHangId', $macuahang);
                          });
                   })
-                  // Hoặc thấy chính họ
-                  ->orWhere('USERNAME', $user->USERNAME);
+                  ->orWhere('id', $user->id);
             });
         }
 
-        $users = $query->get();
+        $users = $query->get()->map(function ($u) {
+            $nd = $u->nguoidung;
+            return [
+                'id' => $u->id,
+                'username' => $u->username,
+                'USERNAME' => $u->username,
+                'email' => $u->email,
+                'EMAIL' => $u->email,
+                'vaiTroId' => $u->vaiTroId,
+                'MAROLE' => $u->MAROLE,
+                'vaitro' => $u->vaitro,
+                'nguoidung' => $nd,
+                'khachhang' => $nd,
+                'nhanvien' => $nd,
+                'createdAt' => $u->createdAt,
+            ];
+        });
+
         return response()->json($users);
     }
 
@@ -344,28 +358,27 @@ class AdminController extends Controller
     }
 
     /**
-     * Báo cáo doanh thu (theo ngày hoặc tháng)
+     * Báo cáo doanh thu (theo ngày hoặc tháng cho Biểu đồ) - Query từ SQL VIEW v_thong_ke_doanh_thu
      */
     public function revenueReport(Request $request)
     {
         $type = $request->query('type', 'month'); // 'day' or 'month'
 
-        $query = \App\Models\HdBan::whereIn('TRANGTHAITHANHTOAN', ['Đã hoàn thành', 'Đã duyệt', 'Đang giao']);
+        $baseQuery = DB::table('v_thong_ke_doanh_thu');
 
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if ($userLogin && $userLogin->MAROLE == 1) {
-            $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-            $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
-            $query->where('MACUAHANG', $macuahang);
+        if ($userLogin && $userLogin->vaiTroId == 2) { // MANAGER
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+            $baseQuery->where('cuaHangId', $macuahang);
         }
 
         $result = [];
 
         if ($type === 'day') {
-            // Lấy 30 ngày gần nhất
             $startDate = now()->subDays(29)->startOfDay();
-            $data = $query->where('NGAYLAP', '>=', $startDate)
-                ->select(DB::raw('DATE(NGAYLAP) as date'), DB::raw('SUM(TONGTIEN) as total'))
+            $data = (clone $baseQuery)->where('createdAt', '>=', $startDate)
+                ->select(DB::raw('DATE(createdAt) as date'), DB::raw('SUM(tongThanhToan) as total'))
                 ->groupBy('date')
                 ->get()
                 ->keyBy('date');
@@ -374,14 +387,13 @@ class AdminController extends Controller
                 $date = now()->subDays($i)->format('Y-m-d');
                 $result[] = [
                     'date' => $date,
-                    'total' => isset($data[$date]) ? $data[$date]->total : 0
+                    'total' => isset($data[$date]) ? (float)$data[$date]->total : 0
                 ];
             }
         } else {
-            // Lấy 12 tháng gần nhất
             $startDate = now()->subMonths(11)->startOfMonth();
-            $data = $query->where('NGAYLAP', '>=', $startDate)
-                ->select(DB::raw('DATE_FORMAT(NGAYLAP, "%Y-%m") as date'), DB::raw('SUM(TONGTIEN) as total'))
+            $data = (clone $baseQuery)->where('createdAt', '>=', $startDate)
+                ->select(DB::raw('DATE_FORMAT(createdAt, "%Y-%m") as date'), DB::raw('SUM(tongThanhToan) as total'))
                 ->groupBy('date')
                 ->get()
                 ->keyBy('date');
@@ -390,7 +402,7 @@ class AdminController extends Controller
                 $date = now()->subMonths($i)->format('Y-m');
                 $result[] = [
                     'date' => $date,
-                    'total' => isset($data[$date]) ? $data[$date]->total : 0
+                    'total' => isset($data[$date]) ? (float)$data[$date]->total : 0
                 ];
             }
         }
@@ -402,54 +414,97 @@ class AdminController extends Controller
     {
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
         $macuahang = null;
-        if ($userLogin && $userLogin->MAROLE == 1) {
-            $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-            $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
+        if ($userLogin && $userLogin->vaiTroId == 2) { // MANAGER
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
         }
 
-        $baseQuery = \App\Models\HdBan::whereIn('TRANGTHAITHANHTOAN', ['Đã hoàn thành', 'Đã duyệt', 'Đang giao']);
-        if ($macuahang) {
-            $baseQuery->where('MACUAHANG', $macuahang);
-        }
+        $makeQuery = function() use ($macuahang) {
+            $q = DB::table('v_thong_ke_doanh_thu');
+            if ($macuahang) {
+                $q->where('cuaHangId', $macuahang);
+            }
+            return $q;
+        };
 
-        // Summary
-        $today = now()->startOfDay();
-        $thisMonth = now()->startOfMonth();
-        $thisYear = now()->startOfYear();
-        $lastMonthStart = now()->subMonth()->startOfMonth();
-        $lastMonthEnd = now()->subMonth()->endOfMonth();
+        // Summary (Timezone GMT+7)
+        $todayStartUtc = now()->setTimezone('Asia/Ho_Chi_Minh')->startOfDay()->setTimezone('UTC');
+        $thisMonthStartUtc = now()->setTimezone('Asia/Ho_Chi_Minh')->startOfMonth()->setTimezone('UTC');
+        $thisYearStartUtc = now()->setTimezone('Asia/Ho_Chi_Minh')->startOfYear()->setTimezone('UTC');
+        $lastMonthStartUtc = now()->setTimezone('Asia/Ho_Chi_Minh')->subMonth()->startOfMonth()->setTimezone('UTC');
+        $lastMonthEndUtc = now()->setTimezone('Asia/Ho_Chi_Minh')->subMonth()->endOfMonth()->setTimezone('UTC');
 
-        $revenueToday = (clone $baseQuery)->where('NGAYLAP', '>=', $today)->sum('TONGTIEN');
-        $revenueThisMonth = (clone $baseQuery)->where('NGAYLAP', '>=', $thisMonth)->sum('TONGTIEN');
-        $revenueThisYear = (clone $baseQuery)->where('NGAYLAP', '>=', $thisYear)->sum('TONGTIEN');
+        $revenueToday = (float) $makeQuery()->where('createdAt', '>=', $todayStartUtc)->sum('tongThanhToan');
+        $revenueThisMonth = (float) $makeQuery()->where('createdAt', '>=', $thisMonthStartUtc)->sum('tongThanhToan');
+        $revenueThisYear = (float) $makeQuery()->where('createdAt', '>=', $thisYearStartUtc)->sum('tongThanhToan');
         
-        $revenueLastMonth = (clone $baseQuery)
-            ->whereBetween('NGAYLAP', [$lastMonthStart, $lastMonthEnd])
-            ->sum('TONGTIEN');
+        $revenueLastMonth = (float) $makeQuery()
+            ->whereBetween('createdAt', [$lastMonthStartUtc, $lastMonthEndUtc])
+            ->sum('tongThanhToan');
 
         $percentIncreaseMonth = 0;
         if ($revenueLastMonth > 0) {
             $percentIncreaseMonth = (($revenueThisMonth - $revenueLastMonth) / $revenueLastMonth) * 100;
         } else if ($revenueThisMonth > 0) {
-            $percentIncreaseMonth = 100; // Increase from 0
+            $percentIncreaseMonth = 100;
         }
 
-        // Revenue by store (only for role 0)
+        // Order count & revenue breakdown by channel (POS at counter vs Online delivery)
+        $channelStats = [
+            'pos' => [
+                'count' => (int) $makeQuery()->where('loaiDonHang', 1)->count(),
+                'revenue' => (float) $makeQuery()->where('loaiDonHang', 1)->sum('tongThanhToan'),
+            ],
+            'online' => [
+                'count' => (int) $makeQuery()->where('loaiDonHang', 0)->count(),
+                'revenue' => (float) $makeQuery()->where('loaiDonHang', 0)->sum('tongThanhToan'),
+            ]
+        ];
+
+        // Revenue by store (For Director / General Manager)
         $revenueByStore = [];
         if (!$macuahang) {
-            $revenueByStore = (clone $baseQuery)
-                ->join('cuahang', 'hdban.MACUAHANG', '=', 'cuahang.MACUAHANG')
-                ->where('NGAYLAP', '>=', $thisMonth)
-                ->select('cuahang.TENCUAHANG', DB::raw('SUM(hdban.TONGTIEN) as total'))
-                ->groupBy('cuahang.MACUAHANG', 'cuahang.TENCUAHANG')
+            $revenueByStore = $makeQuery()
+                ->join('cuaHang', 'v_thong_ke_doanh_thu.cuaHangId', '=', 'cuaHang.id')
+                ->where('v_thong_ke_doanh_thu.createdAt', '>=', $thisMonthStartUtc)
+                ->select(DB::raw("COALESCE(cuaHang.tenCuaHang, 'Cửa hàng chính') as TENCUAHANG"), DB::raw('SUM(v_thong_ke_doanh_thu.tongThanhToan) as total'))
+                ->groupBy('cuaHang.id', 'cuaHang.tenCuaHang')
                 ->get();
         }
 
-        // Revenue by time (today)
-        $revenueByTimeRaw = (clone $baseQuery)
-            ->where('NGAYLAP', '>=', $today)
-            ->select(DB::raw('HOUR(NGAYLAP) as hour'), DB::raw('SUM(TONGTIEN) as total'))
-            ->groupBy('hour')
+        // Top địa bàn giao hàng nhóm theo Tỉnh / Thành Phố
+        $topLocationsQuery = DB::table('v_top_dia_ban_giao_hang');
+        if ($macuahang) {
+            $topLocationsQuery->where('cuaHangId', $macuahang);
+        }
+        $rawLocations = $topLocationsQuery
+            ->select('diaChiGiaoHang', DB::raw('SUM(total_orders) as total_orders'), DB::raw('SUM(total_revenue) as total_revenue'))
+            ->groupBy('diaChiGiaoHang')
+            ->get();
+
+        $provinceMap = [];
+        foreach ($rawLocations as $row) {
+            $province = $this->extractProvinceName($row->diaChiGiaoHang);
+            if (!isset($provinceMap[$province])) {
+                $provinceMap[$province] = [
+                    'diaChiGiaoHang' => $province,
+                    'total_orders' => 0,
+                    'total_revenue' => 0,
+                ];
+            }
+            $provinceMap[$province]['total_orders'] += (int) $row->total_orders;
+            $provinceMap[$province]['total_revenue'] += (float) $row->total_revenue;
+        }
+
+        $topLocations = collect($provinceMap)
+            ->sortByDesc('total_orders')
+            ->take(5)
+            ->values();
+
+        // Phân bổ doanh thu theo khung giờ (Hôm nay - Giờ Việt Nam GMT+7)
+        $revenueByTimeRaw = $makeQuery()
+            ->where('createdAt', '>=', $todayStartUtc)
+            ->select('createdAt', 'tongThanhToan')
             ->get();
 
         $revenueByTime = [
@@ -461,8 +516,8 @@ class AdminController extends Controller
         ];
 
         foreach ($revenueByTimeRaw as $row) {
-            $h = $row->hour;
-            $total = $row->total;
+            $h = \Carbon\Carbon::parse($row->createdAt, 'UTC')->setTimezone('Asia/Ho_Chi_Minh')->hour;
+            $total = (float) $row->tongThanhToan;
             if ($h < 8) $revenueByTime['00:00 - 08:00'] += $total;
             else if ($h < 12) $revenueByTime['08:00 - 12:00'] += $total;
             else if ($h < 16) $revenueByTime['12:00 - 16:00'] += $total;
@@ -478,6 +533,8 @@ class AdminController extends Controller
                 'last_month' => $revenueLastMonth,
                 'percent_increase_month' => round($percentIncreaseMonth, 1)
             ],
+            'channel_stats' => $channelStats,
+            'top_locations' => $topLocations,
             'revenue_by_store' => $revenueByStore,
             'revenue_by_time' => collect($revenueByTime)->map(function ($total, $time) {
                 return ['time_range' => $time, 'total' => $total];
@@ -486,24 +543,47 @@ class AdminController extends Controller
     }
 
     /**
-     * Top 5 sản phẩm bán chạy nhất
+     * Helper bóc tách Tỉnh/Thành phố từ địa chỉ giao hàng
+     */
+    private function extractProvinceName(?string $address): string
+    {
+        if (!$address) return 'Khác';
+        $parts = explode(',', $address);
+        $lastPart = trim(end($parts));
+        if (!$lastPart) return 'Khác';
+
+        if (preg_match('/(Hồ Chí Minh|HCM|HCMC|TP\.?HCM|TP\.?Hồ Chí Minh)/i', $lastPart)) {
+            return 'TP. Hồ Chí Minh';
+        }
+        if (preg_match('/(Hà Nội|HN|TP\.?Hà Nội)/i', $lastPart)) {
+            return 'TP. Hà Nội';
+        }
+
+        $province = preg_replace('/^(Tỉnh|Thành phố|TP\.?)\s+/i', '', $lastPart);
+        return trim($province) ?: 'Khác';
+    }
+
+
+    /**
+     * Top 5 sản phẩm bán chạy nhất (Query từ SQL VIEW v_top_san_pham_ban_chay)
      */
     public function topProducts()
     {
-        $query = \App\Models\ChiTietHdBan::join('hdban', 'chitiethdban.MAHD', '=', 'hdban.MAHD')
-            ->join('sanpham', 'chitiethdban.MASP', '=', 'sanpham.MASP')
-            ->whereIn('hdban.TRANGTHAITHANHTOAN', ['Đã hoàn thành', 'Đã duyệt', 'Đang giao']);
-
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if ($userLogin && $userLogin->MAROLE == 1) {
-            $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-            $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
-            $query->where('hdban.MACUAHANG', $macuahang);
+        $macuahang = null;
+        if ($userLogin && $userLogin->vaiTroId == 2) { // MANAGER
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
         }
 
-        $data = $query->select('sanpham.TENSP', DB::raw('SUM(chitiethdban.SOLUONG) as total_sold'))
-            ->groupBy('sanpham.MASP', 'sanpham.TENSP')
-            ->orderBy('total_sold', 'desc')
+        $query = DB::table('v_top_san_pham_ban_chay');
+        if ($macuahang) {
+            $query->where('cuaHangId', $macuahang);
+        }
+
+        $data = $query->select('TENSP', DB::raw('SUM(total_sold) as total_sold'))
+            ->groupBy('sanPhamId', 'TENSP')
+            ->orderByDesc('total_sold')
             ->limit(5)
             ->get();
 
@@ -512,47 +592,20 @@ class AdminController extends Controller
 
     public function getChamCong(Request $request)
     {
-        $thang = $request->query('thang', now()->month);
-        $nam = $request->query('nam', now()->year);
-
-        $query = \App\Models\ChamCong::with('nhanvien.taikhoan')
-            ->whereMonth('NGAYCHAMCONG', $thang)
-            ->whereYear('NGAYCHAMCONG', $nam);
-
-        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-
-        if ($userLogin) {
-            if ($userLogin->MAROLE == 0) {
-                // Quản lý tổng (Role 0) xem chấm công của Quản lý chi nhánh (Role 1), hoặc Nhân viên trung tâm (Role 2, MACUAHANG=1)
-                $query->whereHas('nhanvien.taikhoan', function ($q) {
-                    $q->where('MAROLE', 1)
-                      ->orWhere(function ($q2) {
-                          $q2->where('MAROLE', 2)
-                             ->whereHas('nhanvien', function ($q3) {
-                                 $q3->where('MACUAHANG', 1);
-                             });
-                      });
-                });
-            } elseif ($userLogin->MAROLE == 1) {
-                // Quản lý chi nhánh (Role 1) xem chấm công của Nhân viên (Role 2) thuộc chi nhánh HOẶC chính bản thân mình
-                $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-                $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
-                $username = $userLogin->USERNAME;
-
-                $query->whereHas('nhanvien', function ($q) use ($macuahang, $username) {
-                    $q->where(function ($q3) use ($macuahang, $username) {
-                        $q3->where('MACUAHANG', $macuahang)
-                           ->whereHas('taikhoan', function ($q2) {
-                               $q2->where('MAROLE', 2);
-                           });
-                    })->orWhere('USERNAME', $username);
-                });
+        try {
+            if (!\Illuminate\Support\Facades\Schema::hasTable('chamcong') && !\Illuminate\Support\Facades\Schema::hasTable('cham_cong')) {
+                return response()->json([]);
             }
+            $thang = $request->query('thang', now()->month);
+            $nam = $request->query('nam', now()->year);
+
+            $query = \App\Models\ChamCong::whereMonth('NGAYCHAMCONG', $thang)
+                ->whereYear('NGAYCHAMCONG', $nam);
+
+            return response()->json($query->get());
+        } catch (\Throwable $e) {
+            return response()->json([]);
         }
-
-        $data = $query->get();
-
-        return response()->json($data);
     }
 
     /**
@@ -614,9 +667,9 @@ class AdminController extends Controller
     {
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
         $macuahang = null;
-        if ($userLogin && $userLogin->MAROLE == 1) {
-            $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-            $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
+        if ($userLogin && $userLogin->vaiTroId == 2) {
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
         }
         if (!$macuahang && $request->filled('macuahang')) {
             $macuahang = (int) $request->macuahang;
@@ -625,45 +678,51 @@ class AdminController extends Controller
         $thang = (int) $request->input('thang', now()->month);
         $nam   = (int) $request->input('nam', now()->year);
 
-        // ── Doanh thu: tổng tiền hóa đơn bán đã hoàn thành ─────────────
-        $doanhThuQuery = DB::table('hdban')
-            ->whereIn('TRANGTHAITHANHTOAN', ['Đã hoàn thành', 'Đã duyệt', 'Đang giao'])
-            ->whereMonth('NGAYLAP', $thang)
-            ->whereYear('NGAYLAP', $nam);
+        // ── Doanh thu: tổng tiền hóa đơn bán đã hoàn thành / đã thanh toán ─────────────
+        $doanhThuQuery = DB::table('donHang')
+            ->where(function($q) {
+                $q->where('trangThaiThanhToan', 1)->orWhereIn('trangThaiDonHang', [4, 5]);
+            })
+            ->whereMonth('createdAt', $thang)
+            ->whereYear('createdAt', $nam);
 
         if ($macuahang) {
-            $doanhThuQuery->where('MACUAHANG', $macuahang);
+            $doanhThuQuery->where('cuaHangId', $macuahang);
         }
 
-        $doanhThu = $doanhThuQuery->sum('TONGTIEN');
+        $doanhThu = (float) $doanhThuQuery->sum('tongThanhToan');
 
-        // ── Chi phí nhập: tổng (SL bán × đơn giá nhập lô) theo tháng ───
-        // Chỉ tính các dòng chitiethdban có MALOHAN (dữ liệu mới)
-        $chiPhiQuery = DB::table('chitiethdban')
-            ->join('hdban', 'chitiethdban.MAHD', '=', 'hdban.MAHD')
-            ->join('lo_hang', 'chitiethdban.MALOHAN', '=', 'lo_hang.MALOHAN')
-            ->whereIn('hdban.TRANGTHAITHANHTOAN', ['Đã hoàn thành', 'Đã duyệt', 'Đang giao'])
-            ->whereMonth('hdban.NGAYLAP', $thang)
-            ->whereYear('hdban.NGAYLAP', $nam)
-            ->whereNotNull('chitiethdban.MALOHAN');
+        // ── Chi phí nhập: tổng (SL bán × đơn giá bán) theo tháng ───
+        $chiPhiQuery = DB::table('chiTietDonHang')
+            ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
+            ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
+            ->where(function($q) {
+                $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
+            })
+            ->whereMonth('donHang.createdAt', $thang)
+            ->whereYear('donHang.createdAt', $nam);
 
         if ($macuahang) {
-            $chiPhiQuery->where('hdban.MACUAHANG', $macuahang);
+            $chiPhiQuery->where('donHang.cuaHangId', $macuahang);
         }
 
-        $chiPhi = $chiPhiQuery->sum(DB::raw('chitiethdban.SOLUONG * lo_hang.DONGIA_NHAP'));
+        $chiPhi = (float) $chiPhiQuery->sum(DB::raw('chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)'));
 
         // ── Chi phí hủy hàng (hết hạn, hỏng) trong tháng ──────────────
-        $chiPhiHuyQuery = DB::table('bien_ban_huy')
-            ->join('lo_hang', 'bien_ban_huy.MALOHAN', '=', 'lo_hang.MALOHAN')
-            ->whereMonth('bien_ban_huy.NGAY_HUY', $thang)
-            ->whereYear('bien_ban_huy.NGAY_HUY', $nam);
+        $chiPhiHuy = 0;
+        if (\Illuminate\Support\Facades\Schema::hasTable('bienbanhuy')) {
+            $chiPhiHuyQuery = DB::table('bienbanhuy')
+                ->leftJoin('chitietbienbanhuy', 'bienbanhuy.id', '=', 'chitietbienbanhuy.bienBanHuyId')
+                ->leftJoin('lohang', 'chitietbienbanhuy.loHangId', '=', 'lohang.id')
+                ->whereMonth('bienbanhuy.createdAt', $thang)
+                ->whereYear('bienbanhuy.createdAt', $nam);
 
-        if ($macuahang) {
-            $chiPhiHuyQuery->where('bien_ban_huy.MACUAHANG', $macuahang);
+            if ($macuahang) {
+                $chiPhiHuyQuery->where('bienbanhuy.cuaHangId', $macuahang);
+            }
+
+            $chiPhiHuy = (float) $chiPhiHuyQuery->sum(DB::raw('COALESCE(chitietbienbanhuy.soLuongHuy, 0) * COALESCE(lohang.giaNhap, 0)'));
         }
-
-        $chiPhiHuy = $chiPhiHuyQuery->sum(DB::raw('bien_ban_huy.SOLUONG_HUY * lo_hang.DONGIA_NHAP'));
 
         // ── Tổng chi phí = nhập hàng + hủy ─────────────────────────────
         $tongChiPhi = $chiPhi + $chiPhiHuy;
@@ -671,40 +730,44 @@ class AdminController extends Controller
         $biLoi      = $doanhThu > 0 ? round(($loiNhuan / $doanhThu) * 100, 2) : 0;
 
         // ── Lợi nhuận theo từng sản phẩm ───────────────────────────────
-        $loiNhuanTheoSP = DB::table('chitiethdban')
-            ->join('hdban', 'chitiethdban.MAHD', '=', 'hdban.MAHD')
-            ->join('sanpham', 'chitiethdban.MASP', '=', 'sanpham.MASP')
-            ->leftJoin('lo_hang', 'chitiethdban.MALOHAN', '=', 'lo_hang.MALOHAN')
-            ->whereIn('hdban.TRANGTHAITHANHTOAN', ['Đã hoàn thành', 'Đã duyệt', 'Đang giao'])
-            ->whereMonth('hdban.NGAYLAP', $thang)
-            ->whereYear('hdban.NGAYLAP', $nam)
-            ->when($macuahang, fn($q) => $q->where('hdban.MACUAHANG', $macuahang))
+        $loiNhuanTheoSP = DB::table('chiTietDonHang')
+            ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
+            ->join('sanPham', 'chiTietDonHang.sanPhamId', '=', 'sanPham.id')
+            ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
+            ->where(function($q) {
+                $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
+            })
+            ->whereMonth('donHang.createdAt', $thang)
+            ->whereYear('donHang.createdAt', $nam)
+            ->when($macuahang, fn($q) => $q->where('donHang.cuaHangId', $macuahang))
             ->selectRaw("
-                sanpham.MASP,
-                sanpham.TENSP,
-                SUM(chitiethdban.SOLUONG) as tong_ban,
-                SUM(chitiethdban.SOLUONG * chitiethdban.DONGIA) as doanh_thu,
-                SUM(chitiethdban.SOLUONG * COALESCE(lo_hang.DONGIA_NHAP, 0)) as chi_phi,
-                SUM(chitiethdban.SOLUONG * chitiethdban.DONGIA)
-                  - SUM(chitiethdban.SOLUONG * COALESCE(lo_hang.DONGIA_NHAP, 0)) as loi_nhuan
+                sanPham.id as MASP,
+                sanPham.tenSanPham as TENSP,
+                SUM(chiTietDonHang.soLuong) as tong_ban,
+                SUM(chiTietDonHang.thanhTien) as doanh_thu,
+                SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as chi_phi,
+                SUM(chiTietDonHang.thanhTien) - SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as loi_nhuan
             ")
-            ->groupBy('sanpham.MASP', 'sanpham.TENSP')
+            ->groupBy('sanPham.id', 'sanPham.tenSanPham')
             ->orderByDesc('loi_nhuan')
             ->limit(10)
             ->get();
 
         // ── Lợi nhuận theo ngày trong tháng ────────────────────────────
-        $loiNhuanTheoNgay = DB::table('chitiethdban')
-            ->join('hdban', 'chitiethdban.MAHD', '=', 'hdban.MAHD')
-            ->leftJoin('lo_hang', 'chitiethdban.MALOHAN', '=', 'lo_hang.MALOHAN')
-            ->whereIn('hdban.TRANGTHAITHANHTOAN', ['Đã hoàn thành', 'Đã duyệt', 'Đang giao'])
-            ->whereMonth('hdban.NGAYLAP', $thang)
-            ->whereYear('hdban.NGAYLAP', $nam)
-            ->when($macuahang, fn($q) => $q->where('hdban.MACUAHANG', $macuahang))
+        $loiNhuanTheoNgay = DB::table('chiTietDonHang')
+            ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
+            ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
+            ->where(function($q) {
+                $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
+            })
+            ->whereMonth('donHang.createdAt', $thang)
+            ->whereYear('donHang.createdAt', $nam)
+            ->when($macuahang, fn($q) => $q->where('donHang.cuaHangId', $macuahang))
             ->selectRaw("
-                DATE(hdban.NGAYLAP) as ngay,
-                SUM(chitiethdban.SOLUONG * chitiethdban.DONGIA) as doanh_thu,
-                SUM(chitiethdban.SOLUONG * COALESCE(lo_hang.DONGIA_NHAP, 0)) as chi_phi
+                DATE(donHang.createdAt) as ngay,
+                SUM(chiTietDonHang.thanhTien) as doanh_thu,
+                SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as chi_phi,
+                SUM(chiTietDonHang.thanhTien) - SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as loi_nhuan
             ")
             ->groupBy('ngay')
             ->orderBy('ngay')
@@ -717,16 +780,19 @@ class AdminController extends Controller
             ]);
 
         return response()->json([
-            'thang'          => $thang,
-            'nam'            => $nam,
-            'doanh_thu'      => round($doanhThu, 2),
-            'chi_phi_nhap'   => round($chiPhi, 2),
-            'chi_phi_huy'    => round($chiPhiHuy, 2),
-            'tong_chi_phi'   => round($tongChiPhi, 2),
-            'loi_nhuan'      => round($loiNhuan, 2),
-            'bien_loi_nhuan' => $biLoi,         // % biên lợi nhuận
-            'theo_san_pham'  => $loiNhuanTheoSP,
-            'theo_ngay'      => $loiNhuanTheoNgay,
+            'status'         => true,
+            'data'           => [
+                'thang'          => $thang,
+                'nam'            => $nam,
+                'doanh_thu'      => round($doanhThu, 2),
+                'chi_phi_nhap'   => round($chiPhi, 2),
+                'chi_phi_huy'    => round($chiPhiHuy, 2),
+                'tong_chi_phi'   => round($tongChiPhi, 2),
+                'loi_nhuan'      => round($loiNhuan, 2),
+                'bien_loi_nhuan' => $biLoi,
+                'theo_san_pham'  => $loiNhuanTheoSP,
+                'theo_ngay'      => $loiNhuanTheoNgay,
+            ]
         ]);
     }
 
@@ -739,61 +805,60 @@ class AdminController extends Controller
     {
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
         $macuahang = null;
-        if ($userLogin && $userLogin->MAROLE == 1) {
-            $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-            $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
+        if ($userLogin && $userLogin->vaiTroId == 2) {
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
         }
 
         $thang = (int) $request->input('thang', now()->month);
         $nam   = (int) $request->input('nam', now()->year);
 
         // Tổng nhập theo phiếu trong tháng
-        $nhapTheoPhieu = DB::table('lo_hang')
-            ->join('sanpham', 'lo_hang.MASP', '=', 'sanpham.MASP')
-            ->join('hdnhap', 'lo_hang.MAHDNHAP', '=', 'hdnhap.MAHDNHAP')
-            ->whereMonth('lo_hang.NGAYNHAP', $thang)
-            ->whereYear('lo_hang.NGAYNHAP', $nam)
-            ->when($macuahang, fn($q) => $q->where('lo_hang.MACUAHANG', $macuahang))
+        $nhapTheoPhieu = DB::table('lohang')
+            ->join('sanpham', 'lohang.sanPhamId', '=', 'sanpham.id')
+            ->leftJoin('hoadonnhap', 'lohang.cuaHangId', '=', 'hoadonnhap.cuaHangId')
+            ->whereMonth('lohang.createdAt', $thang)
+            ->whereYear('lohang.createdAt', $nam)
+            ->when($macuahang, fn($q) => $q->where('lohang.cuaHangId', $macuahang))
             ->selectRaw("
-                DATE(lo_hang.NGAYNHAP) as ngay,
-                COUNT(DISTINCT lo_hang.MAHDNHAP) as so_phieu,
-                SUM(lo_hang.SOLUONG_NHAP) as tong_sl_nhap,
-                SUM(lo_hang.SOLUONG_NHAP * lo_hang.DONGIA_NHAP) as tong_chi_phi
+                DATE(lohang.createdAt) as ngay,
+                COUNT(DISTINCT lohang.id) as so_phieu,
+                SUM(lohang.soLuongNhap) as tong_sl_nhap,
+                SUM(lohang.soLuongNhap * lohang.giaNhap) as tong_chi_phi
             ")
             ->groupBy('ngay')
             ->orderBy('ngay')
             ->get();
 
         // Top SP nhập nhiều nhất
-        $topSPNhap = DB::table('lo_hang')
-            ->join('sanpham', 'lo_hang.MASP', '=', 'sanpham.MASP')
-            ->whereMonth('lo_hang.NGAYNHAP', $thang)
-            ->whereYear('lo_hang.NGAYNHAP', $nam)
-            ->when($macuahang, fn($q) => $q->where('lo_hang.MACUAHANG', $macuahang))
-            ->selectRaw("sanpham.MASP, sanpham.TENSP,
-                         SUM(lo_hang.SOLUONG_NHAP) as tong_nhap,
-                         SUM(lo_hang.SOLUONG_NHAP * lo_hang.DONGIA_NHAP) as tong_chi_phi,
+        $topSPNhap = DB::table('lohang')
+            ->join('sanpham', 'lohang.sanPhamId', '=', 'sanpham.id')
+            ->whereMonth('lohang.createdAt', $thang)
+            ->whereYear('lohang.createdAt', $nam)
+            ->when($macuahang, fn($q) => $q->where('lohang.cuaHangId', $macuahang))
+            ->selectRaw("sanpham.id as MASP, sanpham.tenSanPham as TENSP,
+                         SUM(lohang.soLuongNhap) as tong_nhap,
+                         SUM(lohang.soLuongNhap * lohang.giaNhap) as tong_chi_phi,
                          COUNT(*) as so_lo")
-            ->groupBy('sanpham.MASP', 'sanpham.TENSP')
+            ->groupBy('sanpham.id', 'sanpham.tenSanPham')
             ->orderByDesc('tong_nhap')
             ->limit(10)
             ->get();
 
         // Nhập theo NCC trong tháng
-        $nhapTheoNCC = DB::table('lo_hang')
-            ->join('hdnhap', 'lo_hang.MAHDNHAP', '=', 'hdnhap.MAHDNHAP')
-            ->leftJoin('nha_cung_cap', 'hdnhap.MANCC', '=', 'nha_cung_cap.MANCC')
-            ->whereMonth('lo_hang.NGAYNHAP', $thang)
-            ->whereYear('lo_hang.NGAYNHAP', $nam)
-            ->when($macuahang, fn($q) => $q->where('lo_hang.MACUAHANG', $macuahang))
+        $nhapTheoNCC = DB::table('lohang')
+            ->leftJoin('nhacungcap', 'lohang.nhaCungCapId', '=', 'nhacungcap.id')
+            ->whereMonth('lohang.createdAt', $thang)
+            ->whereYear('lohang.createdAt', $nam)
+            ->when($macuahang, fn($q) => $q->where('lohang.cuaHangId', $macuahang))
             ->selectRaw("
-                COALESCE(nha_cung_cap.TENNCC, 'Không xác định') as ten_ncc,
-                hdnhap.MANCC,
-                SUM(lo_hang.SOLUONG_NHAP * lo_hang.DONGIA_NHAP) as tong_tien,
-                SUM(lo_hang.SOLUONG_NHAP) as tong_sl,
-                COUNT(DISTINCT lo_hang.MAHDNHAP) as so_phieu
+                COALESCE(nhacungcap.tenNcc, 'Không xác định') as ten_ncc,
+                lohang.nhaCungCapId as MANCC,
+                SUM(lohang.soLuongNhap * lohang.giaNhap) as tong_tien,
+                SUM(lohang.soLuongNhap) as tong_sl,
+                COUNT(DISTINCT lohang.id) as so_phieu
             ")
-            ->groupBy('hdnhap.MANCC', 'nha_cung_cap.TENNCC')
+            ->groupBy('lohang.nhaCungCapId', 'nhacungcap.tenNcc')
             ->orderByDesc('tong_tien')
             ->get();
 
@@ -818,66 +883,69 @@ class AdminController extends Controller
     {
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
         $macuahang = null;
-        if ($userLogin && $userLogin->MAROLE == 1) {
-            $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-            $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
+        if ($userLogin && $userLogin->vaiTroId == 2) {
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
         }
 
         $thang = (int) $request->input('thang', now()->month);
         $nam   = (int) $request->input('nam', now()->year);
 
-        $query = DB::table('lo_hang')
-            ->join('sanpham', 'lo_hang.MASP', '=', 'sanpham.MASP')
-            ->whereMonth('lo_hang.NGAYNHAP', $thang)
-            ->whereYear('lo_hang.NGAYNHAP', $nam)
-            ->when($macuahang, fn($q) => $q->where('lo_hang.MACUAHANG', $macuahang));
+        $query = DB::table('lohang')
+            ->join('sanpham', 'lohang.sanPhamId', '=', 'sanpham.id')
+            ->whereMonth('lohang.createdAt', $thang)
+            ->whereYear('lohang.createdAt', $nam)
+            ->when($macuahang, fn($q) => $q->where('lohang.cuaHangId', $macuahang));
 
         // Tổng quan
         $tongKet = (clone $query)
             ->selectRaw("
-                SUM(lo_hang.SOLUONG_NHAP) as tong_nhap,
-                SUM(lo_hang.SOLUONG_BAN) as tong_ban,
-                SUM(lo_hang.SOLUONG_HUY) as tong_huy,
-                SUM(lo_hang.SOLUONG_CON) as tong_con,
+                SUM(lohang.soLuongNhap) as tong_nhap,
+                SUM(lohang.soLuongCon) as tong_con,
                 COUNT(*) as so_lo,
-                SUM(CASE WHEN lo_hang.TRANGTHAI = 'het_han' THEN 1 ELSE 0 END) as so_lo_het_han,
-                SUM(CASE WHEN lo_hang.TRANGTHAI = 'da_ban_het' THEN 1 ELSE 0 END) as so_lo_ban_het,
-                SUM(CASE WHEN lo_hang.TRANGTHAI = 'bi_huy' THEN 1 ELSE 0 END) as so_lo_huy,
-                SUM(lo_hang.SOLUONG_HUY * lo_hang.DONGIA_NHAP) as gia_tri_huy
+                SUM(CASE WHEN lohang.trangThai = 2 THEN 1 ELSE 0 END) as so_lo_het_han,
+                SUM(CASE WHEN lohang.trangThai = 1 THEN 1 ELSE 0 END) as so_lo_ban_het,
+                SUM(CASE WHEN lohang.trangThai = 3 THEN 1 ELSE 0 END) as so_lo_huy,
+                SUM(CASE WHEN lohang.trangThai = 3 THEN lohang.soLuongCon * lohang.giaNhap ELSE 0 END) as gia_tri_huy
             ")
             ->first();
 
         // Hao hụt theo sản phẩm
         $haoHutTheoSP = (clone $query)
             ->selectRaw("
-                sanpham.MASP, sanpham.TENSP,
-                SUM(lo_hang.SOLUONG_NHAP) as tong_nhap,
-                SUM(lo_hang.SOLUONG_BAN) as tong_ban,
-                SUM(lo_hang.SOLUONG_HUY) as tong_huy,
-                SUM(lo_hang.SOLUONG_HUY * lo_hang.DONGIA_NHAP) as gia_tri_huy,
-                ROUND(SUM(lo_hang.SOLUONG_HUY) / NULLIF(SUM(lo_hang.SOLUONG_NHAP), 0) * 100, 2) as ty_le_huy
+                sanpham.id as MASP, sanpham.tenSanPham as TENSP,
+                SUM(lohang.soLuongNhap) as tong_nhap,
+                SUM(lohang.soLuongCon) as tong_con,
+                SUM(CASE WHEN lohang.trangThai = 3 THEN lohang.soLuongCon ELSE 0 END) as tong_huy,
+                SUM(CASE WHEN lohang.trangThai = 3 THEN lohang.soLuongCon * lohang.giaNhap ELSE 0 END) as gia_tri_huy,
+                ROUND(SUM(CASE WHEN lohang.trangThai = 3 THEN lohang.soLuongCon ELSE 0 END) / NULLIF(SUM(lohang.soLuongNhap), 0) * 100, 2) as ty_le_huy
             ")
-            ->groupBy('sanpham.MASP', 'sanpham.TENSP')
+            ->groupBy('sanpham.id', 'sanpham.tenSanPham')
             ->orderByDesc('ty_le_huy')
             ->get();
 
-        $tongNhap = $tongKet->tong_nhap ?: 1;
+        $tongNhap = ($tongKet->tong_nhap ?? 0) ?: 1;
+        $tongHuy = (int) ($tongKet->so_lo_huy ?? 0);
+        $tongCon = (int) ($tongKet->tong_con ?? 0);
 
         return response()->json([
-            'thang'            => $thang,
-            'nam'              => $nam,
-            'tong_nhap'        => (int) $tongKet->tong_nhap,
-            'tong_ban'         => (int) $tongKet->tong_ban,
-            'tong_huy'         => (int) $tongKet->tong_huy,
-            'tong_con'         => (int) $tongKet->tong_con,
-            'ty_le_ban'        => round($tongKet->tong_ban / $tongNhap * 100, 2),
-            'ty_le_huy'        => round($tongKet->tong_huy / $tongNhap * 100, 2),
-            'gia_tri_huy'      => round($tongKet->gia_tri_huy ?? 0, 2),
-            'so_lo'            => (int) $tongKet->so_lo,
-            'so_lo_het_han'    => (int) $tongKet->so_lo_het_han,
-            'so_lo_ban_het'    => (int) $tongKet->so_lo_ban_het,
-            'so_lo_bi_huy'     => (int) $tongKet->so_lo_huy,
-            'hao_hut_theo_sp'  => $haoHutTheoSP,
+            'status'           => true,
+            'data'             => [
+                'thang'            => $thang,
+                'nam'              => $nam,
+                'tong_nhap'        => (int) ($tongKet->tong_nhap ?? 0),
+                'tong_ban'         => (int) (($tongKet->tong_nhap ?? 0) - $tongCon),
+                'tong_huy'         => $tongHuy,
+                'tong_con'         => $tongCon,
+                'ty_le_ban'        => round((($tongKet->tong_nhap ?? 0) - $tongCon) / $tongNhap * 100, 2),
+                'ty_le_huy'        => round($tongHuy / $tongNhap * 100, 2),
+                'gia_tri_huy'      => round($tongKet->gia_tri_huy ?? 0, 2),
+                'so_lo'            => (int) ($tongKet->so_lo ?? 0),
+                'so_lo_het_han'    => (int) ($tongKet->so_lo_het_han ?? 0),
+                'so_lo_ban_het'    => (int) ($tongKet->so_lo_ban_het ?? 0),
+                'so_lo_bi_huy'     => (int) ($tongKet->so_lo_huy ?? 0),
+                'hao_hut_theo_sp'  => $haoHutTheoSP,
+            ]
         ]);
     }
 

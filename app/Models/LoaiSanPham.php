@@ -8,14 +8,17 @@ use Illuminate\Database\Eloquent\Model;
 class LoaiSanPham extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'loai_san_pham';
+
+    protected $table = 'loaiSanPham';
 
     protected $fillable = [
-        'ten_loai',
+        'tenLoai',
         'slug',
-        'hinh_anh',
-        'trang_thai',
+        'hinhAnh',
+        'trangThai',
     ];
 
     protected $appends = ['MALOAI', 'TENLOAI'];
@@ -27,11 +30,11 @@ class LoaiSanPham extends Model
 
     public function getTENLOAIAttribute()
     {
-        return $this->attributes['ten_loai'] ?? null;
+        return $this->attributes['tenLoai'] ?? null;
     }
 
     public function sanPhams()
     {
-        return $this->hasMany(SanPham::class, 'loai_id');
+        return $this->hasMany(SanPham::class, 'loaiId');
     }
 }

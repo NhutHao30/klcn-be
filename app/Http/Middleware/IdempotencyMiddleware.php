@@ -7,7 +7,6 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 use App\Models\IdempotencyKey;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Auth;
 
 class IdempotencyMiddleware
 {
@@ -18,56 +17,47 @@ class IdempotencyMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $idempotencyKey = $request->header('Idempotency-Key');
+        $idempotencyKey = $request->header('Idempotency-Key') ?? $request->header('X-Idempotency-Key');
 
         if (!$idempotencyKey) {
             return $next($request);
         }
 
-        $userId = null;
-        if (Auth::guard('api')->check()) {
-            $userId = Auth::guard('api')->user()->USERNAME;
-        }
-
-        $record = IdempotencyKey::where('idempotency_key', $idempotencyKey)->first();
+        $record = IdempotencyKey::where('idempotencyKey', $idempotencyKey)->first();
         $requestHash = hash('sha256', $request->getContent());
 
         if ($record) {
-            if ($record->request_hash !== $requestHash) {
-                return response()->json(['error' => 'Idempotency key already used with different payload'], 400);
-            }
+            if ($record->expiresAt && Carbon::parse($record->expiresAt)->isPast()) {
+                $record->delete();
+            } else {
+                if ($record->requestHash !== $requestHash) {
+                    return response()->json(['error' => 'Idempotency key already used with different payload'], 400);
+                }
 
-            if ($record->status === 'processing') {
-                return response()->json(['error' => 'Request is already being processed'], 409);
-            }
-
-            if ($record->status === 'completed') {
-                return response($record->response_body, $record->response_code)
+                return response($record->responsePayload, $record->statusCode ?? 200)
                     ->header('Idempotency-Key', $idempotencyKey)
                     ->header('Content-Type', 'application/json')
                     ->header('X-Idempotent-Cache', 'HIT');
             }
         }
 
-        // Chưa có thì tạo mới (status processing)
-        $record = IdempotencyKey::create([
-            'idempotency_key' => $idempotencyKey,
-            'USERNAME' => $userId,
-            'endpoint' => $request->path(),
-            'request_hash' => $requestHash,
-            'status' => 'processing',
-            'expires_at' => Carbon::now()->addHours(24),
-        ]);
-
-        // Xử lý request
+        // Process request
         $response = $next($request);
 
-        // Update kết quả
-        $record->update([
-            'status' => 'completed',
-            'response_code' => $response->getStatusCode(),
-            'response_body' => method_exists($response, 'getContent') ? $response->getContent() : '',
-        ]);
+        if ($response->getStatusCode() < 500) {
+            try {
+                IdempotencyKey::create([
+                    'idempotencyKey' => $idempotencyKey,
+                    'requestPath' => $request->path(),
+                    'requestHash' => $requestHash,
+                    'responsePayload' => method_exists($response, 'getContent') ? $response->getContent() : '',
+                    'statusCode' => $response->getStatusCode(),
+                    'expiresAt' => Carbon::now()->addHours(24),
+                ]);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning('IdempotencyKey save error: ' . $e->getMessage());
+            }
+        }
 
         if (method_exists($response, 'header')) {
             $response->header('Idempotency-Key', $idempotencyKey);
@@ -76,3 +66,4 @@ class IdempotencyMiddleware
         return $response;
     }
 }
+

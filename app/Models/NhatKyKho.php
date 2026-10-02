@@ -8,12 +8,15 @@ use Illuminate\Database\Eloquent\Model;
 class NhatKyKho extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'nhatky_kho';
+
+    protected $table = 'nhatKyKho';
 
     protected $fillable = [
-        'cuahang_id',
-        'sanpham_id',
+        'cuaHangId',
+        'sanPhamId',
         'loai_bien_dong', // 0: Bán POS, 1: Bán Online, 2: Chuyển kho xuất, 3: Chuyển kho nhập, 4: Nhập hàng mới
         'so_luong_thay_doi',
         'so_luong_ton_sau',
@@ -28,11 +31,11 @@ class NhatKyKho extends Model
 
     public function cuahang()
     {
-        return $this->belongsTo(CuaHang::class, 'cuahang_id');
+        return $this->belongsTo(CuaHang::class, 'cuaHangId');
     }
 
     public function sanpham()
     {
-        return $this->belongsTo(SanPham::class, 'sanpham_id');
+        return $this->belongsTo(SanPham::class, 'sanPhamId');
     }
 }

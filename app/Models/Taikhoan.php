@@ -16,14 +16,14 @@ class TaiKhoan extends Authenticatable implements JWTSubject
         'username',
         'email',
         'password',
-        'vaitro_id',
-        'google_id',
-        'trang_thai',
+        'vaiTroId',
+        'googleId',
+        'trangThai',
     ];
 
     protected $hidden = [
         'password',
-        'remember_token',
+        'rememberToken',
     ];
 
     protected $appends = [
@@ -51,7 +51,7 @@ class TaiKhoan extends Authenticatable implements JWTSubject
     public function getJWTCustomClaims()
     {
         return [
-            'role_id' => $this->vaitro_id,
+            'role_id' => $this->vaiTroId,
             'MAROLE' => $this->MAROLE,
             'email' => $this->email,
             'username' => $this->username,
@@ -64,7 +64,7 @@ class TaiKhoan extends Authenticatable implements JWTSubject
      */
     public function getMAROLEAttribute()
     {
-        return match ((int)$this->attributes['vaitro_id'] ?? 1) {
+        return match ((int)$this->attributes['vaiTroId'] ?? 1) {
             1 => 0, // ADMIN (Giao diện Quản trị)
             2 => 1, // MANAGER (Quản lý chi nhánh)
             3, 4 => 2, // WAREHOUSE / CASHIER (Nhân viên)
@@ -77,11 +77,21 @@ class TaiKhoan extends Authenticatable implements JWTSubject
     // --- MỐI QUAN HỆ ---
     public function vaitro()
     {
-        return $this->belongsTo(VaiTro::class, 'vaitro_id');
+        return $this->belongsTo(VaiTro::class, 'vaiTroId');
     }
 
     public function nguoidung()
     {
-        return $this->hasOne(NguoiDung::class, 'taikhoan_id');
+        return $this->hasOne(NguoiDung::class, 'taiKhoanId');
+    }
+
+    public function khachhang()
+    {
+        return $this->hasOne(NguoiDung::class, 'taiKhoanId');
+    }
+
+    public function nhanvien()
+    {
+        return $this->hasOne(NguoiDung::class, 'taiKhoanId');
     }
 }

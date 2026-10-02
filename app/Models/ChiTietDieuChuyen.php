@@ -8,12 +8,15 @@ use Illuminate\Database\Eloquent\Model;
 class ChiTietDieuChuyen extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'chitiet_dieuchuyen';
+
+    protected $table = 'chiTietDieuChuyen';
 
     protected $fillable = [
-        'yeucau_id',
-        'sanpham_id',
+        'yeuCauId',
+        'sanPhamId',
         'so_luong_chuyen',
         'so_luong_thuc_nhan',
     ];
@@ -25,11 +28,11 @@ class ChiTietDieuChuyen extends Model
 
     public function yeucau()
     {
-        return $this->belongsTo(YeuCauDieuChuyen::class, 'yeucau_id');
+        return $this->belongsTo(YeuCauDieuChuyen::class, 'yeuCauId');
     }
 
     public function sanpham()
     {
-        return $this->belongsTo(SanPham::class, 'sanpham_id');
+        return $this->belongsTo(SanPham::class, 'sanPhamId');
     }
 }

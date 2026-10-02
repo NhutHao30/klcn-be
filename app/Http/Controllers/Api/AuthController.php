@@ -39,7 +39,7 @@ class AuthController extends Controller
             return response()->json(['error' => 'Tài khoản hoặc mật khẩu không chính xác'], 401);
         }
 
-        if ($account->trang_thai === 0) {
+        if ($account->trangThai === 0) {
             return response()->json(['error' => 'Tài khoản của bạn đã bị khóa'], 403);
         }
 
@@ -55,32 +55,71 @@ class AuthController extends Controller
      */
     public function register(Request $request)
     {
+        // Chuẩn hóa param đầu vào (hỗ trợ cả chữ thường và chữ hoa từ Frontend)
+        $username = $request->input('username', $request->input('USERNAME'));
+        $password = $request->input('password', $request->input('PASSWORD'));
+        $email = $request->input('email', $request->input('EMAIL'));
+        $hoTen = $request->input('hoTen', $request->input('HOTEN', $request->input('hoTen')));
+        $sdt = $request->input('soDienThoai', $request->input('SDT', $request->input('sdt')));
+        $gioiTinhRaw = $request->input('gioiTinh', $request->input('GioiTinh', 0));
+        
+        $gioiTinh = 0;
+        if ($gioiTinhRaw === 'Nam' || $gioiTinhRaw === 1 || $gioiTinhRaw === '1') {
+            $gioiTinh = 1;
+        }
+
+        $request->merge([
+            'username' => $username,
+            'password' => $password,
+            'email' => $email,
+            'hoTen' => $hoTen,
+            'soDienThoai' => $sdt,
+            'gioiTinh' => $gioiTinh,
+        ]);
+
         $request->validate([
             'username' => 'required|string|unique:taikhoan,username',
-            'password' => 'required|string|min:6',
+            'password' => [
+                'required',
+                'string',
+                'min:10',
+                'regex:/[A-Z]/',        // ít nhất 1 chữ hoa
+                'regex:/[0-9]/',        // ít nhất 1 chữ số
+                'regex:/[^A-Za-z0-9]/', // ít nhất 1 ký tự đặc biệt
+            ],
             'email'    => 'required|email|unique:taikhoan,email',
-            'ho_ten'   => 'required|string',
-            'so_dien_thoai' => 'required|string|max:15',
+            'hoTen'   => 'required|string',
+            'soDienThoai' => 'required|string|max:15',
+        ], [
+            'username.required' => 'Vui lòng nhập tên đăng nhập!',
+            'username.unique' => 'Tên đăng nhập này đã tồn tại!',
+            'password.required' => 'Vui lòng nhập mật khẩu!',
+            'password.min' => 'Mật khẩu phải có ít nhất 10 ký tự!',
+            'password.regex' => 'Mật khẩu phải bao gồm ít nhất 1 chữ cái viết hoa, 1 chữ số và 1 ký tự đặc biệt (VD: @, $, !, %, #)!',
+            'email.required' => 'Vui lòng nhập địa chỉ email!',
+            'email.unique' => 'Email này đã được sử dụng!',
+            'ho_ten.required' => 'Vui lòng nhập họ và tên!',
+            'so_dien_thoai.required' => 'Vui lòng nhập số điện thoại!',
         ]);
 
         DB::beginTransaction();
         try {
             // 1. Tạo Tài khoản (Vai trò 6: CUSTOMER)
             $taikhoan = TaiKhoan::create([
-                'username' => $request->username,
-                'email' => $request->email,
-                'password' => Hash::make($request->password),
-                'vaitro_id' => 6, // CUSTOMER
-                'trang_thai' => 1,
+                'username' => $username,
+                'email' => $email,
+                'password' => Hash::make($password),
+                'vaiTroId' => 6, // CUSTOMER
+                'trangThai' => 1,
             ]);
 
             // 2. Tạo Hồ sơ Người dùng (Khách hàng)
             NguoiDung::create([
-                'taikhoan_id' => $taikhoan->id,
-                'ho_ten' => $request->ho_ten,
-                'so_dien_thoai' => $request->so_dien_thoai,
-                'gioi_tinh' => $request->gioi_tinh ?? 0, // 0: Nữ, 1: Nam
-                'loai_nguoidung' => 0, // 0: Khách hàng
+                'taiKhoanId' => $taikhoan->id,
+                'hoTen' => $hoTen,
+                'soDienThoai' => $sdt,
+                'gioiTinh' => $gioiTinh, // 0: Nữ, 1: Nam
+                'loaiNguoiDung' => 0, // 0: Khách hàng
             ]);
 
             DB::commit();
@@ -105,7 +144,7 @@ class AuthController extends Controller
         /** @var \App\Models\TaiKhoan $user */
         $user = Auth::guard('api')->user();
         if ($user) {
-            $user->load(['vaitro', 'nguoidung.cuahang']);
+            $user->load(['vaitro', 'nguoidung.cuahang', 'khachhang.cuahang', 'nhanvien.cuahang']);
         }
 
         return response()->json($user);
@@ -121,16 +160,42 @@ class AuthController extends Controller
             return response()->json(['error' => 'Chưa đăng nhập'], 401);
         }
 
-        $request->validate([
-            'ho_ten' => 'required|string|max:100',
-            'so_dien_thoai' => 'nullable|string|max:15',
-            'gioi_tinh' => 'nullable|integer|in:0,1,2',
-            'ngay_sinh' => 'nullable|date',
-        ]);
+        $hoTen = $request->input('hoTen') ?? $request->input('HOTEN');
+        $sdt = $request->input('soDienThoai') ?? $request->input('SDT');
+        $gioiTinhRaw = $request->input('gioiTinh') ?? $request->input('GioiTinh');
+        $ngaySinh = $request->input('ngaySinh') ?? $request->input('NGAYSINH');
+        $diaChi = $request->input('dia_chi') ?? $request->input('DIACHI');
+
+        $gioiTinh = null;
+        if (!is_null($gioiTinhRaw)) {
+            if (is_numeric($gioiTinhRaw)) {
+                $gioiTinh = (int)$gioiTinhRaw;
+            } else if (is_string($gioiTinhRaw)) {
+                $gtStr = mb_strtolower(trim($gioiTinhRaw));
+                if ($gtStr === 'nam') $gioiTinh = 1;
+                else if ($gtStr === 'nữ' || $gtStr === 'nu') $gioiTinh = 0;
+                else $gioiTinh = 2;
+            }
+        }
 
         $nguoidung = $user->nguoidung;
         if ($nguoidung) {
-            $nguoidung->update($request->only(['ho_ten', 'so_dien_thoai', 'gioi_tinh', 'ngay_sinh']));
+            $updateData = [];
+            if (!is_null($hoTen)) $updateData['hoTen'] = $hoTen;
+            if (!is_null($sdt)) $updateData['soDienThoai'] = $sdt;
+            if (!is_null($gioiTinh)) $updateData['gioiTinh'] = $gioiTinh;
+            if (!is_null($ngaySinh)) $updateData['ngaySinh'] = $ngaySinh;
+
+            if (!empty($updateData)) {
+                $nguoidung->update($updateData);
+            }
+
+            if (!empty($diaChi)) {
+                $nguoidung->diachi()->updateOrCreate(
+                    ['isDefault' => 1],
+                    ['diaChiChiTiet' => $diaChi, 'hoTenNguoiNhan' => $nguoidung->hoTen, 'soDienThoai' => $nguoidung->soDienThoai]
+                );
+            }
         }
 
         return response()->json(['message' => 'Cập nhật thông tin thành công', 'user' => $nguoidung]);

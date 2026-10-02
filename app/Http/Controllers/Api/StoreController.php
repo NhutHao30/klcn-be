@@ -10,7 +10,7 @@ class StoreController extends Controller
 {
     public function publicIndex()
     {
-        $stores = CuaHang::where('trang_thai', 1)->get();
+        $stores = CuaHang::where('trangThai', 1)->get();
 
         return response()->json([
             'success' => true,
@@ -52,26 +52,26 @@ class StoreController extends Controller
     {
         $request->merge([
             'ten_cuahang' => $request->input('ten_cuahang') ?? $request->input('TENCUAHANG'),
-            'dia_chi_chi_tiet' => $request->input('dia_chi_chi_tiet') ?? $request->input('DIACHI') ?? $request->input('address'),
-            'so_dien_thoai' => $request->input('so_dien_thoai') ?? $request->input('SDT') ?? $request->input('phone'),
+            'diaChiChiTiet' => $request->input('diaChiChiTiet') ?? $request->input('DIACHI') ?? $request->input('address'),
+            'soDienThoai' => $request->input('soDienThoai') ?? $request->input('SDT') ?? $request->input('phone'),
             'ghn_shop_id' => $request->input('ghn_shop_id') ?? $request->input('GHN_SHOP_ID'),
         ]);
 
         $validated = $request->validate([
             'ten_cuahang' => 'required|string|max:150',
-            'dia_chi_chi_tiet' => 'required|string|max:255',
-            'so_dien_thoai' => 'nullable|string|max:20',
-            'ma_tinh' => 'nullable|integer',
-            'ma_huyen' => 'nullable|integer',
-            'ma_xa' => 'nullable|string',
+            'diaChiChiTiet' => 'required|string|max:255',
+            'soDienThoai' => 'nullable|string|max:20',
+            'maTinh' => 'nullable|integer',
+            'maHuyen' => 'nullable|integer',
+            'maXa' => 'nullable|string',
             'ghn_shop_id' => 'nullable|string|max:50',
         ]);
 
         $store = CuaHang::create(array_merge([
-            'ma_tinh' => 79,
-            'ma_huyen' => 760,
-            'ma_xa' => '26740',
-            'trang_thai' => 1,
+            'maTinh' => 79,
+            'maHuyen' => 760,
+            'maXa' => '26740',
+            'trangThai' => 1,
         ], $validated));
 
         return response()->json([
@@ -94,17 +94,17 @@ class StoreController extends Controller
 
         $request->merge([
             'ten_cuahang' => $request->input('ten_cuahang') ?? $request->input('TENCUAHANG') ?? $store->ten_cuahang,
-            'dia_chi_chi_tiet' => $request->input('dia_chi_chi_tiet') ?? $request->input('DIACHI') ?? $store->dia_chi_chi_tiet,
-            'so_dien_thoai' => $request->input('so_dien_thoai') ?? $request->input('SDT') ?? $store->so_dien_thoai,
+            'diaChiChiTiet' => $request->input('diaChiChiTiet') ?? $request->input('DIACHI') ?? $store->diaChiChiTiet,
+            'soDienThoai' => $request->input('soDienThoai') ?? $request->input('SDT') ?? $store->soDienThoai,
             'ghn_shop_id' => $request->input('ghn_shop_id') ?? $request->input('GHN_SHOP_ID') ?? $store->ghn_shop_id,
         ]);
 
         $validated = $request->validate([
             'ten_cuahang' => 'sometimes|string|max:150',
-            'dia_chi_chi_tiet' => 'sometimes|string|max:255',
-            'so_dien_thoai' => 'nullable|string|max:20',
+            'diaChiChiTiet' => 'sometimes|string|max:255',
+            'soDienThoai' => 'nullable|string|max:20',
             'ghn_shop_id' => 'nullable|string|max:50',
-            'trang_thai' => 'sometimes|integer|in:0,1',
+            'trangThai' => 'sometimes|integer|in:0,1',
         ]);
 
         $store->update($validated);
@@ -130,7 +130,7 @@ class StoreController extends Controller
         $statusStr = $request->input('status');
         $newStatus = ($statusStr === 'Đang hoạt động' || $statusStr == 1) ? 1 : 0;
 
-        $store->update(['trang_thai' => $newStatus]);
+        $store->update(['trangThai' => $newStatus]);
 
         return response()->json([
             'success' => true,

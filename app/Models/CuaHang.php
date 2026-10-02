@@ -8,18 +8,21 @@ use Illuminate\Database\Eloquent\Model;
 class CuaHang extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
 
     protected $table = 'cuahang';
 
     protected $fillable = [
         'ten_cuahang',
-        'so_dien_thoai',
-        'dia_chi_chi_tiet',
-        'ma_tinh',
-        'ma_huyen',
-        'ma_xa',
+        'soDienThoai',
+        'diaChiChiTiet',
+        'maTinh',
+        'maHuyen',
+        'maXa',
         'ghn_shop_id',
-        'trang_thai',
+        'trangThai',
     ];
 
     protected $appends = ['MACUAHANG', 'TENCUAHANG'];
@@ -36,21 +39,21 @@ class CuaHang extends Model
 
     public function nguoiDungs()
     {
-        return $this->hasMany(NguoiDung::class, 'cuahang_id');
+        return $this->hasMany(NguoiDung::class, 'cuaHangId');
     }
 
     public function loHangs()
     {
-        return $this->hasMany(LoHang::class, 'cuahang_id');
+        return $this->hasMany(LoHang::class, 'cuaHangId');
     }
 
     public function hoaDonNhaps()
     {
-        return $this->hasMany(HoaDonNhap::class, 'cuahang_id');
+        return $this->hasMany(HoaDonNhap::class, 'cuaHangId');
     }
 
     public function bienBanHuys()
     {
-        return $this->hasMany(BienBanHuy::class, 'cuahang_id');
+        return $this->hasMany(BienBanHuy::class, 'cuaHangId');
     }
 }

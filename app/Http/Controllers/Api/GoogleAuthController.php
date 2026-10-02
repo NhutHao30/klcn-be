@@ -6,13 +6,39 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Laravel\Socialite\Facades\Socialite;
 use App\Models\TaiKhoan;
-use App\Models\KhachHang;
+use App\Models\NguoiDung;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Hash;
+use GuzzleHttp\Client as GuzzleClient;
 
 class GoogleAuthController extends Controller
 {
+    /**
+     * Tạo driver Socialite Google đồng nhất giữa redirect và callback
+     */
+    private function getGoogleDriver(Request $request)
+    {
+        $redirectUri = config('services.google.redirect');
+        if (empty($redirectUri)) {
+            $redirectUri = env('GOOGLE_REDIRECT_URI');
+        }
+        if (empty($redirectUri)) {
+            $redirectUri = url('/api/auth/google/callback');
+        }
+
+        /** @var \Laravel\Socialite\Two\GoogleProvider $driver */
+        $driver = Socialite::driver('google')->redirectUrl($redirectUri);
+
+        if (app()->environment('local')) {
+            $guzzle = new GuzzleClient(['verify' => false]);
+            $driver->setHttpClient($guzzle);
+        }
+
+        return $driver->stateless();
+    }
+
     /**
      * Chuyển hướng người dùng sang trang đăng nhập Google
      */
@@ -28,8 +54,7 @@ class GoogleAuthController extends Controller
             }
         }
 
-        return Socialite::driver('google')
-            ->stateless()
+        return $this->getGoogleDriver($request)
             ->with(['state' => base64_encode($frontendUrl)])
             ->redirect();
     }
@@ -40,30 +65,32 @@ class GoogleAuthController extends Controller
     public function callback(Request $request)
     {
         try {
-            // Chỉ bypass SSL ở môi trường local (môi trường dev thường bị thiếu cert)
-            $isLocal = app()->environment('local');
-            if ($isLocal) {
-                $guzzle = new \GuzzleHttp\Client(['verify' => false]);
-                $googleUser = Socialite::driver('google')->setHttpClient($guzzle)->stateless()->user();
-            } else {
-                $googleUser = Socialite::driver('google')->stateless()->user();
-            }
+            $googleUser = $this->getGoogleDriver($request)->user();
 
-            // Tìm tài khoản theo GOOGLE_ID
-            $existingUser = TaiKhoan::where('GOOGLE_ID', $googleUser->getId())->first();
-
-            if (!$existingUser) {
-                // Thử tìm theo Email, nếu có thì liên kết Google ID
-                $existingUser = TaiKhoan::where('EMAIL', $googleUser->getEmail())->first();
-                if ($existingUser) {
-                    $existingUser->update([
-                        'GOOGLE_ID' => $googleUser->getId(),
-                    ]);
-                }
-            }
+            // Tìm tài khoản theo google_id hoặc email
+            $existingUser = TaiKhoan::where('googleId', $googleUser->getId())
+                ->orWhere('email', $googleUser->getEmail())
+                ->first();
 
             if ($existingUser) {
-                // Đăng nhập luôn
+                // Nếu tìm thấy theo Email nhưng chưa gắn google_id
+                if (!$existingUser->googleId) {
+                    $existingUser->update([
+                        'googleId' => $googleUser->getId(),
+                    ]);
+                }
+
+                // Nếu tài khoản chưa có thông tin NguoiDung profile
+                if (!$existingUser->nguoidung) {
+                    NguoiDung::create([
+                        'taiKhoanId'   => $existingUser->id,
+                        'hoTen'        => $googleUser->getName() ?? $existingUser->username,
+                        'soDienThoai' => '',
+                        'gioiTinh'     => 1,
+                        'loaiNguoiDung'=> 0, // Khách hàng
+                    ]);
+                }
+
                 /** @var \Tymon\JWTAuth\JWTGuard $guard */
                 $guard = Auth::guard('api');
                 $token = $guard->login($existingUser);
@@ -78,7 +105,7 @@ class GoogleAuthController extends Controller
                 }
                 return redirect($frontendUrl . '/?token=' . $token . '&google=true');
             } else {
-                // Chưa có tài khoản, lưu thông tin vào Cache (vì API route không có Session)
+                // Chưa có tài khoản, lưu thông tin vào Cache (hạn 15 phút)
                 $googleId = $googleUser->getId();
                 \Illuminate\Support\Facades\Cache::put('google_reg_' . $googleId, [
                     'id' => $googleId,
@@ -111,11 +138,11 @@ class GoogleAuthController extends Controller
     }
 
     /**
-     * Frontend gọi API này để lấy thông tin session
+     * Frontend gọi API này để lấy thông tin session Google tạm thời
      */
     public function googleStatus(Request $request)
     {
-        $googleId = $request->query('google_id') ?? $request->input('google_id');
+        $googleId = $request->query('googleId') ?? $request->input('googleId');
         if ($googleId && \Illuminate\Support\Facades\Cache::has('google_reg_' . $googleId)) {
             $googleUser = \Illuminate\Support\Facades\Cache::get('google_reg_' . $googleId);
             return response()->json([
@@ -130,50 +157,49 @@ class GoogleAuthController extends Controller
     }
 
     /**
-     * Đăng ký tài khoản Google mới khi đã có thông tin sđt, giới tính
+     * Đăng ký tài khoản Google mới khi bổ sung sđt, giới tính
      */
     public function googleRegister(Request $request)
     {
-        $googleId = $request->input('google_id');
+        $googleId = $request->input('googleId');
 
         if (!$googleId || !\Illuminate\Support\Facades\Cache::has('google_reg_' . $googleId)) {
             return response()->json(['error' => 'Phiên đăng nhập Google đã hết hạn'], 400);
         }
 
         $request->validate([
-            'sdt' => 'required|string|size:10',
-            'gioiTinh' => 'required|string|in:Nam,Nữ',
+            'sdt' => 'required|string|max:15',
+            'gioiTinh' => 'required|string',
         ]);
 
         $googleUser = \Illuminate\Support\Facades\Cache::get('google_reg_' . $googleId);
 
         DB::beginTransaction();
         try {
-            // Tạo tài khoản (Khách hàng mặc định mật khẩu random)
-            $username = 'kh_' . strtolower(substr(md5(time()), 0, 8)); // Generate a random username
-            $password = bcrypt(rand(100000, 999999) . 'Aa@!'); // Random password
+            $username = 'kh_' . strtolower(substr(md5(time() . rand()), 0, 8));
+            $password = Hash::make(rand(100000, 999999) . 'Aa@!');
 
             $taikhoan = TaiKhoan::create([
-                'USERNAME' => $username,
-                'PASSWORD' => $password,
-                'MAROLE'   => 3, // Customer
-                'EMAIL'    => $googleUser['email'],
-                'GOOGLE_ID' => $googleUser['id'],
-                'AVATAR'   => $googleUser['avatar'],
+                'username'  => $username,
+                'email'     => $googleUser['email'],
+                'password'  => $password,
+                'vaiTroId' => 6, // CUSTOMER
+                'googleId' => $googleUser['id'],
+                'trangThai'=> 1,
             ]);
 
-            // Tạo thông tin khách hàng
-            KhachHang::create([
-                'MAKH'     => 'KH' . time(),
-                'HOTEN'    => $googleUser['name'],
-                'SDT'      => $request->sdt,
-                'GioiTinh' => $request->gioiTinh,
-                'USERNAME' => $taikhoan->USERNAME,
+            $gioiTinhInt = ($request->gioiTinh === 'Nam' || $request->gioiTinh === '1' || $request->gioiTinh === 1) ? 1 : 0;
+
+            NguoiDung::create([
+                'taiKhoanId'   => $taikhoan->id,
+                'hoTen'        => $googleUser['name'],
+                'soDienThoai' => $request->sdt,
+                'gioiTinh'     => $gioiTinhInt,
+                'loaiNguoiDung'=> 0, // Khách hàng
             ]);
 
             DB::commit();
 
-            // Clear cache
             \Illuminate\Support\Facades\Cache::forget('google_reg_' . $googleId);
 
             /** @var \Tymon\JWTAuth\JWTGuard $guard */
@@ -191,7 +217,7 @@ class GoogleAuthController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Google Register Error: ' . $e->getMessage());
-            return response()->json(['error' => 'Đăng ký thất bại, vui lòng thử lại!'], 500);
+            return response()->json(['error' => 'Đăng ký thất bại: ' . $e->getMessage()], 500);
         }
     }
 }

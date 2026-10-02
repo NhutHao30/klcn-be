@@ -8,16 +8,19 @@ use Illuminate\Database\Eloquent\Model;
 class VaiTro extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
 
     protected $table = 'vaitro';
 
     protected $fillable = [
         'ten_vaitro',
-        'mo_ta',
+        'moTa',
     ];
 
     public function taiKhoans()
     {
-        return $this->hasMany(TaiKhoan::class, 'vaitro_id');
+        return $this->hasMany(TaiKhoan::class, 'vaiTroId');
     }
 }

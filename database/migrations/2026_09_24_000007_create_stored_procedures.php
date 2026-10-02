@@ -53,7 +53,12 @@ return new class extends Migration {
                 DECLARE v_cuahang_id INT DEFAULT NULL;
                 DECLARE v_mo_ca DATETIME DEFAULT NULL;
                 DECLARE v_tien_dau DECIMAL(15,2) DEFAULT 0;
-                DECLARE v_revenue DECIMAL(15,2) DEFAULT 0;
+                
+                DECLARE v_rev_cash DECIMAL(15,2) DEFAULT 0;
+                DECLARE v_rev_bank DECIMAL(15,2) DEFAULT 0;
+                DECLARE v_rev_momo DECIMAL(15,2) DEFAULT 0;
+                DECLARE v_rev_total DECIMAL(15,2) DEFAULT 0;
+
                 DECLARE v_tien_sach DECIMAL(15,2) DEFAULT 0;
                 DECLARE v_chenh_lech DECIMAL(15,2) DEFAULT 0;
 
@@ -69,7 +74,8 @@ return new class extends Migration {
                 IF v_shift_id IS NULL THEN
                     SET p_error = 'Không tìm thấy ca làm việc đang mở';
                 ELSE
-                    SELECT COALESCE(SUM(tong_thanhtoan), 0) INTO v_revenue
+                    -- Doanh thu Tiền mặt (0)
+                    SELECT COALESCE(SUM(tong_thanhtoan), 0) INTO v_rev_cash
                     FROM don_hang
                     WHERE cuahang_id = v_cuahang_id
                       AND loai_don_hang = 1
@@ -77,11 +83,34 @@ return new class extends Migration {
                       AND trang_thai_thanhtoan = 1
                       AND created_at >= v_mo_ca;
 
-                    SET v_tien_sach = v_tien_dau + v_revenue;
+                    -- Doanh thu Chuyển khoản / VietQR (1)
+                    SELECT COALESCE(SUM(tong_thanhtoan), 0) INTO v_rev_bank
+                    FROM don_hang
+                    WHERE cuahang_id = v_cuahang_id
+                      AND loai_don_hang = 1
+                      AND phuong_thuc_thanhtoan = 1
+                      AND trang_thai_thanhtoan = 1
+                      AND created_at >= v_mo_ca;
+
+                    -- Doanh thu Ví MoMo (2)
+                    SELECT COALESCE(SUM(tong_thanhtoan), 0) INTO v_rev_momo
+                    FROM don_hang
+                    WHERE cuahang_id = v_cuahang_id
+                      AND loai_don_hang = 1
+                      AND phuong_thuc_thanhtoan = 2
+                      AND trang_thai_thanhtoan = 1
+                      AND created_at >= v_mo_ca;
+
+                    SET v_rev_total = v_rev_cash + v_rev_bank + v_rev_momo;
+                    SET v_tien_sach = v_tien_dau + v_rev_cash;
                     SET v_chenh_lech = p_tien_mat_thuc_te - v_tien_sach;
 
                     UPDATE pos_shifts
                     SET thoi_gian_dong_ca = NOW(),
+                        doanh_thu_tien_mat = v_rev_cash,
+                        doanh_thu_chuyen_khoan = v_rev_bank,
+                        doanh_thu_momo = v_rev_momo,
+                        tong_doanh_thu = v_rev_total,
                         tien_mat_sach = v_tien_sach,
                         tien_mat_thuc_te = p_tien_mat_thuc_te,
                         chenh_lech = v_chenh_lech,
@@ -160,6 +189,13 @@ return new class extends Migration {
                         ) VALUES (
                             p_donhang_id, v_sp_id, v_qty, v_price, v_thanh_tien, NOW(), NOW()
                         );
+
+                        -- Trừ số lượng tồn kho chi nhánh khi bán tại quầy POS
+                        INSERT INTO tonkho_chinhanh (cuahang_id, sanpham_id, so_luong_ton, created_at, updated_at)
+                        VALUES (p_cuahang_id, v_sp_id, 0, NOW(), NOW())
+                        ON DUPLICATE KEY UPDATE 
+                            so_luong_ton = GREATEST(0, CAST(so_luong_ton AS SIGNED) - v_qty),
+                            updated_at = NOW();
 
                         SET i = i + 1;
                     END WHILE;

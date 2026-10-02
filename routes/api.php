@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\NhatKyHeThongController;
 use App\Http\Controllers\Api\GoogleAuthController;
 use App\Http\Controllers\Api\DatHangTruocController;
+use App\Http\Controllers\Api\GhnController;
 use Illuminate\Support\Facades\Broadcast;
 
 Broadcast::routes(['middleware' => ['auth:api']]);
@@ -16,6 +17,11 @@ Broadcast::routes(['middleware' => ['auth:api']]);
 // 🔓 API CÔNG KHAI
 // ==========================================
 Route::get('/proxy-image', [\App\Http\Controllers\Api\ImageProxyController::class, 'show']);
+
+// GHN Webhook & Simulation Routes
+Route::any('/ghn/webhook', [GhnController::class, 'webhook']);
+Route::any('/ghn/simulate-webhook', [GhnController::class, 'webhook']);
+Route::post('/hoa-don/{id}/xac-nhan-hoan-hang', [\App\Http\Controllers\Api\OrderController::class, 'confirmReturnInspection']);
 
 Route::middleware(['log.activity'])->group(function () {
     Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
@@ -106,6 +112,7 @@ Route::get('/ghn/districts', [\App\Http\Controllers\Api\GhnController::class, 'g
 Route::get('/ghn/wards', [\App\Http\Controllers\Api\GhnController::class, 'getWards']);
 Route::post('/ghn/fee', [\App\Http\Controllers\Api\GhnController::class, 'calculateFee']);
 Route::post('/ghn/webhook', [\App\Http\Controllers\Api\GhnController::class, 'webhook']);
+Route::get('/ghn/tracking/{orderCode}', [\App\Http\Controllers\Api\GhnController::class, 'getTrackingDetail']);
 
 Route::get('/categories', [CategoryController::class, 'index']);
 Route::get('/products', [ProductController::class, 'index']);
@@ -143,6 +150,11 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
 
     // Đánh giá sản phẩm (Review)
     Route::post('/reviews', [\App\Http\Controllers\Api\ReviewController::class, 'storeReview']);
+
+    // Upload minh chứng thanh toán (Khách hàng & Nhân viên)
+    Route::post('/orders/{id}/payment-receipt', [\App\Http\Controllers\Api\CartController::class, 'uploadPaymentReceipt']);
+    Route::post('/hoa-don/{id}/payment-receipt', [\App\Http\Controllers\Api\CartController::class, 'uploadPaymentReceipt']);
+    Route::post('/my-orders/{id}/payment-receipt', [\App\Http\Controllers\Api\CartController::class, 'uploadPaymentReceipt']);
 
     // Notifications
     Route::get('/notifications', [\App\Http\Controllers\Api\NotificationController::class, 'index']);
@@ -209,6 +221,9 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         Route::get('/admin/reports/revenue', [AdminController::class, 'revenueReport']);
         Route::get('/admin/reports/bi-dashboard', [AdminController::class, 'biDashboard']);
         Route::get('/admin/reports/top-products', [AdminController::class, 'topProducts']);
+        Route::get('/admin/thong-ke/loi-nhuan', [AdminController::class, 'thongKeLoiNhuan']);
+        Route::get('/admin/thong-ke/hao-hut', [AdminController::class, 'thongKeHaoHut']);
+        Route::get('/admin/thong-ke/nhap-hang', [AdminController::class, 'thongKeNhapHang']);
 
         // Audit Logs (Nâng cao)
         Route::get('/admin/audit-logs', [\App\Http\Controllers\Api\AuditLogController::class, 'index']);
@@ -246,6 +261,7 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         Route::post('/admin/pos/checkout', [\App\Http\Controllers\Api\OrderController::class, 'storePOS'])->middleware(['throttle:orders', 'idempotency']);
 
         // POS Shifts
+        Route::get('/admin/pos/shifts', [\App\Http\Controllers\Api\PosShiftController::class, 'getShiftHistory']);
         Route::post('/admin/pos/shifts/open', [\App\Http\Controllers\Api\PosShiftController::class, 'openShift']);
         Route::post('/admin/pos/shifts/close', [\App\Http\Controllers\Api\PosShiftController::class, 'closeShift']);
         Route::get('/admin/pos/shifts/active', [\App\Http\Controllers\Api\PosShiftController::class, 'getActiveShift']);
@@ -253,8 +269,12 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         // Inventory Ledger
         Route::get('/admin/inventory/ledger', [\App\Http\Controllers\Api\InventoryLedgerController::class, 'getMovements']);
 
-        // Quản lý Hóa đơn (Sửa, cập nhật trạng thái)
+        // Quản lý Hóa đơn (Sửa, cập nhật trạng thái, chỉnh sửa danh sách bánh, upload ảnh minh chứng)
         Route::put('/hoa-don/{id}', [\App\Http\Controllers\Api\OrderController::class, 'updateStatus']);
+        Route::put('/hoa-don/{id}/items', [\App\Http\Controllers\Api\OrderController::class, 'updateOrderItems']);
+        Route::post('/orders/{id}/payment-receipt', [\App\Http\Controllers\Api\CartController::class, 'uploadPaymentReceipt']);
+        Route::post('/hoa-don/{id}/payment-receipt', [\App\Http\Controllers\Api\CartController::class, 'uploadPaymentReceipt']);
+        Route::post('/my-orders/{id}/payment-receipt', [\App\Http\Controllers\Api\CartController::class, 'uploadPaymentReceipt']);
 
         // Quản lý Khách hàng (Thêm, Sửa, Xóa)
         Route::get('/customers/lookup', [\App\Http\Controllers\Api\CustomerController::class, 'lookupBySdt']);
@@ -302,6 +322,7 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         Route::put('/cart/update', [\App\Http\Controllers\Api\CartController::class, 'updateQuantity']);
         Route::delete('/cart/remove/{masp}', [\App\Http\Controllers\Api\CartController::class, 'remove']);
         Route::post('/cart/checkout', [\App\Http\Controllers\Api\CartController::class, 'checkoutOnline'])->middleware(['throttle:orders', 'idempotency']);
+        Route::post('/cart/upload-receipt/{id}', [\App\Http\Controllers\Api\CartController::class, 'uploadPaymentReceipt']);
         Route::post('/vouchers/apply', [\App\Http\Controllers\Api\OrderController::class, 'applyVoucher']);
 
         // Voucher Wallet

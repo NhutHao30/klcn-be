@@ -8,15 +8,18 @@ use Illuminate\Database\Eloquent\Model;
 class NhaCungCap extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'nha_cung_cap';
+
+    protected $table = 'nhaCungCap';
 
     protected $fillable = [
-        'ten_ncc',
-        'so_dien_thoai',
+        'tenNcc',
+        'soDienThoai',
         'email',
         'dia_chi',
-        'trang_thai',
+        'trangThai',
     ];
 
     protected $appends = ['MANCC', 'TENNCC', 'DIENTHOAI', 'EMAIL', 'DIACHI'];
@@ -28,12 +31,12 @@ class NhaCungCap extends Model
 
     public function getTENNCCAttribute()
     {
-        return $this->attributes['ten_ncc'] ?? null;
+        return $this->attributes['tenNcc'] ?? null;
     }
 
     public function getDIENTHOAIAttribute()
     {
-        return $this->attributes['so_dien_thoai'] ?? null;
+        return $this->attributes['soDienThoai'] ?? null;
     }
 
     public function getEMAILAttribute()
@@ -48,11 +51,11 @@ class NhaCungCap extends Model
 
     public function loHangs()
     {
-        return $this->hasMany(LoHang::class, 'nhacungcap_id');
+        return $this->hasMany(LoHang::class, 'nhaCungCapId');
     }
 
     public function hoaDonNhaps()
     {
-        return $this->hasMany(HoaDonNhap::class, 'nhacungcap_id');
+        return $this->hasMany(HoaDonNhap::class, 'nhaCungCapId');
     }
 }

@@ -10,7 +10,7 @@ class VoucherController extends Controller
 {
     public function index()
     {
-        $vouchers = Voucher::where('trang_thai', 1)
+        $vouchers = Voucher::where('trangThai', 1)
             ->where('ngay_ket_thuc', '>=', now())
             ->get();
         return response()->json($vouchers);
@@ -18,7 +18,7 @@ class VoucherController extends Controller
 
     public function show($code)
     {
-        $voucher = Voucher::where('ma_voucher', $code)->where('trang_thai', 1)->first();
+        $voucher = Voucher::where('ma_voucher', $code)->where('trangThai', 1)->first();
         if (!$voucher || !$voucher->isValid()) {
             return response()->json(['error' => 'Mã Voucher không tồn tại hoặc đã hết hạn'], 404);
         }
@@ -32,7 +32,7 @@ class VoucherController extends Controller
             'loai_giam_gia' => 'required|integer|in:0,1',
             'gia_tri_giam' => 'required|numeric|min:0',
             'don_hang_toi_thieu' => 'required|numeric|min:0',
-            'so_luong' => 'required|integer|min:1',
+            'soLuong' => 'required|integer|min:1',
             'ngay_bat_dau' => 'required|date',
             'ngay_ket_thuc' => 'required|date|after:ngay_bat_dau',
         ]);
@@ -43,11 +43,11 @@ class VoucherController extends Controller
             'gia_tri_giam' => $request->gia_tri_giam,
             'don_hang_toi_thieu' => $request->don_hang_toi_thieu,
             'giam_toi_da' => $request->giam_toi_da ?? null,
-            'so_luong' => $request->so_luong,
+            'soLuong' => $request->soLuong,
             'da_su_dung' => 0,
             'ngay_bat_dau' => $request->ngay_bat_dau,
             'ngay_ket_thuc' => $request->ngay_ket_thuc,
-            'trang_thai' => 1,
+            'trangThai' => 1,
         ]);
 
         return response()->json(['message' => 'Tạo Voucher thành công', 'data' => $voucher], 201);

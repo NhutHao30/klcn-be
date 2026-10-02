@@ -6,33 +6,48 @@ use Illuminate\Database\Eloquent\Model;
 
 class PosShift extends Model
 {
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
+    protected $table = 'posShifts';
+
     protected $fillable = [
-        'MACUAHANG',
-        'USERNAME',
-        'opened_at',
-        'closed_at',
-        'opening_cash',
-        'closing_cash_expected',
-        'closing_cash_actual',
-        'status',
-        'note',
+        'cuaHangId',
+        'nhanVienId',
+        'thoiGianMoCa',
+        'thoiGianDongCa',
+        'tienMatDauCa',
+        'doanhThuTienMat',
+        'doanhThuChuyenKhoan',
+        'doanhThuMomo',
+        'tongDoanhThu',
+        'tienMatSach',
+        'tienMatThucTe',
+        'chenhLech',
+        'trangThai',
     ];
 
     protected $casts = [
-        'opened_at' => 'datetime',
-        'closed_at' => 'datetime',
+        'thoiGianMoCa' => 'datetime',
+        'thoiGianDongCa' => 'datetime',
+        'tienMatDauCa' => 'float',
+        'doanhThuTienMat' => 'float',
+        'doanhThuChuyenKhoan' => 'float',
+        'doanhThuMomo' => 'float',
+        'tongDoanhThu' => 'float',
+        'tienMatSach' => 'float',
+        'tienMatThucTe' => 'float',
+        'chenhLech' => 'float',
+        'trangThai' => 'integer',
     ];
-
-    // cash_difference is missing because it's computed in the view, not in the table
-    // But we can retrieve it if we query the view
 
     public function cuahang()
     {
-        return $this->belongsTo(CuaHang::class, 'MACUAHANG', 'MACUAHANG');
+        return $this->belongsTo(CuaHang::class, 'cuaHangId', 'id');
     }
 
-    public function user()
+    public function nhanvien()
     {
-        return $this->belongsTo(TaiKhoan::class, 'USERNAME', 'USERNAME');
+        return $this->belongsTo(NguoiDung::class, 'nhanVienId', 'id');
     }
 }

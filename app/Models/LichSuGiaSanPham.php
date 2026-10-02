@@ -8,16 +8,19 @@ use Illuminate\Database\Eloquent\Model;
 class LichSuGiaSanPham extends Model
 {
     use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'lich_su_gia_san_pham';
+
+    protected $table = 'lichSuGiaSanPham';
 
     protected $fillable = [
-        'sanpham_id',
+        'sanPhamId',
         'gia_cu',
         'gia_moi',
         'phan_tram_giam',
         'ly_do',
-        'nguoidung_id',
+        'nguoidungId',
         'ngay_ap_dung',
     ];
 
@@ -32,7 +35,7 @@ class LichSuGiaSanPham extends Model
 
     public function getMASPAttribute()
     {
-        return $this->attributes['sanpham_id'] ?? null;
+        return $this->attributes['sanPhamId'] ?? null;
     }
 
     public function getGIACUAttribute()
@@ -62,11 +65,11 @@ class LichSuGiaSanPham extends Model
 
     public function sanPham()
     {
-        return $this->belongsTo(SanPham::class, 'sanpham_id');
+        return $this->belongsTo(SanPham::class, 'sanPhamId');
     }
 
     public function nguoiDung()
     {
-        return $this->belongsTo(NguoiDung::class, 'nguoidung_id');
+        return $this->belongsTo(NguoiDung::class, 'nguoidungId');
     }
 }
