@@ -125,23 +125,40 @@ class BatchSeeder extends Seeder
                 'trangThai' => 3, // Da_huy
             ]);
 
+            $bbTable = Schema::hasTable('bienBanHuy') ? 'bienBanHuy' : 'bien_ban_huy';
+            $maBbCol = Schema::hasColumn($bbTable, 'maBienBan') ? 'maBienBan' : 'ma_bien_ban';
+            $chCol = Schema::hasColumn($bbTable, 'cuaHangId') ? 'cuaHangId' : 'cuahang_id';
+            $nlCol = Schema::hasColumn($bbTable, 'nguoiLapId') ? 'nguoiLapId' : 'nguoi_lap_id';
+            $ngayLapCol = Schema::hasColumn($bbTable, 'ngayLap') ? 'ngayLap' : 'ngay_lap';
+            $lyDoCol = Schema::hasColumn($bbTable, 'lyDo') ? 'lyDo' : 'ly_do';
+            $tongGiaTriCol = Schema::hasColumn($bbTable, 'tongGiaTriHuy') ? 'tongGiaTriHuy' : 'tong_gia_tri_huy';
+            $ttCol = Schema::hasColumn($bbTable, 'trangThai') ? 'trangThai' : 'trang_thai';
+
             $bbHuy = BienBanHuy::create([
-                'maBienBan' => 'BBH-GIVRAL-20260918',
-                'cuaHangId' => $store->id,
-                'nguoiLapId' => $user->id,
-                'ngayLap' => now()->subDay(),
-                'lyDo' => 'Hủy sản phẩm bánh ngọt quá hạn sử dụng (HSD)',
-                'tongGiaTriHuy' => 1000000,
-                'trangThai' => 1, // Da_ky_du_va_xac_nhan_huy
+                $maBbCol => 'BBH-GIVRAL-20260918',
+                $chCol => $store->id,
+                $nlCol => $user->id,
+                $ngayLapCol => now()->subDay(),
+                $lyDoCol => 'Hủy sản phẩm bánh ngọt quá hạn sử dụng (HSD)',
+                $tongGiaTriCol => 1000000,
+                $ttCol => 1, // Da_ky_du_va_xac_nhan_huy
             ]);
 
+            $ctBbTable = Schema::hasTable('chiTietBienBanHuy') ? 'chiTietBienBanHuy' : 'chitiet_bien_ban_huy';
+            $bbIdCol = Schema::hasColumn($ctBbTable, 'bienBanHuyId') ? 'bienBanHuyId' : 'bien_ban_huy_id';
+            $lhIdCol = Schema::hasColumn($ctBbTable, 'loHangId') ? 'loHangId' : 'lohang_id';
+            $spIdCol = Schema::hasColumn($ctBbTable, 'sanPhamId') ? 'sanPhamId' : 'sanpham_id';
+            $slHuyCol = Schema::hasColumn($ctBbTable, 'soLuongHuy') ? 'soLuongHuy' : 'so_luong_huy';
+            $dgCol = Schema::hasColumn($ctBbTable, 'donGia') ? 'donGia' : 'don_gia';
+            $ttienCol = Schema::hasColumn($ctBbTable, 'thanhTien') ? 'thanhTien' : 'thanh_tien';
+
             ChiTietBienBanHuy::create([
-                'bienBanHuyId' => $bbHuy->id,
-                'loHangId' => $batchExpired->id,
-                'sanPhamId' => $products[2]->id,
-                'soLuongHuy' => 5,
-                'giaVon' => 200000,
-                'thanhTien' => 1000000,
+                $bbIdCol => $bbHuy->id,
+                $lhIdCol => $batchExpired->id,
+                $spIdCol => $products[2]->id,
+                $slHuyCol => 5,
+                $dgCol => 200000,
+                $ttienCol => 1000000,
             ]);
 
             // Tạo 2 Chữ ký số đa bên cho Biên bản hủy

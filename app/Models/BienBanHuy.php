@@ -15,13 +15,20 @@ class BienBanHuy extends Model
     protected $table = 'bienBanHuy';
 
     protected $fillable = [
+        'maBienBan',
         'ma_bien_ban',
         'cuaHangId',
+        'cuahang_id',
+        'nguoiLapId',
         'nguoi_lap_id',
+        'ngayLap',
         'ngay_lap',
+        'lyDo',
         'ly_do',
+        'tongGiaTriHuy',
         'tong_gia_tri_huy',
         'trangThai',
+        'trang_thai',
     ];
 
     protected $casts = [

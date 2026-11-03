@@ -318,6 +318,25 @@ return new class extends Migration {
                 'created_at' => 'createdAt',
                 'updated_at' => 'updatedAt',
             ],
+            'bienBanHuy' => [
+                'ma_bien_ban' => 'maBienBan',
+                'cuahang_id' => 'cuaHangId',
+                'nguoi_lap_id' => 'nguoiLapId',
+                'ngay_lap' => 'ngayLap',
+                'ly_do' => 'lyDo',
+                'tong_gia_tri_huy' => 'tongGiaTriHuy',
+                'trang_thai' => 'trangThai',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+            'chiTietBienBanHuy' => [
+                'bien_ban_huy_id' => 'bienBanHuyId',
+                'lohang_id' => 'loHangId',
+                'sanpham_id' => 'sanPhamId',
+                'so_luong_huy' => 'soLuongHuy',
+                'don_gia' => 'donGia',
+                'thanh_tien' => 'thanhTien',
+            ],
         ];
 
         foreach ($columnMap as $tableName => $cols) {

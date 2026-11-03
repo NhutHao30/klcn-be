@@ -14,11 +14,17 @@ class ChiTietBienBanHuy extends Model
 
     protected $fillable = [
         'bienBanHuyId',
+        'bien_ban_huy_id',
         'loHangId',
+        'lohang_id',
         'sanPhamId',
+        'sanpham_id',
         'soLuongHuy',
+        'so_luong_huy',
         'donGia',
+        'don_gia',
         'thanhTien',
+        'thanh_tien',
     ];
 
     protected $casts = [
