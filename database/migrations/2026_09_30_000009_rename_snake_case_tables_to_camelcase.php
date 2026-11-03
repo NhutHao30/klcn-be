@@ -94,6 +94,17 @@ return new class extends Migration {
                 'created_at' => 'createdAt',
                 'updated_at' => 'updatedAt',
             ],
+            'lichSuGiaSanPham' => [
+                'sanpham_id' => 'sanPhamId',
+                'gia_cu' => 'giaCu',
+                'gia_moi' => 'giaMoi',
+                'phan_tram_giam' => 'phanTramGiam',
+                'ly_do' => 'lyDo',
+                'nguoidung_id' => 'nguoidungId',
+                'ngay_ap_dung' => 'ngayApDung',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
             'loaiSanPham' => [
                 'ten_loai' => 'tenLoai',
                 'hinh_anh' => 'hinhAnh',
