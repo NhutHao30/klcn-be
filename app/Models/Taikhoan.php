@@ -12,6 +12,9 @@ class TaiKhoan extends Authenticatable implements JWTSubject
 
     protected $table = 'taikhoan';
 
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
     protected $fillable = [
         'username',
         'email',
@@ -28,6 +31,7 @@ class TaiKhoan extends Authenticatable implements JWTSubject
 
     protected $appends = [
         'MAROLE',
+        'tenVaiTro',
     ];
 
     protected function casts(): array
@@ -58,18 +62,25 @@ class TaiKhoan extends Authenticatable implements JWTSubject
         ];
     }
 
+    public function getTenVaiTroAttribute()
+    {
+        return $this->vaitro?->tenVaiTro ?? 'ADMIN';
+    }
+
     /**
-     * Map vaitro_id sang cờ MAROLE legacy cho Frontend Router:
-     * 0: ADMIN, 1: MANAGER, 2: WAREHOUSE/CASHIER, 4: CSKH, 3: CUSTOMER
+     * Map vaitro_id sang cờ MAROLE cho Frontend Router:
+     * 0: ADMIN, 1: MANAGER, 2: CASHIER/WAREHOUSE, 3: CUSTOMER, 4: CSKH, 5: DIRECTOR, 6: ACCOUNTANT
      */
     public function getMAROLEAttribute()
     {
-        return match ((int)$this->attributes['vaiTroId'] ?? 1) {
-            1 => 0, // ADMIN (Giao diện Quản trị)
-            2 => 1, // MANAGER (Quản lý chi nhánh)
-            3, 4 => 2, // WAREHOUSE / CASHIER (Nhân viên)
+        return match ((int)($this->attributes['vaiTroId'] ?? 1)) {
+            1 => 0, // ADMIN
+            2 => 1, // MANAGER
+            3, 4 => 2, // CASHIER / WAREHOUSE
             5 => 4, // CSKH
-            6 => 3, // CUSTOMER (Khách hàng)
+            6 => 3, // CUSTOMER
+            7 => 6, // ACCOUNTANT
+            8 => 5, // DIRECTOR
             default => 0,
         };
     }

@@ -13,10 +13,10 @@ class ChiTietBienBanHuy extends Model
     public $timestamps = false;
 
     protected $fillable = [
-        'bien_ban_huy_id',
+        'bienBanHuyId',
         'loHangId',
         'sanPhamId',
-        'so_luong_huy',
+        'soLuongHuy',
         'donGia',
         'thanhTien',
     ];
@@ -28,7 +28,7 @@ class ChiTietBienBanHuy extends Model
 
     public function bienBanHuy()
     {
-        return $this->belongsTo(BienBanHuy::class, 'bien_ban_huy_id');
+        return $this->belongsTo(BienBanHuy::class, 'bienBanHuyId');
     }
 
     public function loHang()

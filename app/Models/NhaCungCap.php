@@ -18,7 +18,7 @@ class NhaCungCap extends Model
         'tenNcc',
         'soDienThoai',
         'email',
-        'dia_chi',
+        'diaChi',
         'trangThai',
     ];
 
@@ -46,7 +46,7 @@ class NhaCungCap extends Model
 
     public function getDIACHIAttribute()
     {
-        return $this->attributes['dia_chi'] ?? null;
+        return $this->attributes['diaChi'] ?? null;
     }
 
     public function loHangs()

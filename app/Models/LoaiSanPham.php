@@ -17,11 +17,12 @@ class LoaiSanPham extends Model
     protected $fillable = [
         'tenLoai',
         'slug',
+        'moTa',
         'hinhAnh',
         'trangThai',
     ];
 
-    protected $appends = ['MALOAI', 'TENLOAI'];
+    protected $appends = ['MALOAI', 'TENLOAI', 'MO_TA', 'soLuongSanPham', 'SO_LUONG_SP'];
 
     public function getMALOAIAttribute()
     {
@@ -31,6 +32,32 @@ class LoaiSanPham extends Model
     public function getTENLOAIAttribute()
     {
         return $this->attributes['tenLoai'] ?? null;
+    }
+
+    public function getMOTAAttribute()
+    {
+        return $this->attributes['moTa'] ?? null;
+    }
+
+    public function getSoLuongSanPhamAttribute()
+    {
+        if (array_key_exists('san_phams_count', $this->attributes)) {
+            return (int) $this->attributes['san_phams_count'];
+        }
+        if ($this->relationLoaded('sanPhams')) {
+            return $this->sanPhams->count();
+        }
+        return 0;
+    }
+
+    public function getSanPhamsCountAttribute()
+    {
+        return $this->getSoLuongSanPhamAttribute();
+    }
+
+    public function getSOLUONGSPAttribute()
+    {
+        return $this->getSoLuongSanPhamAttribute();
     }
 
     public function sanPhams()

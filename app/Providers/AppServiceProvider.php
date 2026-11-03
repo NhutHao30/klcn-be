@@ -33,5 +33,15 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(60)->by($request->user()?->USERNAME ?: $request->ip());
         });
+
+        // Audit Log: tự động ghi lại mọi thao tác thêm / sửa / xóa dữ liệu của nhân sự nội bộ
+        foreach (['created', 'updated', 'deleted'] as $auditEvent) {
+            \Illuminate\Support\Facades\Event::listen("eloquent.{$auditEvent}: *", function (string $eventName, array $payload) use ($auditEvent) {
+                $model = $payload[0] ?? null;
+                if ($model instanceof \Illuminate\Database\Eloquent\Model) {
+                    \App\Services\AuditTrail::handleModelEvent($auditEvent, $model);
+                }
+            });
+        }
     }
 }

@@ -314,34 +314,32 @@ class LoHangService
             $type, $referenceType, $referenceId, $username
         ]);
 
+        $sanPhamId = is_numeric($masp) ? (int)$masp : (int) (DB::table('sanPham')->where('id', $masp)->value('id') ?? $masp);
+
         $exists = DB::table('tonKhoChiNhanh')
-            ->where('MACUAHANG', $maCuaHang)
-            ->where('MASP', $masp)
+            ->where('cuaHangId', $maCuaHang)
+            ->where('sanPhamId', $sanPhamId)
             ->exists();
 
         if ($exists) {
             DB::table('tonKhoChiNhanh')
-                ->where('MACUAHANG', $maCuaHang)
-                ->where('MASP', $masp)
+                ->where('cuaHangId', $maCuaHang)
+                ->where('sanPhamId', $sanPhamId)
                 ->update([
-                    'SOLUONG_TON' => DB::raw("GREATEST(0, SOLUONG_TON + {$delta})"),
+                    'soLuongTon' => DB::raw("GREATEST(0, soLuongTon + {$delta})"),
                     'updatedAt'  => now(),
                 ]);
         } else if ($delta > 0) {
             DB::table('tonKhoChiNhanh')->insert([
-                'MACUAHANG'   => $maCuaHang,
-                'MASP'        => $masp,
-                'SOLUONG_TON' => $delta,
+                'cuaHangId'  => $maCuaHang,
+                'sanPhamId'  => $sanPhamId,
+                'soLuongTon' => $delta,
                 'createdAt'  => now(),
                 'updatedAt'  => now(),
             ]);
             // Do insert không kích hoạt UPDATE trigger nên chủ động ghi 1 log cho bản ghi mới
-            $this->recordMovement($masp, $maCuaHang, $type, $delta, $username, $referenceId, $referenceType, null);
+            $this->recordMovement((string)$sanPhamId, $maCuaHang, $type, $delta, $username, $referenceId, $referenceType, null);
         }
-
-        // Đồng bộ tổng tồn kho sang bảng sanpham
-        $totalStock = DB::table('tonKhoChiNhanh')->where('MASP', $masp)->sum('SOLUONG_TON');
-        DB::table('sanPham')->where('MASP', $masp)->update(['SOLUONG' => max(0, $totalStock)]);
 
         // Reset session variables
         DB::statement("SET @inv_type = NULL, @inv_ref_type = NULL, @inv_ref_id = NULL, @inv_username = NULL");
@@ -360,13 +358,15 @@ class LoHangService
         ?string $referenceType,
         ?string $note = null
     ): void {
+        $sanPhamId = is_numeric($masp) ? (int)$masp : (int) (DB::table('sanPham')->where('id', $masp)->value('id') ?? $masp);
+
         $current = DB::table('tonKhoChiNhanh')
-            ->where('MACUAHANG', $maCuaHang)
-            ->where('MASP', $masp)
-            ->value('SOLUONG_TON') ?? 0;
+            ->where('cuaHangId', $maCuaHang)
+            ->where('sanPhamId', $sanPhamId)
+            ->value('soLuongTon') ?? 0;
 
         InventoryMovement::create([
-            'MASP'           => $masp,
+            'MASP'           => (string)$sanPhamId,
             'MACUAHANG'      => $maCuaHang,
             'type'           => $type,
             'quantity'       => $quantity,

@@ -13,22 +13,22 @@ class ChiTietHoaDonNhap extends Model
     public $timestamps = false;
 
     protected $fillable = [
-        'hoadon_nhap_id',
+        'hoaDonNhapId',
         'loHangId',
         'sanPhamId',
         'soLuong',
-        'don_gia_nhap',
+        'donGiaNhap',
         'thanhTien',
     ];
 
     protected $casts = [
-        'don_gia_nhap' => 'double',
+        'donGiaNhap' => 'double',
         'thanhTien' => 'double',
     ];
 
     public function hoaDonNhap()
     {
-        return $this->belongsTo(HoaDonNhap::class, 'hoadon_nhap_id');
+        return $this->belongsTo(HoaDonNhap::class, 'hoaDonNhapId');
     }
 
     public function loHang()

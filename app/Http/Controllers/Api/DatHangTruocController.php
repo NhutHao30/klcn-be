@@ -4,21 +4,641 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use Carbon\Carbon;
 
 class DatHangTruocController extends Controller
 {
-    private function underDevelopment()
+    private function mapStatusToString($code)
     {
-        return response()->json([
-            'success' => false,
-            'message' => 'Chức năng đang được phát triển',
-            'data' => null
-        ], 200);
+        $map = [
+            0 => 'cho_xac_nhan',
+            1 => 'da_coc',
+            2 => 'san_sang',
+            3 => 'da_giao',
+            4 => 'da_huy',
+        ];
+        return $map[(int)$code] ?? 'cho_xac_nhan';
     }
 
-    public function index(Request $request) { return $this->underDevelopment(); }
-    public function show($id) { return $this->underDevelopment(); }
-    public function store(Request $request) { return $this->underDevelopment(); }
-    public function update(Request $request, $id) { return $this->underDevelopment(); }
-    public function destroy($id) { return $this->underDevelopment(); }
+    private function mapStringToStatusCode($str)
+    {
+        $map = [
+            'cho_xac_nhan' => 0,
+            'da_coc' => 1,
+            'san_sang' => 2,
+            'da_giao' => 3,
+            'da_huy' => 4,
+        ];
+        return $map[$str] ?? 0;
+    }
+
+    /**
+     * Lấy danh sách đơn đặt trước (loaiDonHang = 2)
+     */
+    public function index(Request $request)
+    {
+        $userLogin = Auth::guard('api')->user();
+        $macuahang = null;
+        if ($userLogin && $userLogin->vaiTroId == 2) {
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+        }
+
+        $query = DB::table('donhang')
+            ->where('loaiDonHang', 2);
+
+        if ($macuahang) {
+            $query->where('cuaHangId', $macuahang);
+        }
+
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+            $query->where(function($q) use ($search) {
+                $q->where('donhang.maDonHang', 'like', "%{$search}%")
+                  ->orWhere('donhang.ghiChu', 'like', "%{$search}%")
+                  ->orWhere('donhang.diaChiGiaoHang', 'like', "%{$search}%")
+                  ->orWhereExists(function ($sub) use ($search) {
+                      $sub->select(DB::raw(1))
+                          ->from('nguoidung')
+                          ->whereColumn('nguoidung.id', 'donhang.nguoidungId')
+                          ->where(function ($subQ) use ($search) {
+                              $subQ->where('nguoidung.hoTen', 'like', "%{$search}%")
+                                   ->orWhere('nguoidung.soDienThoai', 'like', "%{$search}%");
+                          });
+                  });
+            });
+        }
+
+        if ($request->filled('trangThai')) {
+            $code = $this->mapStringToStatusCode($request->trangThai);
+            $query->where('trangThaiDonHang', $code);
+        }
+
+        $orders = $query->orderBy('createdAt', 'desc')->get();
+
+        $result = $orders->map(function ($o) {
+            $cust = DB::table('nguoidung')->where('id', $o->nguoidungId)->first();
+            $staff = $o->nhanVienId ? DB::table('nguoidung')->where('id', $o->nhanVienId)->first() : null;
+            $staffName = $staff ? $staff->hoTen : 'Quản trị viên';
+            $details = DB::table('chitietdonhang')
+                ->leftJoin('sanpham', 'chitietdonhang.sanPhamId', '=', 'sanpham.id')
+                ->where('chitietdonhang.donHangId', $o->id)
+                ->select('chitietdonhang.*', 'sanpham.tenSanPham')
+                ->get();
+
+            $ngayHenLay = null;
+            if (preg_match('/\[Hẹn lấy:\s*([^\]]+)\]/', $o->ghiChu, $m)) {
+                $ngayHenLay = $m[1];
+            }
+
+            $tienCoc = (float)$o->soTienGiam;
+            $tongTien = (float)$o->tongThanhToan;
+            $tienConLai = max(0, $tongTien - $tienCoc);
+
+            // Timezone GMT+7 Vietnam
+            $ngayDatIct = $o->createdAt ? Carbon::parse($o->createdAt)->format('Y-m-d H:i:s') : null;
+
+            return [
+                'id' => $o->maDonHang,
+                'maDHT' => $o->maDonHang,
+                'dbId' => $o->id,
+                'macuahang' => $o->cuaHangId,
+                'maKH' => $o->nguoidungId,
+                'hoTenKH' => $cust ? $cust->hoTen : 'Khách hàng',
+                'sdtKH' => $cust ? $cust->soDienThoai : '',
+                'nhanVienLap' => $staffName,
+                'tenNhanVien' => $staffName,
+                'ngayDat' => $ngayDatIct,
+                'ngayHenLay' => $ngayHenLay ?: $ngayDatIct,
+                'ghiChu' => trim(preg_replace('/\[Hẹn lấy:\s*[^\]]+\]\s*/', '', $o->ghiChu ?? '')),
+                'tongTien' => $tongTien,
+                'tienCoc' => $tienCoc,
+                'phuongThucCoc' => $o->phuongThucThanhToan == 2 ? 'Chuyển khoản' : 'Tiền mặt',
+                'hinhThucNhan' => $o->diaChiGiaoHang ? 'giao_tan_noi' : 'tai_cua_hang',
+                'diaChiGiao' => $o->diaChiGiaoHang,
+                'phiGiaoHang' => (float)$o->phiVanChuyen,
+                'trangThai' => $this->mapStatusToString($o->trangThaiDonHang),
+                'chuKy' => $o->minhChungThanhToan,
+                'tienConLai' => $tienConLai,
+                'chiTiets' => $details->map(function ($ct) {
+                    return [
+                        'id' => $ct->id,
+                        'maSP' => $ct->sanPhamId,
+                        'tenSP' => $ct->tenSanPham ?? 'Bánh đặt theo yêu cầu',
+                        'soLuong' => (int)$ct->soLuong,
+                        'donGia' => (float)$ct->donGia,
+                        'thanhTien' => (float)$ct->thanhTien,
+                    ];
+                })
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
+            'total' => $result->count()
+        ]);
+    }
+
+    /**
+     * Tạo mới đơn đặt bánh trước
+     */
+    public function store(Request $request)
+    {
+        $request->validate([
+            'hoten_kh' => 'required|string|max:255',
+            'sdt_kh' => 'required|string|max:20',
+            'ngay_hen_lay' => 'required',
+            'chi_tiet' => 'required|array|min:1',
+        ]);
+
+        $userLogin = Auth::guard('api')->user();
+        $storeId = 1;
+
+        if ($userLogin && $userLogin->vaiTroId == 2) {
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            $storeId = $staffProfile ? $staffProfile->cuaHangId : 1;
+        }
+
+        $sdt = trim($request->sdt_kh);
+        $cust = DB::table('nguoidung')->where('soDienThoai', $sdt)->first();
+        $nowStr = Carbon::now('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s');
+
+        if (!$cust) {
+            try {
+                $userId = DB::table('nguoidung')->insertGetId([
+                    'taiKhoanId' => null,
+                    'hoTen' => trim($request->hoten_kh),
+                    'soDienThoai' => $sdt,
+                    'loaiNguoiDung' => 3,
+                    'createdAt' => $nowStr,
+                    'updatedAt' => $nowStr,
+                ]);
+            } catch (\Throwable $ex) {
+                $userId = 1;
+            }
+        } else {
+            $userId = $cust->id;
+            DB::table('nguoidung')->where('id', $userId)->update([
+                'hoTen' => trim($request->hoten_kh),
+                'updatedAt' => $nowStr,
+            ]);
+        }
+
+        DB::beginTransaction();
+        try {
+            $now = Carbon::now('Asia/Ho_Chi_Minh');
+            $maDHT = 'DHT' . $now->format('YmdHis') . rand(10, 99);
+
+            $chiTietData = $request->input('chi_tiet', []);
+            $tongTienBanh = 0;
+            foreach ($chiTietData as $ct) {
+                $sl = (int)($ct['so_luong'] ?? 1);
+                $dg = (float)($ct['don_gia'] ?? 0);
+                $tongTienBanh += ($sl * $dg);
+            }
+
+            $phiGiaoHang = (float)($request->input('phi_giao_hang', 0));
+            $tongTien = $tongTienBanh + $phiGiaoHang;
+            $tienCoc = (float)($request->input('tien_coc', 0));
+
+            if ($tienCoc < 0) {
+                return response()->json(['error' => 'Tiền cọc không được nhỏ hơn 0.'], 422);
+            }
+            if ($tienCoc > $tongTien) {
+                return response()->json([
+                    'error' => 'Tiền cọc (' . number_format($tienCoc, 0, ',', '.') . ' đ) không được vượt quá tổng giá trị đơn hàng (' . number_format($tongTien, 0, ',', '.') . ' đ).'
+                ], 422);
+            }
+
+            $ngayHen = $request->input('ngay_hen_lay');
+            if ($ngayHen) {
+                // Hỗ trợ cả định dạng Y-m-d H:i:s lẫn ISO UTC (kèm chữ Z)
+                $henCarbon = str_ends_with($ngayHen, 'Z')
+                    ? Carbon::parse($ngayHen)->setTimezone('Asia/Ho_Chi_Minh')
+                    : Carbon::parse($ngayHen, 'Asia/Ho_Chi_Minh');
+
+                if ($henCarbon->lt($now->copy()->subMinutes(5))) {
+                    return response()->json([
+                        'error' => 'Thời gian hẹn lấy bánh (' . $henCarbon->format('H:i d/m/Y') . ') không được ở trong quá khứ. Vui lòng chọn thời gian sau thời điểm hiện tại (' . $now->format('H:i') . ').'
+                    ], 422);
+                }
+                $ngayHenStr = $henCarbon->format('Y-m-d H:i:s');
+            } else {
+                $ngayHenStr = $now->copy()->addHours(2)->format('Y-m-d H:i:s');
+            }
+
+            $statusCode = 0; // cho_xac_nhan
+            if ($tienCoc > 0) {
+                $statusCode = 1; // da_coc
+            }
+
+            $fullGhiChu = "[Hẹn lấy: " . $ngayHenStr . "] " . ($request->input('ghi_chu') ?? '');
+            $phuongThucCoc = $request->input('phuong_thuc_coc') === 'Chuyển khoản' ? 2 : 1;
+
+            $staffId = null;
+            if ($userLogin) {
+                $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+                $staffId = $staffProfile ? $staffProfile->id : $userLogin->id;
+            }
+
+            $orderId = DB::table('donhang')->insertGetId([
+                'maDonHang' => $maDHT,
+                'nguoidungId' => $userId,
+                'nhanVienId' => $staffId,
+                'cuaHangId' => $storeId,
+                'loaiDonHang' => 2,
+                'tongTienHang' => $tongTienBanh,
+                'soTienGiam' => $tienCoc,
+                'phiVanChuyen' => $phiGiaoHang,
+                'tongThanhToan' => $tongTien,
+                'phuongThucThanhToan' => $phuongThucCoc,
+                'trangThaiThanhToan' => $tienCoc > 0 ? 1 : 0,
+                'trangThaiDonHang' => $statusCode,
+                'diaChiGiaoHang' => $request->input('hinh_thuc_nhan') === 'giao_tan_noi' ? $request->input('dia_chi_giao') : null,
+                'ghiChu' => trim($fullGhiChu),
+                'minhChungThanhToan' => $request->input('chu_ky'),
+                'createdAt' => $nowStr,
+                'updatedAt' => $nowStr,
+            ]);
+
+            foreach ($chiTietData as $ct) {
+                $spId = !empty($ct['masp']) ? $ct['masp'] : 1;
+                $sl = (int)($ct['so_luong'] ?? 1);
+                $dg = (float)($ct['don_gia'] ?? 0);
+
+                DB::table('chitietdonhang')->insert([
+                    'donHangId' => $orderId,
+                    'sanPhamId' => $spId,
+                    'soLuong' => $sl,
+                    'donGia' => $dg,
+                    'thanhTien' => $sl * $dg,
+                    'createdAt' => $nowStr,
+                    'updatedAt' => $nowStr,
+                ]);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Tạo đơn đặt bánh trước thành công!',
+                'data' => [
+                    'maDHT' => $maDHT,
+                    'id' => $maDHT
+                ]
+            ]);
+
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Lỗi khi tạo đơn đặt hàng trước: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Cập nhật / Sửa thông tin đơn đặt trước
+     */
+    public function update(Request $request, $id)
+    {
+        $o = DB::table('donhang')->where('maDonHang', $id)->first();
+        if (!$o) {
+            return response()->json(['success' => false, 'message' => 'Đơn hàng không tồn tại'], 404);
+        }
+
+        $request->validate([
+            'hoten_kh' => 'required|string|max:255',
+            'sdt_kh' => 'required|string|max:20',
+            'ngay_hen_lay' => 'required',
+            'chi_tiet' => 'required|array|min:1',
+        ]);
+
+        $sdt = trim($request->sdt_kh);
+        $cust = DB::table('nguoidung')->where('soDienThoai', $sdt)->first();
+        $nowStr = Carbon::now('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s');
+
+        if (!$cust) {
+            try {
+                $userId = DB::table('nguoidung')->insertGetId([
+                    'taiKhoanId' => null,
+                    'hoTen' => trim($request->hoten_kh),
+                    'soDienThoai' => $sdt,
+                    'loaiNguoiDung' => 3,
+                    'createdAt' => $nowStr,
+                    'updatedAt' => $nowStr,
+                ]);
+            } catch (\Throwable $ex) {
+                $userId = $o->nguoidungId ?: 1;
+            }
+        } else {
+            $userId = $cust->id;
+            DB::table('nguoidung')->where('id', $userId)->update([
+                'hoTen' => trim($request->hoten_kh),
+                'updatedAt' => $nowStr,
+            ]);
+        }
+
+        DB::beginTransaction();
+        try {
+            $chiTietData = $request->input('chi_tiet', []);
+            $tongTienBanh = 0;
+            foreach ($chiTietData as $ct) {
+                $sl = (int)($ct['so_luong'] ?? 1);
+                $dg = (float)($ct['don_gia'] ?? 0);
+                $tongTienBanh += ($sl * $dg);
+            }
+
+            $phiGiaoHang = (float)($request->input('phi_giao_hang', 0));
+            $tongTien = $tongTienBanh + $phiGiaoHang;
+            $tienCoc = (float)($request->input('tien_coc', 0));
+
+            $ngayHen = $request->input('ngay_hen_lay');
+            $fullGhiChu = "[Hẹn lấy: " . $ngayHen . "] " . ($request->input('ghi_chu') ?? '');
+            $phuongThucCoc = $request->input('phuong_thuc_coc') === 'Chuyển khoản' ? 2 : 1;
+
+            $updateData = [
+                'nguoidungId' => $userId,
+                'tongTienHang' => $tongTienBanh,
+                'soTienGiam' => $tienCoc,
+                'phiVanChuyen' => $phiGiaoHang,
+                'tongThanhToan' => $tongTien,
+                'phuongThucThanhToan' => $phuongThucCoc,
+                'trangThaiThanhToan' => $tienCoc > 0 ? 1 : 0,
+                'diaChiGiaoHang' => $request->input('hinh_thuc_nhan') === 'giao_tan_noi' ? $request->input('dia_chi_giao') : null,
+                'ghiChu' => trim($fullGhiChu),
+                'updatedAt' => $nowStr,
+            ];
+
+            if ($request->filled('chu_ky')) {
+                $updateData['minhChungThanhToan'] = $request->input('chu_ky');
+            }
+
+            DB::table('donhang')->where('id', $o->id)->update($updateData);
+
+            // Re-insert line items
+            DB::table('chitietdonhang')->where('donHangId', $o->id)->delete();
+            foreach ($chiTietData as $ct) {
+                $spId = !empty($ct['masp']) ? $ct['masp'] : 1;
+                $sl = (int)($ct['so_luong'] ?? 1);
+                $dg = (float)($ct['don_gia'] ?? 0);
+
+                DB::table('chitietdonhang')->insert([
+                    'donHangId' => $o->id,
+                    'sanPhamId' => $spId,
+                    'soLuong' => $sl,
+                    'donGia' => $dg,
+                    'thanhTien' => $sl * $dg,
+                    'createdAt' => $nowStr,
+                    'updatedAt' => $nowStr,
+                ]);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Cập nhật đơn đặt bánh trước thành công!'
+            ]);
+
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Lỗi khi cập nhật đơn: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Chi tiết 1 đơn đặt trước
+     */
+    public function show($id)
+    {
+        $o = DB::table('donhang')->where('maDonHang', $id)->first();
+
+        if (!$o) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy đơn đặt hàng trước'
+            ], 404);
+        }
+
+        $cust = DB::table('nguoidung')->where('id', $o->nguoidungId)->first();
+        $storeObj = DB::table('cuahang')->where('id', $o->cuaHangId)->first();
+        $staff = $o->nhanVienId ? DB::table('nguoidung')->where('id', $o->nhanVienId)->first() : null;
+        $staffName = $staff ? $staff->hoTen : 'Quản trị viên';
+        $details = DB::table('chitietdonhang')
+            ->leftJoin('sanpham', 'chitietdonhang.sanPhamId', '=', 'sanpham.id')
+            ->where('chitietdonhang.donHangId', $o->id)
+            ->select('chitietdonhang.*', 'sanpham.tenSanPham')
+            ->get();
+
+        $ngayHenLay = null;
+        if (preg_match('/\[Hẹn lấy:\s*([^\]]+)\]/', $o->ghiChu, $m)) {
+            $ngayHenLay = $m[1];
+        }
+
+        $tienCoc = (float)$o->soTienGiam;
+        $tongTien = (float)$o->tongThanhToan;
+        $tienConLai = max(0, $tongTien - $tienCoc);
+
+        $ngayDatIct = $o->createdAt ? Carbon::parse($o->createdAt)->format('Y-m-d H:i:s') : null;
+
+        $data = [
+            'id' => $o->maDonHang,
+            'maDHT' => $o->maDonHang,
+            'dbId' => $o->id,
+            'macuahang' => $o->cuaHangId,
+            'cuaHang' => $storeObj ? ['tenCuaHang' => $storeObj->tenCuaHang] : null,
+            'maKH' => $o->nguoidungId,
+            'hoTenKH' => $cust ? $cust->hoTen : 'Khách hàng',
+            'sdtKH' => $cust ? $cust->soDienThoai : '',
+            'nhanVienLap' => $staffName,
+            'tenNhanVien' => $staffName,
+            'ngayDat' => $ngayDatIct,
+            'ngayHenLay' => $ngayHenLay ?: $ngayDatIct,
+            'ghiChu' => trim(preg_replace('/\[Hẹn lấy:\s*[^\]]+\]\s*/', '', $o->ghiChu ?? '')),
+            'tongTien' => $tongTien,
+            'tienCoc' => $tienCoc,
+            'phuongThucCoc' => $o->phuongThucThanhToan == 2 ? 'Chuyển khoản' : 'Tiền mặt',
+            'hinhThucNhan' => $o->diaChiGiaoHang ? 'giao_tan_noi' : 'tai_cua_hang',
+            'diaChiGiao' => $o->diaChiGiaoHang,
+            'phiGiaoHang' => (float)$o->phiVanChuyen,
+            'trangThai' => $this->mapStatusToString($o->trangThaiDonHang),
+            'chuKy' => $o->minhChungThanhToan,
+            'tienConLai' => $tienConLai,
+            'chiTiets' => $details->map(function ($ct) {
+                return [
+                    'id' => $ct->id,
+                    'maSP' => $ct->sanPhamId,
+                    'tenSP' => $ct->tenSanPham ?? 'Bánh đặt theo yêu cầu',
+                    'soLuong' => (int)$ct->soLuong,
+                    'donGia' => (float)$ct->donGia,
+                    'thanhTien' => (float)$ct->thanhTien,
+                ];
+            })
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Cập nhật trạng thái
+     */
+    /**
+     * Trừ tồn kho khi đơn chuyển sang Sẵn sàng (2) hoặc Đã giao (3)
+     */
+    private function deductStockForOrder($order)
+    {
+        $details = DB::table('chitietdonhang')->where('donHangId', $order->id)->get();
+        $storeId = $order->cuaHangId ?? 1;
+
+        foreach ($details as $ct) {
+            $qty = (int) $ct->soLuong;
+            $spId = $ct->sanPhamId;
+            if ($qty <= 0) continue;
+
+            // 1. Giảm tồn kho chi nhánh
+            $tonKho = \App\Models\TonKhoChiNhanh::firstOrCreate(
+                ['cuaHangId' => $storeId, 'sanPhamId' => $spId],
+                ['soLuongTon' => 0]
+            );
+            $tonKho->decrement('soLuongTon', $qty);
+            $tonSau = (int) $tonKho->fresh()->soLuongTon;
+
+            // 2. Ghi sổ nhật ký kho (loaiBienDong 0 = Xuất bán đơn hàng)
+            \App\Models\NhatKyKho::create([
+                'cuaHangId' => $storeId,
+                'sanPhamId' => $spId,
+                'loaiBienDong' => 0,
+                'soLuongThayDoi' => -$qty,
+                'soLuongTonSau' => $tonSau,
+                'maThamChieu' => $order->maDonHang,
+            ]);
+        }
+    }
+
+    /**
+     * Hoàn trả tồn kho khi đơn bị hủy (4)
+     */
+    private function restoreStockForOrder($order)
+    {
+        $details = DB::table('chitietdonhang')->where('donHangId', $order->id)->get();
+        $storeId = $order->cuaHangId ?? 1;
+
+        foreach ($details as $ct) {
+            $qty = (int) $ct->soLuong;
+            $spId = $ct->sanPhamId;
+            if ($qty <= 0) continue;
+
+            $tonKho = \App\Models\TonKhoChiNhanh::firstOrCreate(
+                ['cuaHangId' => $storeId, 'sanPhamId' => $spId],
+                ['soLuongTon' => 0]
+            );
+            $tonKho->increment('soLuongTon', $qty);
+            $tonSau = (int) $tonKho->fresh()->soLuongTon;
+
+            // 2. Ghi sổ nhật ký kho (loaiBienDong 1 = Nhập hoàn trả kho)
+            \App\Models\NhatKyKho::create([
+                'cuaHangId' => $storeId,
+                'sanPhamId' => $spId,
+                'loaiBienDong' => 1,
+                'soLuongThayDoi' => $qty,
+                'soLuongTonSau' => $tonSau,
+                'maThamChieu' => $order->maDonHang,
+            ]);
+        }
+    }
+
+    public function updateStatus(Request $request, $id)
+    {
+        $o = DB::table('donhang')->where('maDonHang', $id)->first();
+        if (!$o) {
+            return response()->json(['success' => false, 'message' => 'Đơn không tồn tại'], 404);
+        }
+
+        $trangThaiStr = $request->input('trang_thai') ?? $request->input('trangThai');
+        if ($trangThaiStr) {
+            $code = $this->mapStringToStatusCode($trangThaiStr);
+            $daXuatKho = (int) ($o->daXuatKho ?? 0);
+
+            DB::beginTransaction();
+            try {
+                // Khi chuyển sang Sẵn sàng giao (2) hoặc Đã giao (3) và chưa trừ kho -> Trừ kho
+                if (($code == 2 || $code == 3) && $daXuatKho == 0) {
+                    $this->deductStockForOrder($o);
+                    $daXuatKho = 1;
+                }
+                // Khi hủy đơn (4) mà trước đó đã trừ kho -> Hoàn trả kho
+                else if ($code == 4 && $daXuatKho == 1) {
+                    $this->restoreStockForOrder($o);
+                    $daXuatKho = 0;
+                }
+
+                DB::table('donhang')->where('id', $o->id)->update([
+                    'trangThaiDonHang' => $code,
+                    'daXuatKho' => $daXuatKho,
+                    'updatedAt' => now()
+                ]);
+
+                DB::commit();
+            } catch (\Throwable $e) {
+                DB::rollBack();
+                \Illuminate\Support\Facades\Log::error("Error updating pre-order status: " . $e->getMessage());
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Lỗi khi cập nhật trạng thái kho: ' . $e->getMessage()
+                ], 500);
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Cập nhật trạng thái thành công!'
+        ]);
+    }
+
+    /**
+     * Hoàn tất thanh toán tiền còn lại
+     */
+    public function completePayment(Request $request, $id)
+    {
+        $o = DB::table('donhang')->where('maDonHang', $id)->first();
+        if (!$o) {
+            return response()->json(['success' => false, 'message' => 'Đơn không tồn tại'], 404);
+        }
+
+        DB::beginTransaction();
+        try {
+            $daXuatKho = (int) ($o->daXuatKho ?? 0);
+            if ($daXuatKho == 0) {
+                $this->deductStockForOrder($o);
+                $daXuatKho = 1;
+            }
+
+            DB::table('donhang')->where('id', $o->id)->update([
+                'trangThaiDonHang' => 3, // 3 = da_giao (Hoàn thành)
+                'trangThaiThanhToan' => 2, // 2 = Đã thanh toán đủ
+                'daXuatKho' => $daXuatKho,
+                'updatedAt' => now()
+            ]);
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Lỗi khi xử lý kho: ' . $e->getMessage()], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Hoàn tất thanh toán & giao bánh thành công!'
+        ]);
+    }
 }

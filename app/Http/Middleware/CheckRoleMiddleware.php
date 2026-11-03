@@ -28,7 +28,18 @@ class CheckRoleMiddleware
             return $next($request);
         }
 
-        if (in_array($maRole, $roles) || in_array($vaitroId, $roles)) {
+        // Flatten any comma-delimited role parameters
+        $flatRoles = [];
+        foreach ($roles as $r) {
+            foreach (explode(',', (string)$r) as $part) {
+                $trim = trim($part);
+                if ($trim !== '') {
+                    $flatRoles[] = $trim;
+                }
+            }
+        }
+
+        if (in_array($maRole, $flatRoles) || in_array($vaitroId, $flatRoles)) {
             return $next($request);
         }
 

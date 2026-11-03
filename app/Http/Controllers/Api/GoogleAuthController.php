@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use GuzzleHttp\Client as GuzzleClient;
 
 class GoogleAuthController extends Controller
@@ -44,10 +45,12 @@ class GoogleAuthController extends Controller
      */
     public function redirect(Request $request)
     {
-        $frontendUrl = env('FRONTEND_URL', 'http://localhost:5173');
+        $frontendUrl = $request->query('redirect_to') 
+            ?? $request->query('frontend_url') 
+            ?? env('FRONTEND_URL', 'http://localhost:5173');
         
         $referer = $request->headers->get('referer');
-        if ($referer) {
+        if (!$request->has('redirect_to') && $referer) {
             $parsed = parse_url($referer);
             if (isset($parsed['scheme']) && isset($parsed['host'])) {
                 $frontendUrl = $parsed['scheme'] . '://' . $parsed['host'] . (isset($parsed['port']) ? ':' . $parsed['port'] : '');
@@ -64,16 +67,34 @@ class GoogleAuthController extends Controller
      */
     public function callback(Request $request)
     {
+        $frontendUrl = env('FRONTEND_URL', 'http://localhost:5173');
+        if ($request->has('state')) {
+            $decoded = base64_decode($request->state);
+            if (filter_var($decoded, FILTER_VALIDATE_URL)) {
+                $frontendUrl = $decoded;
+            }
+        }
+
+        if ($request->has('error')) {
+            Log::warning('Google OAuth cancelled or returned error: ' . $request->get('error'));
+            return redirect($frontendUrl . '/dang-nhap?error=google_cancelled');
+        }
+
         try {
             $googleUser = $this->getGoogleDriver($request)->user();
 
-            // Tìm tài khoản theo google_id hoặc email
+            if (!$googleUser || !$googleUser->getEmail()) {
+                Log::error('Google OAuth failed to get user email');
+                return redirect($frontendUrl . '/dang-nhap?error=google_no_email');
+            }
+
+            // Tìm tài khoản theo googleId hoặc email
             $existingUser = TaiKhoan::where('googleId', $googleUser->getId())
                 ->orWhere('email', $googleUser->getEmail())
                 ->first();
 
             if ($existingUser) {
-                // Nếu tìm thấy theo Email nhưng chưa gắn google_id
+                // Nếu tìm thấy theo Email nhưng chưa gắn googleId
                 if (!$existingUser->googleId) {
                     $existingUser->update([
                         'googleId' => $googleUser->getId(),
@@ -85,54 +106,53 @@ class GoogleAuthController extends Controller
                     NguoiDung::create([
                         'taiKhoanId'   => $existingUser->id,
                         'hoTen'        => $googleUser->getName() ?? $existingUser->username,
-                        'soDienThoai' => '',
+                        'soDienThoai' => null,
                         'gioiTinh'     => 1,
                         'loaiNguoiDung'=> 0, // Khách hàng
                     ]);
                 }
-
-                /** @var \Tymon\JWTAuth\JWTGuard $guard */
-                $guard = Auth::guard('api');
-                $token = $guard->login($existingUser);
-
-                // Trả về Frontend kèm token
-                $frontendUrl = env('FRONTEND_URL', 'http://localhost:5173');
-                if ($request->has('state')) {
-                    $decoded = base64_decode($request->state);
-                    if (filter_var($decoded, FILTER_VALIDATE_URL)) {
-                        $frontendUrl = $decoded;
-                    }
-                }
-                return redirect($frontendUrl . '/?token=' . $token . '&google=true');
             } else {
-                // Chưa có tài khoản, lưu thông tin vào Cache (hạn 15 phút)
-                $googleId = $googleUser->getId();
-                \Illuminate\Support\Facades\Cache::put('google_reg_' . $googleId, [
-                    'id' => $googleId,
-                    'name' => $googleUser->getName(),
-                    'email' => $googleUser->getEmail(),
-                    'avatar' => $googleUser->getAvatar()
-                ], now()->addMinutes(15));
+                // Tự động tạo tài khoản Khách hàng mới cho người dùng Google
+                DB::beginTransaction();
+                try {
+                    $email = $googleUser->getEmail();
+                    $name = $googleUser->getName() ?? explode('@', $email)[0];
+                    $username = 'kh_' . strtolower(substr(md5($googleUser->getId() . time()), 0, 8));
+                    $password = Hash::make(Str::random(16));
 
-                $frontendUrl = env('FRONTEND_URL', 'http://localhost:5173');
-                if ($request->has('state')) {
-                    $decoded = base64_decode($request->state);
-                    if (filter_var($decoded, FILTER_VALIDATE_URL)) {
-                        $frontendUrl = $decoded;
-                    }
+                    $existingUser = TaiKhoan::create([
+                        'username'  => $username,
+                        'email'     => $email,
+                        'password'  => $password,
+                        'vaiTroId' => 6, // Khách hàng (CUSTOMER)
+                        'googleId' => $googleUser->getId(),
+                        'trangThai'=> 1,
+                    ]);
+
+                    NguoiDung::create([
+                        'taiKhoanId'   => $existingUser->id,
+                        'hoTen'        => $name,
+                        'soDienThoai' => null,
+                        'gioiTinh'     => 1,
+                        'loaiNguoiDung'=> 0, // Khách hàng
+                    ]);
+
+                    DB::commit();
+                } catch (\Exception $e) {
+                    DB::rollBack();
+                    Log::error('Auto Create Google User Failed: ' . $e->getMessage());
+                    throw $e;
                 }
-                return redirect($frontendUrl . '/dang-ky-google?google_id=' . $googleId);
             }
+
+            /** @var \Tymon\JWTAuth\JWTGuard $guard */
+            $guard = Auth::guard('api');
+            $token = $guard->login($existingUser);
+
+            return redirect($frontendUrl . '/?token=' . $token . '&google=true');
 
         } catch (\Exception $e) {
             Log::error('Google Login Error: ' . $e->getMessage());
-            $frontendUrl = env('FRONTEND_URL', 'http://localhost:5173');
-            if ($request->has('state')) {
-                $decoded = base64_decode($request->state);
-                if (filter_var($decoded, FILTER_VALIDATE_URL)) {
-                    $frontendUrl = $decoded;
-                }
-            }
             return redirect($frontendUrl . '/dang-nhap?error=google_login_failed');
         }
     }
@@ -142,7 +162,11 @@ class GoogleAuthController extends Controller
      */
     public function googleStatus(Request $request)
     {
-        $googleId = $request->query('googleId') ?? $request->input('googleId');
+        $googleId = $request->query('googleId') 
+            ?? $request->query('google_id') 
+            ?? $request->input('googleId') 
+            ?? $request->input('google_id');
+
         if ($googleId && \Illuminate\Support\Facades\Cache::has('google_reg_' . $googleId)) {
             $googleUser = \Illuminate\Support\Facades\Cache::get('google_reg_' . $googleId);
             return response()->json([
@@ -161,7 +185,10 @@ class GoogleAuthController extends Controller
      */
     public function googleRegister(Request $request)
     {
-        $googleId = $request->input('googleId');
+        $googleId = $request->input('googleId') 
+            ?? $request->input('google_id') 
+            ?? $request->query('googleId') 
+            ?? $request->query('google_id');
 
         if (!$googleId || !\Illuminate\Support\Facades\Cache::has('google_reg_' . $googleId)) {
             return response()->json(['error' => 'Phiên đăng nhập Google đã hết hạn'], 400);
@@ -221,3 +248,4 @@ class GoogleAuthController extends Controller
         }
     }
 }
+

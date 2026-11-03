@@ -21,18 +21,19 @@ class NhaCungCapController extends Controller
 
     public function store(Request $request)
     {
+        $diaChi = $request->input('diaChi') ?? $request->input('dia_chi') ?? $request->input('DIACHI');
         $request->merge([
             'tenNcc' => $request->input('tenNcc') ?? $request->input('TENNCC'),
             'soDienThoai' => $request->input('soDienThoai') ?? $request->input('DIENTHOAI'),
             'email' => $request->input('email') ?? $request->input('EMAIL'),
-            'dia_chi' => $request->input('dia_chi') ?? $request->input('DIACHI'),
+            'diaChi' => $diaChi,
         ]);
 
         $validated = $request->validate([
             'tenNcc' => 'required|string|max:150',
             'soDienThoai' => 'nullable|string|max:15',
             'email' => 'nullable|email|max:100',
-            'dia_chi' => 'nullable|string|max:255',
+            'diaChi' => 'nullable|string|max:255',
         ]);
 
         $supplier = NhaCungCap::create(array_merge($validated, ['trangThai' => 1]));
@@ -75,18 +76,19 @@ class NhaCungCapController extends Controller
             ], 404);
         }
 
+        $diaChi = $request->input('diaChi') ?? $request->input('dia_chi') ?? $request->input('DIACHI');
         $request->merge([
             'tenNcc' => $request->input('tenNcc') ?? $request->input('TENNCC'),
             'soDienThoai' => $request->input('soDienThoai') ?? $request->input('DIENTHOAI'),
             'email' => $request->input('email') ?? $request->input('EMAIL'),
-            'dia_chi' => $request->input('dia_chi') ?? $request->input('DIACHI'),
+            'diaChi' => $diaChi,
         ]);
 
         $validated = $request->validate([
             'tenNcc' => 'sometimes|string|max:150',
             'soDienThoai' => 'nullable|string|max:15',
             'email' => 'nullable|email|max:100',
-            'dia_chi' => 'nullable|string|max:255',
+            'diaChi' => 'nullable|string|max:255',
             'trangThai' => 'sometimes|integer|in:0,1',
         ]);
 

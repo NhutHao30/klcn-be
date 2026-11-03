@@ -11,15 +11,14 @@ class YeuCauDieuChuyen extends Model
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
 
-
-    protected $table = 'yeuCauDieuChuyen';
+    protected $table = 'yeucaudieuchuyen';
 
     protected $fillable = [
         'cuaHangXuatId',
         'cuaHangNhapId',
-        'nguoi_tao_id',
-        'nguoi_duyet_id',
-        'trangThai', // 0: Chờ duyệt, 1: Đang vận chuyển, 2: Đã nhận thành công, 3: Từ chối/Hủy
+        'nguoiTaoId',
+        'nguoiDuyetId',
+        'trangThai', // 0: Chờ tiếp nhận, 1: Đang xử lý, 2: Hoàn thành, 3: Hủy
         'ghiChu',
     ];
 
@@ -39,16 +38,21 @@ class YeuCauDieuChuyen extends Model
 
     public function nguoiTao()
     {
-        return $this->belongsTo(NguoiDung::class, 'nguoi_tao_id');
+        return $this->belongsTo(NguoiDung::class, 'nguoiTaoId');
     }
 
     public function nguoiDuyet()
     {
-        return $this->belongsTo(NguoiDung::class, 'nguoi_duyet_id');
+        return $this->belongsTo(NguoiDung::class, 'nguoiDuyetId');
     }
 
     public function chitiet()
     {
         return $this->hasMany(ChiTietDieuChuyen::class, 'yeuCauId');
+    }
+
+    public function phieu()
+    {
+        return $this->hasMany(PhieuDieuChuyen::class, 'yeuCauId');
     }
 }

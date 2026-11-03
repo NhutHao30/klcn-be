@@ -4,13 +4,13 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 class NguoiDung extends Model
 {
     use HasFactory;
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
-
 
     protected $table = 'nguoidung';
 
@@ -24,12 +24,17 @@ class NguoiDung extends Model
         'cccdNumber',
         'cccdImageUrl',
         'loaiNguoiDung', // 0: Khách hàng, 1: Nhân viên
+        'diemTichLuy',
+        'tongChiTieu',
+        'hangThanhVien',
     ];
 
     protected $casts = [
         'gioiTinh' => 'integer',
         'loaiNguoiDung' => 'integer',
         'ngaySinh' => 'date',
+        'diemTichLuy' => 'integer',
+        'tongChiTieu' => 'double',
     ];
 
     protected $appends = [
@@ -41,7 +46,57 @@ class NguoiDung extends Model
         'MAKH',
         'MANV',
         'DIEMTICHLUY',
+        'HANGTHANHVIEN',
+        'TONGCHITIEU',
+        'MACUAHANG',
     ];
+
+    public static function resolveRankByPoints(int $points): string
+    {
+        if ($points >= 1000) return 'Thách đấu';
+        if ($points >= 500) return 'Kim cương';
+        if ($points >= 200) return 'Vàng';
+        if ($points >= 50) return 'Bạc';
+        return 'Đồng';
+    }
+
+    /**
+     * Đồng bộ điểm tích lũy (10.000đ = 1 điểm) và hạng thành viên từ các đơn hàng đã hoàn thành
+     */
+    public function syncLoyaltyPoints(): self
+    {
+        if (!$this->id) {
+            return $this;
+        }
+
+        $totalSpent = (float) DB::table('donhang')
+            ->where('nguoidungId', $this->id)
+            ->whereIn('trangThaiDonHang', [4, 5])
+            ->sum('tongThanhToan');
+
+        $calculatedPoints = (int) floor($totalSpent / 10000);
+        // Nếu quản trị viên đã cộng thêm điểm thưởng thủ công cao hơn mức tự động, giữ mức cao hơn
+        $currentPoints = (int) ($this->attributes['diemTichLuy'] ?? 0);
+        $finalPoints = max($calculatedPoints, $currentPoints);
+        $rank = self::resolveRankByPoints($finalPoints);
+
+        if (
+            $finalPoints !== $currentPoints ||
+            abs($totalSpent - (float)($this->attributes['tongChiTieu'] ?? 0)) > 0.01 ||
+            ($this->attributes['hangThanhVien'] ?? '') !== $rank
+        ) {
+            DB::table('nguoidung')->where('id', $this->id)->update([
+                'diemTichLuy' => $finalPoints,
+                'tongChiTieu' => $totalSpent,
+                'hangThanhVien' => $rank,
+            ]);
+            $this->attributes['diemTichLuy'] = $finalPoints;
+            $this->attributes['tongChiTieu'] = $totalSpent;
+            $this->attributes['hangThanhVien'] = $rank;
+        }
+
+        return $this;
+    }
 
     public function getHOTENAttribute()
     {
@@ -70,7 +125,10 @@ class NguoiDung extends Model
 
     public function getDIACHIAttribute()
     {
-        return $this->diachi()->first()?->diaChiChiTiet ?? '';
+        if ($this->relationLoaded('diachi')) {
+            return $this->diachi->first()?->diaChiChiTiet ?? '';
+        }
+        return '';
     }
 
     public function getMAKHAttribute()
@@ -85,7 +143,23 @@ class NguoiDung extends Model
 
     public function getDIEMTICHLUYAttribute()
     {
-        return $this->attributes['diem_tich_luy'] ?? 0;
+        return (int) ($this->attributes['diemTichLuy'] ?? $this->attributes['diem_tich_luy'] ?? 0);
+    }
+
+    public function getHANGTHANHVIENAttribute()
+    {
+        $pts = $this->getDIEMTICHLUYAttribute();
+        return $this->attributes['hangThanhVien'] ?? self::resolveRankByPoints($pts);
+    }
+
+    public function getTONGCHITIEUAttribute()
+    {
+        return (float) ($this->attributes['tongChiTieu'] ?? 0);
+    }
+
+    public function getMACUAHANGAttribute()
+    {
+        return $this->attributes['cuaHangId'] ?? 1;
     }
 
     public function taikhoan()
@@ -116,5 +190,10 @@ class NguoiDung extends Model
     public function wishlist()
     {
         return $this->hasMany(Wishlist::class, 'nguoidungId');
+    }
+
+    public function vouchers()
+    {
+        return $this->hasMany(VoucherKhachHang::class, 'nguoidungId');
     }
 }

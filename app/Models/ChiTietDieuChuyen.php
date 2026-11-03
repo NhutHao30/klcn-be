@@ -11,19 +11,18 @@ class ChiTietDieuChuyen extends Model
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
 
-
-    protected $table = 'chiTietDieuChuyen';
+    protected $table = 'chitietdieuchuyen';
 
     protected $fillable = [
         'yeuCauId',
         'sanPhamId',
-        'so_luong_chuyen',
-        'so_luong_thuc_nhan',
+        'soLuongYeuCau',
+        'soLuongThucNhan',
     ];
 
     protected $casts = [
-        'so_luong_chuyen' => 'integer',
-        'so_luong_thuc_nhan' => 'integer',
+        'soLuongYeuCau' => 'integer',
+        'soLuongThucNhan' => 'integer',
     ];
 
     public function yeucau()

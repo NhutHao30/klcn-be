@@ -46,7 +46,7 @@ class AutoExpireLoHangJob implements ShouldQueue
 
             // Ghi vào bảng nhat_ky_he_thong nếu có lô bị hủy
             if ($result['expired_count'] > 0) {
-                DB::table('nhat_ky_he_thong')->insert([
+                DB::table('nhatKyHeThong')->insert([
                     'HANHONG'     => "AutoExpire: {$result['expired_count']} lô hàng hết hạn đã bị hủy tự động. Tổng SL: {$result['total_quantity_disposed']}",
                     'THOIGIAN'    => now(),
                     'USERNAME'    => 'SYSTEM',

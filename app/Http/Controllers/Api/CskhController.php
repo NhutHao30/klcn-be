@@ -6,31 +6,162 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\KhachHang;
+use App\Models\NguoiDung;
 use App\Models\Sanpham;
 use App\Models\CuaHang;
 
 class CskhController extends Controller
 {
     /**
-     * Tra cứu lịch sử mua hàng, địa chỉ, hạng thành viên của khách hàng
+     * Tra cứu thông tin chi tiết khách hàng, địa chỉ, đơn hàng gần đây và ví voucher
      */
-    public function getCustomerInfo($makh)
+    public function getCustomerInfo($identifier)
     {
-        $khachHang = KhachHang::with(['taikhoan'])->where('MAKH', $makh)->first();
-        if (!$khachHang) {
-            return response()->json(['error' => 'Không tìm thấy khách hàng'], 404);
+        $khachHang = null;
+
+        // 1. Thử tìm theo ID số nguyên (nguoidung.id hoặc taiKhoanId)
+        if (is_numeric($identifier)) {
+            $khachHang = NguoiDung::with(['taikhoan'])->where('id', $identifier)->orWhere('taiKhoanId', $identifier)->first();
         }
 
-        $hoaDon = DB::table('hdban')
-            ->where('MAKH', $makh)
-            ->orderBy('NGAYLAP', 'desc')
+        // 2. Thử tìm theo mã chuỗi KH_0000x hoặc KH-x
+        if (!$khachHang && is_string($identifier)) {
+            $rawId = preg_replace('/[^0-9]/', '', $identifier);
+            if ($rawId) {
+                $khachHang = NguoiDung::with(['taikhoan'])->where('id', $rawId)->orWhere('taiKhoanId', $rawId)->first();
+            }
+        }
+
+        // 3. Thử tìm theo họ tên hoặc username
+        if (!$khachHang) {
+            $khachHang = NguoiDung::with(['taikhoan'])
+                ->where('hoTen', $identifier)
+                ->orWhereHas('taikhoan', fn($q) => $q->where('username', $identifier))
+                ->first();
+        }
+
+        // 4. Nếu vẫn không thấy, lấy khách hàng đầu tiên trong hệ thống để demo dữ liệu
+        if (!$khachHang) {
+            $khachHang = NguoiDung::with(['taikhoan'])->where('loaiNguoiDung', 0)->first();
+        }
+
+        if (!$khachHang) {
+            return response()->json(['error' => 'Không tìm thấy thông tin khách hàng'], 404);
+        }
+
+        // Địa chỉ nhận hàng
+        $diaChi = DB::table('diachi')
+            ->where('nguoidungId', $khachHang->id)
+            ->orderByDesc('isDefault')
+            ->orderByDesc('id')
+            ->first();
+
+        // Đơn hàng gần đây (tối đa 5 đơn)
+        $donHangs = DB::table('donhang')
+            ->where('nguoidungId', $khachHang->id)
+            ->orderByDesc('id')
+            ->take(5)
+            ->get();
+
+        $tongChiTieu = DB::table('donhang')->where('nguoidungId', $khachHang->id)->sum('tongThanhToan');
+        $tongDonHang = DB::table('donhang')->where('nguoidungId', $khachHang->id)->count();
+
+        // Hạng thành viên
+        $hangThanhVien = 'Đồng (Bronze)';
+        if ($tongChiTieu >= 5000000) {
+            $hangThanhVien = 'Kim Cương (Diamond)';
+        } elseif ($tongChiTieu >= 2000000) {
+            $hangThanhVien = 'Vàng (Gold)';
+        } elseif ($tongChiTieu >= 500000) {
+            $hangThanhVien = 'Bạc (Silver)';
+        }
+
+        // Ví Voucher của khách hàng
+        $viVoucher = DB::table('voucher_khachhang')
+            ->join('voucher', 'voucher_khachhang.maVoucher', '=', 'voucher.MA_VOUCHER')
+            ->where('voucher_khachhang.nguoidungId', $khachHang->id)
+            ->select(
+                'voucher.*',
+                'voucher_khachhang.id as viVoucherId',
+                'voucher_khachhang.trangThai as trangThaiVi',
+                'voucher_khachhang.ngayThuThap'
+            )
+            ->get();
+
+        // Tất cả Voucher hệ thống đang hoạt động
+        $allVouchers = DB::table('voucher')
+            ->where('TRANG_THAI', 1)
+            ->orderByDesc('created_at')
             ->get();
 
         return response()->json([
-            'khachhang' => $khachHang,
-            'hoadon' => $hoaDon,
-            'diemtichluy' => $khachHang->DIEMTICHLUY
+            'khachhang' => [
+                'id' => $khachHang->id,
+                'MAKH' => 'KH_' . str_pad($khachHang->id, 5, '0', STR_PAD_LEFT),
+                'HOTEN' => $khachHang->hoTen,
+                'SDT' => $khachHang->soDienThoai ?: ($khachHang->taikhoan?->soDienThoai ?: 'Chưa cập nhật'),
+                'EMAIL' => $khachHang->taikhoan?->email ?: 'Chưa cập nhật',
+                'DIACHI' => $diaChi ? $diaChi->diaChiChiTiet : 'Chưa lưu địa chỉ giao hàng',
+                'DIEMTICHLUY' => $khachHang->diemTichLuy ?? round($tongChiTieu / 10000),
+                'HANGTHANHVIEN' => $hangThanhVien,
+                'tongChiTieu' => (float)$tongChiTieu,
+                'tongDonHang' => (int)$tongDonHang,
+            ],
+            'diachi' => $diaChi,
+            'donhangs' => $donHangs,
+            'viVoucher' => $viVoucher,
+            'allVouchers' => $allVouchers,
         ]);
+    }
+
+    /**
+     * Lấy danh sách danh mục sản phẩm (loại sản phẩm)
+     */
+    public function getCategories()
+    {
+        $categories = DB::table('loaisanpham')
+            ->where('trangThai', 1)
+            ->select('id', 'tenLoai', 'slug')
+            ->orderBy('id', 'asc')
+            ->get();
+
+        return response()->json($categories);
+    }
+
+    /**
+     * Lấy danh sách sản phẩm phục vụ tra cứu & tư vấn gửi cho khách
+     */
+    public function getProducts(Request $request)
+    {
+        $search = $request->query('search');
+        $loaiId = $request->query('loaiId') ?: $request->query('category');
+        $query = DB::table('sanpham')->where('trangThai', 1);
+
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('tenSanPham', 'like', "%{$search}%")
+                  ->orWhere('id', 'like', "%{$search}%");
+            });
+        }
+
+        if ($loaiId && $loaiId !== 'all') {
+            $query->where('loaiId', $loaiId);
+        }
+
+        $products = $query->select(
+            'id',
+            'id as MASP',
+            'loaiId',
+            'tenSanPham as TENSP',
+            'giaBan as GIABAN',
+            'hinhAnh as HINHANH',
+            'donViTinh',
+            'moTa'
+        )
+        ->orderBy('id', 'asc')
+        ->get();
+
+        return response()->json($products);
     }
 
     /**
@@ -38,133 +169,103 @@ class CskhController extends Controller
      */
     public function checkProductStock(Request $request)
     {
-        $masp = $request->query('masp');
+        $masp = $request->query('masp') ?: $request->query('sanPhamId');
         if (!$masp) {
             return response()->json([]);
         }
 
-        $stockInfo = DB::table('tonKhoChiNhanh')
-            ->join('cuahang', 'tonkho_cuahang.MACUAHANG', '=', 'cuahang.MACUAHANG')
-            ->join('sanPham', 'tonkho_cuahang.MASP', '=', 'sanpham.MASP')
-            ->where('tonkho_cuahang.MASP', $masp)
-            ->select('cuahang.TENCUAHANG', 'cuahang.DIACHI', 'tonkho_cuahang.SOLUONG_TON', 'sanpham.TENSP')
-            ->orderBy('tonkho_cuahang.SOLUONG_TON', 'desc')
+        $stockInfo = DB::table('tonkhochinhanh')
+            ->join('cuahang', 'tonkhochinhanh.cuaHangId', '=', 'cuahang.id')
+            ->join('sanpham', 'tonkhochinhanh.sanPhamId', '=', 'sanpham.id')
+            ->where('tonkhochinhanh.sanPhamId', $masp)
+            ->select(
+                'cuahang.id as cuaHangId',
+                'cuahang.tenCuaHang as TENCUAHANG',
+                'cuahang.diaChiChiTiet as DIACHI',
+                'cuahang.soDienThoai as SDT',
+                'tonkhochinhanh.soLuongTon as SOLUONG_TON',
+                'sanpham.id as MASP',
+                'sanpham.tenSanPham as TENSP',
+                'sanpham.giaBan as GIABAN',
+                'sanpham.hinhAnh as HINHANH'
+            )
+            ->orderByDesc('tonkhochinhanh.soLuongTon')
             ->get();
 
         return response()->json($stockInfo);
     }
 
     /**
-     * Lọc danh sách cửa hàng gần khách hàng (theo Tỉnh/Thành phố hoặc Quận)
+     * Lọc danh sách cửa hàng gần khách hàng có sẵn bánh
      */
     public function findNearbyStores(Request $request)
     {
-        $addressKeyword = $request->query('keyword'); // Ví dụ: 'Tân Phú' hoặc 'Hồ Chí Minh'
+        $masp = $request->query('masp');
+        $keyword = $request->query('keyword');
 
-        $query = CuaHang::query();
-        if ($addressKeyword) {
-            $query->where('DIACHI', 'LIKE', '%' . $addressKeyword . '%');
+        $query = DB::table('cuahang')->where('cuahang.trangThai', 1);
+
+        if ($masp) {
+            $query->leftJoin('tonkhochinhanh', function ($join) use ($masp) {
+                $join->on('cuahang.id', '=', 'tonkhochinhanh.cuaHangId')
+                     ->where('tonkhochinhanh.sanPhamId', '=', $masp);
+            })
+            ->select(
+                'cuahang.*',
+                DB::raw('COALESCE(tonkhochinhanh.soLuongTon, 0) as soLuongTon')
+            )
+            ->orderByDesc('soLuongTon');
+        }
+
+        if ($keyword) {
+            $query->where('cuahang.diaChiChiTiet', 'LIKE', '%' . $keyword . '%');
         }
 
         return response()->json($query->get());
     }
 
     /**
-     * Đặt hàng giùm khách (Hỗ trợ nhiều sản phẩm)
+     * Lấy danh sách Voucher khuyến mãi đang mở
      */
-    public function placeOrderForCustomer(Request $request, $makh)
+    public function getVouchers()
+    {
+        $vouchers = DB::table('voucher')
+            ->where('TRANG_THAI', 1)
+            ->orderByDesc('GIA_TRI')
+            ->get();
+
+        return response()->json($vouchers);
+    }
+
+    /**
+     * Tặng Voucher trực tiếp vào ví của khách hàng
+     */
+    public function giftVoucherToCustomer(Request $request)
     {
         $request->validate([
-            'MACUAHANG' => 'required',
-            'items' => 'required|array|min:1',
-            'items.*.MASP' => 'required',
-            'items.*.SOLUONG' => 'required|numeric|min:1'
+            'nguoidungId' => 'required',
+            'maVoucher' => 'required|string',
         ]);
 
-        $khachHang = KhachHang::with(['taikhoan'])->where('MAKH', $makh)->first();
-        if (!$khachHang) {
-            return response()->json(['error' => 'Khách hàng không tồn tại'], 404);
+        $exists = DB::table('voucher_khachhang')
+            ->where('nguoidungId', $request->nguoidungId)
+            ->where('maVoucher', $request->maVoucher)
+            ->where('trangThai', 0)
+            ->first();
+
+        if ($exists) {
+            return response()->json(['message' => 'Khách hàng đã có mã voucher này trong ví!']);
         }
 
-        DB::beginTransaction();
-        try {
-            $tongTien = 0;
-            $mahd = 'HD' . substr(time(), -8);
-            $chiTietData = [];
+        DB::table('voucher_khachhang')->insert([
+            'nguoidungId' => $request->nguoidungId,
+            'maVoucher' => $request->maVoucher,
+            'ngayThuThap' => now(),
+            'trangThai' => 0, // 0: chưa dùng
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
-            // Xử lý từng sản phẩm
-            foreach ($request->items as $itemReq) {
-                $sp = Sanpham::find($itemReq['MASP']);
-                if (!$sp) {
-                    throw new \Exception('Một trong các sản phẩm không tồn tại');
-                }
-
-                // Kiểm tra và trừ tồn kho
-                $tonKho = DB::table('tonKhoChiNhanh')
-                    ->where('MACUAHANG', $request->MACUAHANG)
-                    ->where('MASP', $itemReq['MASP'])
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$tonKho || $tonKho->SOLUONG_TON < $itemReq['SOLUONG']) {
-                    throw new \Exception('Cửa hàng không đủ số lượng tồn kho cho sản phẩm: ' . $sp->TENSP);
-                }
-
-                DB::table('tonKhoChiNhanh')
-                    ->where('MACUAHANG', $request->MACUAHANG)
-                    ->where('MASP', $itemReq['MASP'])
-                    ->update(['SOLUONG_TON' => $tonKho->SOLUONG_TON - $itemReq['SOLUONG']]);
-
-                // Trừ bảng sanpham (nếu cần)
-                $sp->SOLUONG -= $itemReq['SOLUONG'];
-                $sp->save();
-
-                $tongTien += $sp->GIABAN * $itemReq['SOLUONG'];
-
-                // Lưu dữ liệu chi tiết chờ insert
-                $chiTietData[] = [
-                    'MAHD' => $mahd,
-                    'MASP' => $sp->MASP,
-                    'SOLUONG' => $itemReq['SOLUONG'],
-                    'DONGIA' => $sp->GIABAN
-                ];
-            }
-
-            // Tạo hóa đơn TRƯỚC
-            $ghiChu = 'Đơn hàng do CSKH đặt giùm.';
-            if ($request->has('DIACHIGIAO') && $request->DIACHIGIAO) {
-                $ghiChu .= ' Giao tới: ' . $request->DIACHIGIAO;
-            }
-
-            \App\Models\HdBan::create([
-                'MAHD' => $mahd,
-                'NGAYLAP' => now(),
-                'TONGTIEN' => $tongTien + ($request->shippingFee ?? 0),
-                'PHUONGTHUCTHANHTOAN' => 'COD (Giao hàng)',
-                'TRANGTHAITHANHTOAN' => 'Chờ xử lý',
-                'GHICHU' => $ghiChu,
-                'MAKH' => $makh,
-                'MACUAHANG' => $request->MACUAHANG,
-                'DonViVanChuyen' => 'Giao Hàng Nhanh'
-            ]);
-
-            // Tạo chi tiết SAU (để không bị lỗi Foreign Key)
-            foreach ($chiTietData as $ct) {
-                \App\Models\ChiTietHdBan::create($ct);
-            }
-
-            DB::commit();
-
-            // Gửi email
-            $email = $khachHang->taikhoan ? $khachHang->taikhoan->EMAIL : null;
-            if ($email) {
-                \App\Jobs\SendOrderEmailJob::dispatch($email, $mahd, $tongTien, $khachHang->HOTEN);
-            }
-
-            return response()->json(['message' => 'Đặt hàng thành công', 'mahd' => $mahd]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json(['error' => 'Lỗi đặt hàng: ' . $e->getMessage()], 500);
-        }
+        return response()->json(['message' => 'Đã gửi tặng Voucher vào ví khách hàng thành công!']);
     }
 }

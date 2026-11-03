@@ -19,6 +19,7 @@ class DonHang extends Model
         'nguoidungId',
         'cuaHangId',
         'voucherId',
+        'maVoucher',
         'loaiDonHang', // 0: Online, 1: POS quầy
         'tongTienHang',
         'soTienGiam',
@@ -33,6 +34,24 @@ class DonHang extends Model
         'toWardCode',
         'toDistrictId',
         'ghiChu',
+        'lyDoHuy',
+        'ghiChuHuy',
+        'lyDoHoanTra',
+        'ghiChuHoanTra',
+        'hinhAnhHoanTra',
+        'ngayYeuCauHoanTra',
+        'trangThaiHoanHang',
+        'lyDoTuChoiHoanTra',
+        'nganHangHoanTien',
+        'soTaiKhoanHoanTien',
+        'tenNguoiNhanHoanTien',
+        'soTienHoan',
+        'maGiaoDichHoanTien',
+        'trangThaiHoanTien',
+        'ngayHoanTien',
+        'ghiChuHoanTien',
+        'minhChungHoanTien',
+        'nhanVienHoanTienId',
         'minhChungThanhToan',
     ];
 
@@ -45,6 +64,7 @@ class DonHang extends Model
         'soTienGiam' => 'double',
         'phiVanChuyen' => 'double',
         'tongThanhToan' => 'double',
+        'soTienHoan' => 'double',
     ];
 
     public function nguoidung()
@@ -59,7 +79,7 @@ class DonHang extends Model
 
     public function voucher()
     {
-        return $this->belongsTo(KhuyenMai::class, 'voucherId');
+        return $this->belongsTo(Voucher::class, 'maVoucher', 'MA_VOUCHER');
     }
 
     public function chitiet()

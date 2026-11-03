@@ -8,24 +8,24 @@ use Illuminate\Database\Eloquent\Model;
 class CuaHang extends Model
 {
     use HasFactory;
+
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
-
 
     protected $table = 'cuahang';
 
     protected $fillable = [
-        'ten_cuahang',
+        'tenCuaHang',
         'soDienThoai',
         'diaChiChiTiet',
         'maTinh',
         'maHuyen',
         'maXa',
-        'ghn_shop_id',
+        'ghnShopId',
         'trangThai',
     ];
 
-    protected $appends = ['MACUAHANG', 'TENCUAHANG'];
+    protected $appends = ['MACUAHANG', 'TENCUAHANG', 'DIACHI', 'SDT', 'name', 'address', 'phone'];
 
     public function getMACUAHANGAttribute()
     {
@@ -34,7 +34,32 @@ class CuaHang extends Model
 
     public function getTENCUAHANGAttribute()
     {
-        return $this->attributes['ten_cuahang'] ?? null;
+        return $this->attributes['tenCuaHang'] ?? null;
+    }
+
+    public function getNameAttribute()
+    {
+        return $this->attributes['tenCuaHang'] ?? null;
+    }
+
+    public function getDIACHIAttribute()
+    {
+        return $this->attributes['diaChiChiTiet'] ?? $this->attributes['diaChi'] ?? '';
+    }
+
+    public function getAddressAttribute()
+    {
+        return $this->attributes['diaChiChiTiet'] ?? $this->attributes['diaChi'] ?? '';
+    }
+
+    public function getSDTAttribute()
+    {
+        return $this->attributes['soDienThoai'] ?? '';
+    }
+
+    public function getPhoneAttribute()
+    {
+        return $this->attributes['soDienThoai'] ?? '';
     }
 
     public function nguoiDungs()

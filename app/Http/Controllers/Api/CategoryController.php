@@ -11,19 +11,27 @@ class CategoryController extends Controller
 {
     public function index()
     {
-        return response()->json(LoaiSanPham::where('trangThai', 1)->get());
+        return response()->json(LoaiSanPham::where('trangThai', 1)->withCount('sanPhams')->get());
     }
 
     public function store(Request $request)
     {
-        $request->validate([
+        $request->merge([
+            'tenLoai' => $request->input('tenLoai') ?? $request->input('TENLOAI') ?? $request->input('ten_loai') ?? $request->input('name'),
+            'moTa' => $request->input('moTa') ?? $request->input('MO_TA') ?? $request->input('mo_ta') ?? $request->input('description'),
+        ]);
+
+        $validated = $request->validate([
             'tenLoai' => 'required|string|max:100',
+            'moTa' => 'nullable|string',
+            'hinhAnh' => 'nullable|string',
         ]);
 
         $category = LoaiSanPham::create([
-            'tenLoai' => $request->tenLoai,
-            'slug' => Str::slug($request->tenLoai) . '-' . time(),
-            'hinhAnh' => $request->hinhAnh,
+            'tenLoai' => $validated['tenLoai'],
+            'slug' => Str::slug($validated['tenLoai']) . '-' . time(),
+            'moTa' => $validated['moTa'] ?? null,
+            'hinhAnh' => $validated['hinhAnh'] ?? null,
             'trangThai' => 1,
         ]);
 
@@ -37,14 +45,22 @@ class CategoryController extends Controller
             return response()->json(['error' => 'Không tìm thấy danh mục'], 404);
         }
 
-        $request->validate([
-            'tenLoai' => 'required|string|max:100',
+        $request->merge([
+            'tenLoai' => $request->input('tenLoai') ?? $request->input('TENLOAI') ?? $request->input('ten_loai') ?? $request->input('name') ?? $category->tenLoai,
+            'moTa' => $request->input('moTa') ?? $request->input('MO_TA') ?? $request->input('mo_ta') ?? $request->input('description') ?? $category->moTa,
+        ]);
+
+        $validated = $request->validate([
+            'tenLoai' => 'sometimes|required|string|max:100',
+            'moTa' => 'nullable|string',
+            'hinhAnh' => 'nullable|string',
         ]);
 
         $category->update([
-            'tenLoai' => $request->tenLoai,
-            'slug' => Str::slug($request->tenLoai),
-            'hinhAnh' => $request->hinhAnh ?? $category->hinhAnh,
+            'tenLoai' => $validated['tenLoai'],
+            'slug' => Str::slug($validated['tenLoai']),
+            'moTa' => $validated['moTa'] ?? $category->moTa,
+            'hinhAnh' => $validated['hinhAnh'] ?? $category->hinhAnh,
         ]);
 
         return response()->json(['message' => 'Cập nhật danh mục thành công', 'data' => $category]);
@@ -57,7 +73,7 @@ class CategoryController extends Controller
             return response()->json(['error' => 'Không tìm thấy danh mục'], 404);
         }
 
-        if ($category->sanpham()->count() > 0) {
+        if ($category->sanPhams()->count() > 0) {
             return response()->json(['error' => 'Không thể xóa danh mục đang chứa sản phẩm'], 400);
         }
 

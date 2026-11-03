@@ -23,17 +23,28 @@ class SanPham extends Model
         'moTa',
         'donViTinh',
         'trangThai',
+        'isNew',
     ];
 
     protected $casts = [
         'giaBan' => 'double',
+        'isNew' => 'boolean',
     ];
 
-    protected $appends = ['MASP', 'TENSP', 'GIABAN', 'HINHANH', 'SOLUONG_TON', 'soLuongTon', 'TONKHO_THUCTE'];
+    protected $appends = ['MASP', 'maSanPham', 'TENSP', 'GIABAN', 'HINHANH', 'MOTA', 'SOLUONG_TON', 'soLuongTon', 'TONKHO_THUCTE', 'isNew', 'IS_NEW', 'phanTramGiam', 'PHAN_TRAM_GIAM'];
 
     public function getMASPAttribute()
     {
-        return $this->attributes['id'] ?? null;
+        $id = $this->attributes['id'] ?? null;
+        if ($id !== null) {
+            return 'SP' . str_pad($id, 3, '0', STR_PAD_LEFT);
+        }
+        return null;
+    }
+
+    public function getMaSanPhamAttribute()
+    {
+        return $this->getMASPAttribute();
     }
 
     public function getTENSPAttribute()
@@ -51,8 +62,22 @@ class SanPham extends Model
         return $this->attributes['hinhAnh'] ?? null;
     }
 
+    public function getMOTAAttribute()
+    {
+        return $this->attributes['moTa'] ?? '';
+    }
+
     public function getSoLuongTonAttribute()
     {
+        if (array_key_exists('soLuongTon', $this->attributes) && $this->attributes['soLuongTon'] !== null) {
+            return (int) $this->attributes['soLuongTon'];
+        }
+        if (array_key_exists('SOLUONG_TON', $this->attributes) && $this->attributes['SOLUONG_TON'] !== null) {
+            return (int) $this->attributes['SOLUONG_TON'];
+        }
+        if (array_key_exists('TONKHO_THUCTE', $this->attributes) && $this->attributes['TONKHO_THUCTE'] !== null) {
+            return (int) $this->attributes['TONKHO_THUCTE'];
+        }
         if ($this->relationLoaded('tonKhoChiNhanhs')) {
             return (int) $this->tonKhoChiNhanhs->sum('soLuongTon');
         }
@@ -62,6 +87,23 @@ class SanPham extends Model
     public function getTonkhoThucteAttribute()
     {
         return $this->getSoLuongTonAttribute();
+    }
+
+    public function getIsNewAttribute()
+    {
+        if (array_key_exists('isNew', $this->attributes)) {
+            return (bool) $this->attributes['isNew'];
+        }
+        if (!isset($this->attributes['createdAt'])) return false;
+        return \Carbon\Carbon::parse($this->attributes['createdAt'])->gte(\Carbon\Carbon::now()->subDays(14));
+    }
+
+    public function getPhanTramGiamAttribute()
+    {
+        if ($this->relationLoaded('lichSuGias')) {
+            return (float) ($this->lichSuGias->first()->phanTramGiam ?? 0);
+        }
+        return (float) ($this->lichSuGias()->orderBy('createdAt', 'desc')->value('phanTramGiam') ?? 0);
     }
 
     public function loaiSanPham()

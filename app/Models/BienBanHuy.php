@@ -30,53 +30,97 @@ class BienBanHuy extends Model
     ];
 
     protected $appends = [
-        'MABIENBAN', 'MABBHUY', 'MACUAHANG', 'NGAY_HUY', 'NGAYLAP',
-        'LYDO_HUY', 'LYDO', 'TONGGIATRI_HUY', 'TRANGTHAI'
+        'MABB', 'MABIENBAN', 'MABBHUY', 'MACUAHANG', 'NGAY_HUY', 'NGAYLAP',
+        'LYDO_HUY', 'LYDO', 'TONGGIATRI_HUY', 'TRANGTHAI',
+        'MALOHAN', 'TENSP', 'SOLUONG_HUY', 'NGUOI_HUY', 'ly_do_label'
     ];
 
     public function getMABIENBANAttribute()
     {
-        return $this->attributes['ma_bien_ban'] ?? $this->attributes['id'] ?? null;
+        return $this->attributes['maBienBan'] ?? $this->attributes['ma_bien_ban'] ?? ('BBH' . str_pad($this->attributes['id'] ?? '', 6, '0', STR_PAD_LEFT));
+    }
+
+    public function getMABBAttribute()
+    {
+        return $this->getMABIENBANAttribute();
     }
 
     public function getMABBHUYAttribute()
     {
-        return $this->attributes['ma_bien_ban'] ?? $this->attributes['id'] ?? null;
+        return $this->getMABIENBANAttribute();
     }
 
     public function getMACUAHANGAttribute()
     {
-        return $this->attributes['cuaHangId'] ?? null;
+        return $this->attributes['cuaHangId'] ?? $this->attributes['cua_hang_id'] ?? null;
     }
 
     public function getNGAYHUYAttribute()
     {
-        return $this->attributes['ngay_lap'] ?? null;
+        return $this->attributes['ngayLap'] ?? $this->attributes['ngay_lap'] ?? $this->attributes['createdAt'] ?? null;
     }
 
     public function getNGAYLAPAttribute()
     {
-        return $this->attributes['ngay_lap'] ?? null;
+        return $this->getNGAYHUYAttribute();
     }
 
     public function getLYDOHUYAttribute()
     {
-        return $this->attributes['ly_do'] ?? null;
+        return $this->attributes['lyDo'] ?? $this->attributes['ly_do'] ?? null;
     }
 
     public function getLYDOAttribute()
     {
-        return $this->attributes['ly_do'] ?? null;
+        return $this->getLYDOHUYAttribute();
+    }
+
+    public function getLyDoLabelAttribute()
+    {
+        $code = $this->getLYDOHUYAttribute();
+        return match ($code) {
+            'het_han' => 'Hết hạn sử dụng (FEFO)',
+            'hong_hong' => 'Hư hỏng trong bảo quản',
+            'thu_hoi' => 'Thu hồi từ Nhà cung cấp',
+            'khac' => 'Lý do khác',
+            default => $code ?: 'Tiêu hủy định kỳ',
+        };
     }
 
     public function getTONGGIATRIHUYAttribute()
     {
-        return $this->attributes['tong_gia_tri_huy'] ?? 0;
+        return (double) ($this->attributes['tongGiaTriHuy'] ?? $this->attributes['tong_gia_tri_huy'] ?? 0);
     }
 
     public function getTRANGTHAIAttribute()
     {
-        return $this->attributes['trangThai'] ?? 0;
+        return (int) ($this->attributes['trangThai'] ?? 0);
+    }
+
+    public function getMALOHANAttribute()
+    {
+        $first = $this->relationLoaded('chiTiets') ? $this->chiTiets->first() : $this->chiTiets()->with('loHang')->first();
+        return $first?->loHang?->maLoHang ?? $first?->lo_hang?->maLoHang ?? null;
+    }
+
+    public function getTENSPAttribute()
+    {
+        $first = $this->relationLoaded('chiTiets') ? $this->chiTiets->first() : $this->chiTiets()->with('sanPham')->first();
+        return $first?->sanPham?->tenSanPham ?? $first?->san_pham?->tenSanPham ?? null;
+    }
+
+    public function getSOLUONGHUYAttribute()
+    {
+        if ($this->relationLoaded('chiTiets')) {
+            return (int) $this->chiTiets->sum('soLuongHuy');
+        }
+        return (int) $this->chiTiets()->sum('soLuongHuy');
+    }
+
+    public function getNGUOIHUYAttribute()
+    {
+        $nl = $this->relationLoaded('nguoiLap') ? $this->nguoiLap : $this->nguoiLap()->first();
+        return $nl?->hoTen ?? $nl?->HOTEN ?? 'Nhân viên kho';
     }
 
     public function cuaHang()
@@ -86,17 +130,17 @@ class BienBanHuy extends Model
 
     public function nguoiLap()
     {
-        return $this->belongsTo(NguoiDung::class, 'nguoi_lap_id');
+        return $this->belongsTo(NguoiDung::class, 'nguoiLapId');
     }
 
     public function chuKySos()
     {
-        return $this->hasMany(ChuKySo::class, 'tai_lieu_id')->where('loai_tai_lieu', 2);
+        return $this->hasMany(ChuKySo::class, 'taiLieuId')->where('loaiTaiLieu', 2);
     }
 
     public function chiTiets()
     {
-        return $this->hasMany(ChiTietBienBanHuy::class, 'bien_ban_huy_id');
+        return $this->hasMany(ChiTietBienBanHuy::class, 'bienBanHuyId');
     }
 
     /**
@@ -104,7 +148,7 @@ class BienBanHuy extends Model
      */
     public function kiemTraDaKyDu(): bool
     {
-        $signedRolesCount = $this->chuKySos()->where('trangThai', 1)->distinct('vai_tro_ky')->count('vai_tro_ky');
+        $signedRolesCount = $this->chuKySos()->where('trangThai', 1)->distinct('vaiTroKy')->count('vaiTroKy');
         return $signedRolesCount >= 2;
     }
 }

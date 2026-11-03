@@ -16,19 +16,19 @@ class LichSuGiaSanPham extends Model
 
     protected $fillable = [
         'sanPhamId',
-        'gia_cu',
-        'gia_moi',
-        'phan_tram_giam',
-        'ly_do',
+        'giaCu',
+        'giaMoi',
+        'phanTramGiam',
+        'lyDo',
         'nguoidungId',
-        'ngay_ap_dung',
+        'ngayApDung',
     ];
 
     protected $casts = [
-        'gia_cu' => 'double',
-        'gia_moi' => 'double',
-        'phan_tram_giam' => 'double',
-        'ngay_ap_dung' => 'datetime',
+        'giaCu' => 'double',
+        'giaMoi' => 'double',
+        'phanTramGiam' => 'double',
+        'ngayApDung' => 'datetime',
     ];
 
     protected $appends = ['MASP', 'GIA_CU', 'GIA_MOI', 'PHAN_TRAM_GIAM', 'LY_DO', 'NGAY_AP_DUNG'];
@@ -40,22 +40,22 @@ class LichSuGiaSanPham extends Model
 
     public function getGIACUAttribute()
     {
-        return $this->attributes['gia_cu'] ?? null;
+        return $this->attributes['giaCu'] ?? null;
     }
 
     public function getGIAMOIAttribute()
     {
-        return $this->attributes['gia_moi'] ?? null;
+        return $this->attributes['giaMoi'] ?? null;
     }
 
     public function getPHANTRAMGIAMAttribute()
     {
-        return $this->attributes['phan_tram_giam'] ?? 0;
+        return $this->attributes['phanTramGiam'] ?? 0;
     }
 
     public function getLYDOAttribute()
     {
-        return $this->attributes['ly_do'] ?? null;
+        return $this->attributes['lyDo'] ?? null;
     }
 
     public function getNGAYAPDUNGAttribute()

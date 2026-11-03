@@ -262,8 +262,13 @@ class PosShiftController extends Controller
             $items = array_map(function ($item) {
                 $spId = $item['sanPhamId'] ?? $item['id'] ?? null;
                 if ($spId && !is_numeric($spId)) {
-                    $sp = SanPham::where('ma_san_pham', $spId)->first();
-                    $spId = $sp ? $sp->id : null;
+                    $cleanId = preg_replace('/^(SP|#)/i', '', (string)$spId);
+                    if (is_numeric($cleanId)) {
+                        $spId = (int)$cleanId;
+                    } else {
+                        $sp = SanPham::where('slug', $spId)->first();
+                        $spId = $sp ? $sp->id : null;
+                    }
                 }
                 return [
                     'sanPhamId' => (int) $spId,

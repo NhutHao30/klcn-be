@@ -44,7 +44,7 @@ class ImageProxyController extends Controller
             // Fallthrough to HTTP attempt
         }
 
-        // Fallback: thử lấy qua HTTP trực tiếp nếu là URL tuyệt đối
+        // Fallback 1: Thử lấy qua HTTP trực tiếp nếu là URL tuyệt đối
         if (str_starts_with($url, 'http://') || str_starts_with($url, 'https://')) {
             try {
                 $response = Http::timeout(5)->get($url);
@@ -54,11 +54,30 @@ class ImageProxyController extends Controller
                         ->header('Cache-Control', 'private, max-age=3600');
                 }
             } catch (\Exception $e) {
-                // Fallthrough to 404
+                // Fallthrough to local asset check
             }
         }
 
-        return response()->json(['error' => 'Image not found'], 404)
-            ->header('Cache-Control', 'public, max-age=60');
+        // Fallback 2: Thử tìm trong public/assets/IMG/ theo tên file
+        $basename = basename($path ?? $url);
+        $localPath = public_path('assets/IMG/' . $basename);
+        if (file_exists($localPath) && is_file($localPath)) {
+            $mime = mime_content_type($localPath) ?: 'image/webp';
+            return response()->file($localPath, [
+                'Content-Type' => $mime,
+                'Cache-Control' => 'public, max-age=3600'
+            ]);
+        }
+
+        // Fallback 3: Trả về ảnh bánh mặc định thay vì trả về JSON lỗi 404
+        $defaultImg = public_path('assets/IMG/productnew2.webp');
+        if (file_exists($defaultImg)) {
+            return response()->file($defaultImg, [
+                'Content-Type' => 'image/webp',
+                'Cache-Control' => 'public, max-age=3600'
+            ]);
+        }
+
+        return redirect('https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=500&auto=format&fit=crop&q=80');
     }
 }

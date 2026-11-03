@@ -25,6 +25,12 @@ class DiaChi extends Model
         'isDefault',
     ];
 
+    protected $casts = [
+        'isDefault' => 'integer',
+        'maTinh' => 'integer',
+        'maHuyen' => 'integer',
+    ];
+
     public function nguoidung()
     {
         return $this->belongsTo(NguoiDung::class, 'nguoidungId');

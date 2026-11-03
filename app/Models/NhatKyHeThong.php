@@ -9,7 +9,7 @@ class NhatKyHeThong extends Model
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'nhat_ky_he_thong';
+    protected $table = 'nhatKyHeThong';
 
     protected $fillable = [
         'USERNAME',

@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use App\Models\TaiKhoan;
 use App\Models\NhanVien;
+use App\Models\ChiTietDonHang;
 
 class AdminController extends Controller
 {
@@ -18,36 +19,39 @@ class AdminController extends Controller
         $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
         $query = TaiKhoan::with(['nguoidung.cuahang', 'vaitro']);
 
-        if ($user && $user->vaiTroId == 2) {
+        if ($user && (int)$user->vaiTroId === 2) {
             $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first();
             $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
 
             $query->where(function ($q) use ($macuahang, $user) {
-                $q->where('vaiTroId', 6)
-                  ->orWhere(function ($q2) use ($macuahang) {
-                      $q2->whereIn('vaiTroId', [3, 4])
-                         ->whereHas('nguoidung', function ($q3) use ($macuahang) {
-                             $q3->where('cuaHangId', $macuahang);
-                         });
-                  })
-                  ->orWhere('id', $user->id);
+                $q->where(function ($q2) use ($macuahang) {
+                    $q2->whereIn('vaiTroId', [3, 4, 5, 7])
+                       ->whereHas('nguoidung', function ($q3) use ($macuahang) {
+                           $q3->where('cuaHangId', $macuahang);
+                       });
+                })->orWhere('id', $user->id);
             });
         }
 
         $users = $query->get()->map(function ($u) {
             $nd = $u->nguoidung;
+            $isCustomer = (int)$u->vaiTroId === 6 || ($nd && (int)$nd->loaiNguoiDung === 0);
+            $isAdminSuper = strtolower($u->username) === 'admin';
+
             return [
                 'id' => $u->id,
                 'username' => $u->username,
                 'USERNAME' => $u->username,
                 'email' => $u->email,
                 'EMAIL' => $u->email,
+                'trangThai' => (int)$u->trangThai,
+                'TRANGTHAI' => (int)$u->trangThai === 1 ? 'Đang làm việc' : 'Nghỉ việc',
                 'vaiTroId' => $u->vaiTroId,
                 'MAROLE' => $u->MAROLE,
                 'vaitro' => $u->vaitro,
                 'nguoidung' => $nd,
-                'khachhang' => $nd,
-                'nhanvien' => $nd,
+                'khachhang' => $isCustomer ? $nd : null,
+                'nhanvien' => (!$isCustomer && !$isAdminSuper) ? $nd : null,
                 'createdAt' => $u->createdAt,
             ];
         });
@@ -58,179 +62,176 @@ class AdminController extends Controller
     public function createStaff(Request $request)
     {
         $request->validate([
-            'USERNAME' => 'required|string|unique:taikhoan,USERNAME',
-            'PASSWORD' => 'required|string|min:6',
-            'EMAIL'    => 'nullable|email|unique:taikhoan,EMAIL',
+            'USERNAME' => 'nullable|string',
+            'PASSWORD' => 'nullable|string',
             'HOTEN'    => 'required|string',
-            'CHUCVU'   => 'required|string',
-            'LUONG'    => 'nullable|numeric',
-            'CCCD_TRUOC' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
-            'CCCD_SAU' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
+            'CHUCVU'   => 'nullable|string',
         ]);
 
         DB::beginTransaction();
         try {
             $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-            $marole = $request->MAROLE ?? 2;
+            $cccd = trim($request->CCCD ?? '');
+            $username = trim($request->USERNAME ?? '') ?: ($cccd ?: 'NV' . sprintf('%06d', rand(1, 999999)));
+            $password = trim($request->PASSWORD ?? '') ?: ($cccd ?: $username);
+            $email = trim($request->EMAIL ?? '') ?: ($username . '@dolabakery.com');
+            $marole = (int)($request->MAROLE ?? 3); // 3 = Thu ngân/Bán hàng mặc định
 
-            // Quản lý chi nhánh chỉ được tạo Nhân viên (Role 2)
-            if ($userLogin && $userLogin->MAROLE == 1) {
-                $marole = 2;
+            if ($userLogin && (int)$userLogin->MAROLE === 2) {
+                // Store manager creating staff gets assigned to store 2 or staff default role
+                $marole = 3;
             }
 
-            if ($marole == 2) {
-                \App\Models\VaiTro::firstOrCreate(['MAROLE' => 2], ['MOTA' => 'Nhân viên (Bán hàng, Khách hàng)']);
-            }
-            if ($marole == 1) {
-                \App\Models\VaiTro::firstOrCreate(['MAROLE' => 1], ['MOTA' => 'Quản lý chi nhánh']);
+            if (TaiKhoan::where('username', $username)->exists()) {
+                return response()->json(['message' => "Tài khoản hoặc mã CCCD [{$username}] đã tồn tại trong hệ thống!"], 400);
             }
 
-            TaiKhoan::create([
-                'USERNAME' => $request->USERNAME,
-                'PASSWORD' => $request->PASSWORD,
-                'MAROLE'   => $marole,
-                'EMAIL'    => $request->EMAIL ?: $request->USERNAME . '@dolabakery.com',
+            $tk = TaiKhoan::create([
+                'username' => $username,
+                'password' => $password,
+                'email'    => $email,
+                'vaiTroId' => $marole,
+                'trangThai' => 1,
             ]);
 
-            // Xử lý upload ảnh CCCD lên MinIO
-            $cccdTruocPath = null;
-            $cccdSauPath = null;
-
-            if ($request->hasFile('CCCD_TRUOC')) {
-                $file = $request->file('CCCD_TRUOC');
-                $filename = 'cccd_truoc_' . $request->USERNAME . '_' . time() . '.' . $file->getClientOriginalExtension();
-                // Lưu lên s3 (MinIO) ở thư mục cccd/
-                \Illuminate\Support\Facades\Storage::disk('s3')->putFileAs('cccd', $file, $filename);
-                // Trả về URL để FontEnd hiển thị
-                $cccdTruocPath = \Illuminate\Support\Facades\Storage::disk('s3')->url('cccd/' . $filename);
-            }
-
-            if ($request->hasFile('CCCD_SAU')) {
-                $file = $request->file('CCCD_SAU');
-                $filename = 'cccd_sau_' . $request->USERNAME . '_' . time() . '.' . $file->getClientOriginalExtension();
-                \Illuminate\Support\Facades\Storage::disk('s3')->putFileAs('cccd', $file, $filename);
-                $cccdSauPath = \Illuminate\Support\Facades\Storage::disk('s3')->url('cccd/' . $filename);
-            }
-
-            $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
             $macuahang = $request->MACUAHANG ?? 1;
-            if ($userLogin && $userLogin->MAROLE == 1) {
-                $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-                if ($nhanVienLogin) {
-                    $macuahang = $nhanVienLogin->MACUAHANG;
+            if ($userLogin && (int)$userLogin->MAROLE === 2) {
+                $profileLogin = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+                if ($profileLogin && $profileLogin->cuaHangId) {
+                    $macuahang = $profileLogin->cuaHangId;
                 }
             }
 
-            NhanVien::create([
-                'USERNAME' => $request->USERNAME,
-                'HOTEN'    => $request->HOTEN,
-                'CHUCVU'   => $request->CHUCVU,
-                'LUONG'    => $request->LUONG ?: 0,
-                'SDT'      => $request->SDT ?? null,
-                'DIACHI'   => $request->DIACHI ?? null,
-                'GioiTinh' => $request->GioiTinh ?? null,
-                'NGAYSINH' => $request->NGAYSINH ?? null,
-                'CCCD'     => $request->CCCD ?? null,
-                'CCCD_TRUOC' => $cccdTruocPath,
-                'CCCD_SAU' => $cccdSauPath,
-                'TRANGTHAI' => $request->TRANGTHAI ?? 'Đang làm việc',
-                'CALAMVIEC' => $request->CALAMVIEC ?? 'Ca Sáng',
-                'MACUAHANG' => $macuahang,
+            \App\Models\NguoiDung::create([
+                'taiKhoanId' => $tk->id,
+                'cuaHangId'  => $macuahang,
+                'hoTen'      => $request->HOTEN,
+                'soDienThoai' => $request->SDT ?? null,
+                'gioiTinh'   => $request->GioiTinh === 'Nam' ? 1 : ($request->GioiTinh === 'Nữ' ? 0 : null),
+                'ngaySinh'   => $request->NGAYSINH ?: null,
+                'cccdNumber' => $cccd ?: null,
+                'loaiNguoiDung' => 1, // Staff
             ]);
 
             DB::commit();
-            return response()->json(['message' => 'Tạo tài khoản nhân viên thành công'], 201);
+            return response()->json(['message' => 'Tạo tài khoản và thông tin nhân viên thành công!'], 201);
         } catch (\Exception $e) {
             DB::rollBack();
+            \Illuminate\Support\Facades\Log::error("createStaff error: " . $e->getMessage());
             return response()->json(['message' => 'Tạo nhân viên thất bại: ' . $e->getMessage()], 500);
         }
     }
 
-
-
     public function importStaff(Request $request)
     {
         $request->validate([
-            'file' => 'required|file|mimes:csv,txt'
+            'file' => 'required|file'
         ]);
 
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
         $macuahangDefault = 1;
-        if ($userLogin && $userLogin->MAROLE == 1) {
-            $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-            if ($nhanVienLogin) {
-                $macuahangDefault = $nhanVienLogin->MACUAHANG;
+        if ($userLogin && (int)$userLogin->MAROLE === 2) {
+            $profileLogin = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            if ($profileLogin && $profileLogin->cuaHangId) {
+                $macuahangDefault = $profileLogin->cuaHangId;
             }
         }
 
         $file = $request->file('file');
-        $csvData = file_get_contents($file);
-        $rows = array_map("str_getcsv", explode("\n", $csvData));
-        $header = array_shift($rows);
+        $rawContent = file_get_contents($file->getRealPath());
+        // Remove BOM and carriage returns
+        $rawContent = trim($rawContent, "\xEF\xBB\xBF");
+        $rawContent = str_replace("\r", "", $rawContent);
 
-        // Loại bỏ ký tự BOM nếu có
-        $header[0] = trim($header[0], "\xEF\xBB\xBF");
+        $lines = array_filter(explode("\n", $rawContent), 'strlen');
+        $rows = array_map('str_getcsv', $lines);
+        $header = array_shift($rows);
 
         $successCount = 0;
         $errorCount = 0;
 
         foreach ($rows as $row) {
-            if (empty(array_filter($row))) {
-                continue;
-            } // Bỏ qua dòng trống
-
-            // Dữ liệu CSV mong đợi: Username, HoTen, ChucVu, Luong, SDT
-            $username = $row[0] ?? null;
-            $hoTen = $row[1] ?? null;
-            $chucVu = $row[2] ?? 'Nhân viên';
-            $luong = $row[3] ?? 0;
-            $sdt = $row[4] ?? null;
-
-            if (!$username || !$hoTen) {
-                $errorCount++;
+            if (empty($row) || !isset($row[0])) {
                 continue;
             }
 
-            // Kiểm tra username trùng
-            if (TaiKhoan::where('USERNAME', $username)->exists()) {
-                $errorCount++;
-                continue;
+            $username = trim($row[0] ?? '');
+            $hoTen = trim($row[1] ?? '');
+            $chucVu = trim($row[2] ?? 'Nhân viên bán hàng');
+            $luong = floatval($row[3] ?? 0);
+            $sdt = trim($row[4] ?? '');
+            $email = trim($row[5] ?? '');
+            $macuahang = intval($row[6] ?? $macuahangDefault);
+
+            if (!$username || !$hoTen || strtolower($username) === 'cccd' || strtolower($username) === 'username') {
+                continue; // Skip header or invalid empty row
+            }
+
+            // Map ChucVu string to MAROLE ID
+            $roleId = 3; // Sales default
+            $lowerChucVu = mb_strtolower($chucVu);
+            if (str_contains($lowerChucVu, 'quản lý') || str_contains($lowerChucVu, 'manager')) {
+                $roleId = 2;
+            } else if (str_contains($lowerChucVu, 'kho')) {
+                $roleId = 4;
+            } else if (str_contains($lowerChucVu, 'chăm sóc') || str_contains($lowerChucVu, 'cskh')) {
+                $roleId = 5;
+            } else if (str_contains($lowerChucVu, 'kế toán')) {
+                $roleId = 7;
+            } else if (str_contains($lowerChucVu, 'giám đốc')) {
+                $roleId = 8;
+            } else if (str_contains($lowerChucVu, 'quản trị') || str_contains($lowerChucVu, 'admin')) {
+                $roleId = 1;
             }
 
             DB::beginTransaction();
             try {
-                TaiKhoan::create([
-                    'USERNAME' => $username,
-                    'PASSWORD' => $username, // Mặc định pass = username
-                    'MAROLE'   => 1,
-                    'EMAIL'    => $username . '@dolabakery.com',
-                ]);
+                $tk = TaiKhoan::where('username', $username)->first();
+                if (!$tk) {
+                    $tk = TaiKhoan::create([
+                        'username' => $username,
+                        'password' => $username, // Default pass = CCCD/username
+                        'email'    => $email ?: ($username . '@dolabakery.com'),
+                        'vaiTroId' => $roleId,
+                        'trangThai' => 1,
+                    ]);
+                } else {
+                    // Update role and status if exists
+                    $tk->update([
+                        'vaiTroId' => $roleId,
+                        'trangThai' => 1,
+                        'email' => $email ?: $tk->email,
+                    ]);
+                }
 
-                NhanVien::create([
-                    'USERNAME' => $username,
-                    'HOTEN'    => $hoTen,
-                    'CHUCVU'   => $chucVu,
-                    'LUONG'    => $luong,
-                    'SDT'      => $sdt,
-                    'MACUAHANG' => $macuahangDefault,
-                ]);
+                \App\Models\NguoiDung::updateOrCreate(
+                    ['taiKhoanId' => $tk->id],
+                    [
+                        'cuaHangId'  => $macuahang ?: 1,
+                        'hoTen'      => $hoTen,
+                        'soDienThoai' => $sdt ?: null,
+                        'cccdNumber' => preg_match('/^\d{9,12}$/', $username) ? $username : null,
+                        'loaiNguoiDung' => 1,
+                    ]
+                );
 
                 DB::commit();
                 $successCount++;
             } catch (\Exception $e) {
                 DB::rollBack();
+                \Illuminate\Support\Facades\Log::error("Import Staff Row Error [{$username}]: " . $e->getMessage());
                 $errorCount++;
             }
         }
 
         return response()->json([
-            'message' => "Import hoàn tất. Thành công: $successCount, Lỗi/Trùng: $errorCount"
+            'message' => "Import hoàn tất. Thành công: $successCount, Lỗi: $errorCount"
         ]);
     }
 
     public function updateStaff(Request $request, $username)
     {
-        $nhanVien = \App\Models\NhanVien::where('USERNAME', $username)->first();
+        $nhanVien = \App\Models\NhanVien::findByUsername($username);
         if (!$nhanVien) {
             return response()->json(['error' => 'Không tìm thấy nhân viên'], 404);
         }
@@ -238,93 +239,143 @@ class AdminController extends Controller
         $oldTrangThai = $nhanVien->TRANGTHAI;
 
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $macuahangToUpdate = $request->MACUAHANG ?? $nhanVien->MACUAHANG;
+        $macuahangToUpdate = $request->input('MACUAHANG', $request->input('macuahang', $request->input('cuaHangId', $nhanVien->cuaHangId)));
 
-        // Nếu là Quản lý (Role 1), không cho phép đổi chi nhánh của nhân viên
-        if ($userLogin && $userLogin->MAROLE == 1) {
-            $macuahangToUpdate = $nhanVien->MACUAHANG;
-
-            // Đồng thời chặn không cho Quản lý sửa nhân viên của chi nhánh khác
-            $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-            if ($nhanVienLogin && $nhanVien->MACUAHANG != $nhanVienLogin->MACUAHANG) {
+        // Nếu là Quản lý chi nhánh (Role 2), không cho phép sửa/đổi chi nhánh của nhân viên ở chi nhánh khác
+        if ($userLogin && ((int)$userLogin->MAROLE === 2 || (int)$userLogin->vaiTroId === 2)) {
+            $profileLogin = $userLogin->nguoidung;
+            if ($profileLogin && $nhanVien->cuaHangId != $profileLogin->cuaHangId) {
                 return response()->json(['message' => 'Bạn không có quyền sửa nhân viên của chi nhánh khác'], 403);
             }
+            $macuahangToUpdate = $nhanVien->cuaHangId;
+        }
+
+        $hoTen = $request->input('HOTEN', $request->input('hoTen', $nhanVien->hoTen));
+        $sdt = $request->input('SDT', $request->input('soDienThoai', $request->input('sdt', $nhanVien->soDienThoai)));
+        $ngaySinh = $request->input('NGAYSINH', $request->input('ngaySinh', $nhanVien->ngaySinh));
+        $cccd = $request->input('CCCD', $request->input('cccdNumber', $request->input('cccd', $nhanVien->cccdNumber)));
+        $gioiTinhRaw = $request->input('GioiTinh', $request->input('gioiTinh', $nhanVien->gioiTinh));
+        
+        $gioiTinh = 0;
+        if ($gioiTinhRaw === 'Nam' || $gioiTinhRaw === 1 || $gioiTinhRaw === '1') {
+            $gioiTinh = 1;
         }
 
         $nhanVien->update([
-            'HOTEN'    => $request->HOTEN ?? $nhanVien->HOTEN,
-            'CHUCVU'   => $request->CHUCVU ?? $nhanVien->CHUCVU,
-            'LUONG'    => $request->LUONG ?? $nhanVien->LUONG,
-            'SDT'      => $request->SDT ?? $nhanVien->SDT,
-            'DIACHI'   => $request->DIACHI ?? $nhanVien->DIACHI,
-            'GioiTinh' => $request->GioiTinh ?? $nhanVien->GioiTinh,
-            'NGAYSINH' => $request->NGAYSINH ?? $nhanVien->NGAYSINH,
-            'CCCD'     => $request->CCCD ?? $nhanVien->CCCD,
-            'TRANGTHAI' => $request->TRANGTHAI ?? $nhanVien->TRANGTHAI,
-            'CALAMVIEC' => $request->CALAMVIEC ?? $nhanVien->CALAMVIEC,
-            'MACUAHANG' => $macuahangToUpdate,
+            'hoTen'       => $hoTen,
+            'soDienThoai' => $sdt,
+            'ngaySinh'    => $ngaySinh,
+            'cccdNumber'  => $cccd,
+            'gioiTinh'    => $gioiTinh,
+            'cuaHangId'   => $macuahangToUpdate ?: 1,
         ]);
 
-        $maroleToUpdate = $request->MAROLE;
-        if ($userLogin && $userLogin->MAROLE == 1) {
-            $maroleToUpdate = null; // Quản lý chi nhánh không được phép đổi chức vụ hệ thống (Role)
+        $maroleToUpdate = $request->input('MAROLE', $request->input('maRole', $request->input('vaiTroId')));
+        if ($userLogin && ((int)$userLogin->MAROLE === 2 || (int)$userLogin->vaiTroId === 2)) {
+            $maroleToUpdate = null; // Quản lý chi nhánh không được phép đổi chức vụ hệ thống
         }
 
-        if ($maroleToUpdate !== null) {
-            if ($maroleToUpdate == 2) {
-                \App\Models\VaiTro::firstOrCreate(['MAROLE' => 2], ['MOTA' => 'Nhân viên (Bán hàng, Khách hàng)']);
-            }
-            if ($maroleToUpdate == 1) {
-                \App\Models\VaiTro::firstOrCreate(['MAROLE' => 1], ['MOTA' => 'Quản lý chi nhánh']);
-            }
+        $tk = $nhanVien->taikhoan;
+        if (!$tk) {
+            $tk = \App\Models\TaiKhoan::where('username', $username)->first();
         }
 
-        if ($request->has('EMAIL') || $maroleToUpdate !== null) {
+        if ($tk) {
             $tkUpdate = [];
-            if ($request->has('EMAIL')) {
-                $tkUpdate['EMAIL'] = $request->EMAIL;
+
+            $email = $request->input('EMAIL', $request->input('email'));
+            if ($email) {
+                $tkUpdate['email'] = $email;
             }
+
             if ($maroleToUpdate !== null) {
-                $tkUpdate['MAROLE'] = $maroleToUpdate;
+                $tkUpdate['vaiTroId'] = (int)$maroleToUpdate;
             }
-            \App\Models\TaiKhoan::where('USERNAME', $username)->update($tkUpdate);
+
+            $trangThaiInput = $request->input('TRANGTHAI', $request->input('trangThai'));
+            if ($trangThaiInput !== null) {
+                $tkUpdate['trangThai'] = ($trangThaiInput === 'Đang làm việc' || (int)$trangThaiInput === 1) ? 1 : 0;
+            }
+
+            if (!empty($tkUpdate)) {
+                $tk->update($tkUpdate);
+            }
+
+            // Nếu nhân viên được khôi phục từ trạng thái "Nghỉ việc", đặt lại mật khẩu mặc định là Username
+            if ($oldTrangThai === 'Nghỉ việc' && ($trangThaiInput === 'Đang làm việc' || (int)$trangThaiInput === 1)) {
+                $tk->password = \Illuminate\Support\Facades\Hash::make($tk->username);
+                $tk->save();
+            }
         }
 
-        // Nếu nhân viên được khôi phục từ trạng thái "Nghỉ việc", đặt lại mật khẩu mặc định là Username
-        if ($oldTrangThai === 'Nghỉ việc' && $nhanVien->TRANGTHAI !== 'Nghỉ việc') {
-            $tk = \App\Models\TaiKhoan::where('USERNAME', $username)->first();
-            if ($tk) {
-                $tk->PASSWORD = $username;
-                $tk->save(); // Dùng save() để kích hoạt tính năng tự động hash mật khẩu của Eloquent
-            }
-        }
-
-        return response()->json(['message' => 'Cập nhật thành công']);
+        return response()->json(['message' => 'Cập nhật nhân viên thành công']);
     }
 
     public function deleteStaff($username)
     {
-        $nhanVien = \App\Models\NhanVien::where('USERNAME', $username)->first();
-        if ($nhanVien) {
-            $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
 
-            if ($userLogin && $userLogin->USERNAME === $username) {
-                return response()->json(['message' => 'Bạn không thể tự vô hiệu hóa tài khoản của chính mình'], 403);
-            }
-
-            if ($userLogin && $userLogin->MAROLE == 1) {
-                $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-                if ($nhanVienLogin && $nhanVien->MACUAHANG != $nhanVienLogin->MACUAHANG) {
-                    return response()->json(['message' => 'Bạn không có quyền thay đổi trạng thái nhân viên của chi nhánh khác'], 403);
-                }
-            }
-            $nhanVien->update(['TRANGTHAI' => 'Nghỉ việc']);
+        if ($userLogin && $userLogin->username === $username) {
+            return response()->json(['message' => 'Bạn không thể tự vô hiệu hóa tài khoản của chính mình'], 403);
         }
 
-        // Ghi chú: Không cần thay đổi mật khẩu vì logic đăng nhập trong AuthController
-        // đã tự động từ chối các tài khoản có TRANGTHAI == 'Nghỉ việc'.
+        $nhanVien = \App\Models\NhanVien::findByUsername($username);
+        $tk = $nhanVien?->taikhoan;
 
-        return response()->json(['message' => 'Đã vô hiệu hóa tài khoản nhân viên']);
+        if (!$tk) {
+            $tk = \App\Models\TaiKhoan::where('username', $username)->orWhere('id', $username)->first();
+        }
+
+        if ($tk) {
+            $tk->update(['trangThai' => 0]);
+            return response()->json(['message' => 'Đã vô hiệu hóa tài khoản nhân viên']);
+        }
+
+        return response()->json(['error' => 'Không tìm thấy tài khoản nhân viên'], 404);
+    }
+
+    public function toggleUserStatus(Request $request, $id)
+    {
+        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+        if (!$userLogin || ($userLogin->MAROLE !== 0 && (int)$userLogin->vaiTroId !== 1)) {
+            return response()->json(['error' => 'Chỉ Admin mới có quyền khóa/mở khóa tài khoản'], 403);
+        }
+
+        $tk = \App\Models\TaiKhoan::find($id);
+        if (!$tk) return response()->json(['error' => 'Tài khoản không tồn tại'], 404);
+
+        if ($tk->id === $userLogin->id) {
+            return response()->json(['error' => 'Không thể tự khóa tài khoản của chính mình'], 400);
+        }
+
+        $newStatus = $tk->trangThai == 1 ? 0 : 1;
+        $tk->update(['trangThai' => $newStatus]);
+
+        return response()->json([
+            'message' => ($newStatus == 1 ? 'Đã kích hoạt' : 'Đã khóa') . ' tài khoản thành công',
+            'data' => $tk
+        ]);
+    }
+
+    public function updateUserRole(Request $request, $id)
+    {
+        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+        if (!$userLogin || ($userLogin->MAROLE !== 0 && (int)$userLogin->vaiTroId !== 1)) {
+            return response()->json(['error' => 'Chỉ Admin mới có quyền thay đổi vai trò (Role)'], 403);
+        }
+
+        $tk = \App\Models\TaiKhoan::find($id);
+        if (!$tk) return response()->json(['error' => 'Tài khoản không tồn tại'], 404);
+
+        $roleId = $request->input('vaiTroId') ?? $request->input('role_id') ?? $request->input('MAROLE');
+        if ($roleId !== null) {
+            $tk->update(['vaiTroId' => (int)$roleId]);
+        }
+
+        return response()->json([
+            'message' => 'Cập nhật vai trò tài khoản thành công',
+            'data' => $tk->load('vaitro')
+        ]);
     }
     /**
      * Customer ranking logic based on accumulated points.
@@ -525,7 +576,13 @@ class AdminController extends Controller
             else $revenueByTime['20:00 - 24:00'] += $total;
         }
 
+        $totalOrders = (int) $makeQuery()->count();
+        $totalRevenue = (float) $makeQuery()->sum('tongThanhToan');
+
         return response()->json([
+            'tong_doanh_thu' => $revenueThisMonth > 0 ? $revenueThisMonth : $totalRevenue,
+            'tong_don_hang' => $totalOrders,
+            'doanh_thu_hom_nay' => $revenueToday,
             'summary' => [
                 'today' => $revenueToday,
                 'this_month' => $revenueThisMonth,
@@ -602,7 +659,14 @@ class AdminController extends Controller
             $query = \App\Models\ChamCong::whereMonth('NGAYCHAMCONG', $thang)
                 ->whereYear('NGAYCHAMCONG', $nam);
 
-            return response()->json($query->get());
+            $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+            if ($request->query('my_only') || ($userLogin && !in_array($userLogin->MAROLE, [0, 1]) && !in_array($userLogin->vaiTroId, [1, 2, 8]))) {
+                $query->where('USERNAME', $userLogin->username ?? $userLogin->USERNAME);
+            } elseif ($request->has('username')) {
+                $query->where('USERNAME', $request->query('username'));
+            }
+
+            return response()->json($query->orderBy('NGAYCHAMCONG', 'desc')->get());
         } catch (\Throwable $e) {
             return response()->json([]);
         }
@@ -623,29 +687,40 @@ class AdminController extends Controller
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
 
         if ($userLogin) {
-            $targetTaiKhoan = \App\Models\TaiKhoan::with('nhanvien')->where('USERNAME', $targetUsername)->first();
-            if (!$targetTaiKhoan) {
-                return response()->json(['error' => 'Không tìm thấy nhân viên'], 404);
-            }
+            $isSelf = (
+                strcasecmp($targetUsername, $userLogin->username ?? '') === 0 ||
+                strcasecmp($targetUsername, $userLogin->USERNAME ?? '') === 0
+            );
 
-            if ($userLogin->MAROLE == 0) {
-                // Quản lý tổng (Role 0) được chấm công cho Quản lý chi nhánh (Role 1), hoặc Nhân viên trung tâm (Role 2, MACUAHANG=1)
-                $isBranchManager = ($targetTaiKhoan->MAROLE == 1);
-                $isCentralStaff = ($targetTaiKhoan->MAROLE == 2 && $targetTaiKhoan->nhanvien && $targetTaiKhoan->nhanvien->MACUAHANG == 1);
+            // Bất kỳ nhân sự nào cũng có quyền tự chấm công cho chính bản thân mình
+            if (!$isSelf) {
+                $targetTaiKhoan = \App\Models\TaiKhoan::with('nhanvien')
+                    ->where('username', $targetUsername)
+                    ->orWhere('USERNAME', $targetUsername)
+                    ->first();
 
-                if (!$isBranchManager && !$isCentralStaff) {
-                    return response()->json(['error' => 'Quản lý tổng chỉ chấm công cho Quản lý chi nhánh và Nhân viên trung tâm. Hãy để Quản lý chi nhánh tự chấm công cho nhân viên của họ.'], 403);
+                if (!$targetTaiKhoan) {
+                    return response()->json(['error' => 'Không tìm thấy nhân viên'], 404);
                 }
-            } elseif ($userLogin->MAROLE == 1) {
-                $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-                $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
 
-                // Được phép chấm công nếu là Nhân viên (Role 2) cùng chi nhánh, HOẶC là chính bản thân mình
-                $isSelf = ($targetUsername === $userLogin->USERNAME);
-                $isOwnStaff = ($targetTaiKhoan->MAROLE == 2 && $targetTaiKhoan->nhanvien && $targetTaiKhoan->nhanvien->MACUAHANG == $macuahang);
+                if ($userLogin->MAROLE == 0 || $userLogin->vaiTroId == 1 || $userLogin->vaiTroId == 8) {
+                    $isBranchManager = ($targetTaiKhoan->MAROLE == 1 || $targetTaiKhoan->vaiTroId == 2);
+                    $isCentralStaff = ($targetTaiKhoan->MAROLE == 2 && $targetTaiKhoan->nhanvien && $targetTaiKhoan->nhanvien->MACUAHANG == 1);
 
-                if (!$isSelf && !$isOwnStaff) {
-                    return response()->json(['error' => 'Bạn chỉ có quyền chấm công cho bản thân hoặc nhân viên thuộc chi nhánh của mình'], 403);
+                    if (!$isBranchManager && !$isCentralStaff) {
+                        return response()->json(['error' => 'Quản lý tổng chỉ chấm công cho Quản lý chi nhánh và Nhân viên trung tâm. Hãy để Quản lý chi nhánh tự chấm công cho nhân viên của họ.'], 403);
+                    }
+                } elseif ($userLogin->MAROLE == 1 || $userLogin->vaiTroId == 2) {
+                    $nhanVienLogin = \App\Models\NhanVien::findByUsername($userLogin->username);
+                    $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
+
+                    $isOwnStaff = ($targetTaiKhoan->nhanvien && $targetTaiKhoan->nhanvien->MACUAHANG == $macuahang);
+
+                    if (!$isOwnStaff) {
+                        return response()->json(['error' => 'Bạn chỉ có quyền chấm công cho bản thân hoặc nhân viên thuộc chi nhánh của mình'], 403);
+                    }
+                } else {
+                    return response()->json(['error' => 'Bạn chỉ có quyền chấm công cho chính bản thân mình.'], 403);
                 }
             }
         }
@@ -958,12 +1033,99 @@ class AdminController extends Controller
     {
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
         $macuahang = null;
-        if ($userLogin && $userLogin->MAROLE == 1) {
-            $nhanVienLogin = \App\Models\NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
+        if ($userLogin && ((int)$userLogin->MAROLE === 2 || (int)$userLogin->vaiTroId === 2)) {
+            $nhanVienLogin = \App\Models\NhanVien::findByUsername($userLogin->username);
             $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
         }
 
         $loHangService = app(\App\Services\LoHangService::class);
         return response()->json($loHangService->getExpiryAlerts($macuahang));
+    }
+
+    public function thongKeDonHuy(Request $request)
+    {
+        $tuNgay = $request->input('tuNgay', now()->subDays(30)->format('Y-m-d'));
+        $denNgay = $request->input('denNgay', now()->format('Y-m-d'));
+        $cuaHangId = $request->input('cuaHangId');
+        $lyDoFilter = $request->input('lyDoHuy');
+
+        $startDate = $tuNgay . ' 00:00:00';
+        $endDate = $denNgay . ' 23:59:59';
+
+        $baseOnline = \App\Models\DonHang::where('loaiDonHang', 0)
+            ->whereBetween('createdAt', [$startDate, $endDate]);
+        if ($cuaHangId) $baseOnline->where('cuaHangId', $cuaHangId);
+
+        $baseHuy = \App\Models\DonHang::with(['chitiet.sanpham', 'nguoidung', 'cuahang'])
+            ->where('trangThaiDonHang', 0)
+            ->whereBetween('createdAt', [$startDate, $endDate]);
+        if ($cuaHangId) $baseHuy->where('cuaHangId', $cuaHangId);
+        if ($lyDoFilter && $lyDoFilter !== 'all') $baseHuy->where('lyDoHuy', $lyDoFilter);
+
+        $tongDonOnline = (clone $baseOnline)->count();
+        $donHuyAll = (clone $baseHuy)->get();
+        $tongDonHuy = $donHuyAll->count();
+        $tyLeHuy = $tongDonOnline > 0 ? round($tongDonHuy / $tongDonOnline * 100, 1) : 0;
+        $tongGiaTriHuy = $donHuyAll->sum('tongThanhToan');
+
+        // Hủy theo ngày
+        $huyTheoNgay = (clone $baseHuy)->selectRaw("DATE(createdAt) as ngay, COUNT(*) as soDon")
+            ->groupBy('ngay')->orderBy('ngay')->get();
+
+        // Lý do hủy
+        $lyDoHuy = (clone $baseHuy)->selectRaw("COALESCE(NULLIF(lyDoHuy,''), 'Không xác định') as lyDo, COUNT(*) as soDon")
+            ->groupByRaw("COALESCE(NULLIF(lyDoHuy,''), 'Không xác định')")
+            ->orderByDesc('soDon')->limit(10)->get();
+
+        // Sản phẩm trong đơn hủy
+        $donHuyIds = $donHuyAll->pluck('id');
+        $sanPhamHuy = \App\Models\ChiTietDonHang::with('sanpham')
+            ->whereIn('donHangId', $donHuyIds)
+            ->get()
+            ->groupBy('sanPhamId')
+            ->map(function($items) {
+                $sp = $items->first()->sanpham;
+                return [
+                    'tenSP' => $sp ? ($sp->tenSanPham ?? 'Sản phẩm') : 'Sản phẩm',
+                    'soDon' => $items->pluck('donHangId')->unique()->count(),
+                    'soLuong' => $items->sum('soLuong'),
+                ];
+            })->sortByDesc('soDon')->take(10)->values();
+
+        // Nguồn yêu cầu hủy
+        $nguonYeuCauHuy = $donHuyAll->groupBy(function($d) {
+            return ($d->lyDoHuy && trim($d->lyDoHuy)) ? 'Khách hàng' : 'Không xác định';
+        })->map(function($items, $nguon) {
+            return ['nguon' => $nguon, 'soDon' => $items->count()];
+        })->values();
+
+        // Chi tiết đơn hủy
+        $chiTiet = $donHuyAll->map(function($d) {
+            return [
+                'maDonHang' => $d->maDonHang,
+                'tenKH' => $d->nguoidung ? $d->nguoidung->hoTen : 'Khách hàng',
+                'taiKhoanKH' => $d->nguoidung && $d->nguoidung->taikhoan ? $d->nguoidung->taikhoan->username : '',
+                'cuaHang' => $d->cuahang ? ($d->cuahang->tenCuaHang ?? $d->cuahang->ten_cuahang ?? 'Dola Bakery') : 'Dola Bakery',
+                'tongTien' => (float)$d->tongThanhToan,
+                'lyDoHuy' => $d->lyDoHuy ?? '',
+                'ghiChuHuy' => $d->ghiChuHuy ?? '',
+                'nguon' => ($d->lyDoHuy && trim($d->lyDoHuy)) ? 'Khách hàng' : 'Không xác định',
+                'ngayDat' => $d->createdAt ? $d->createdAt->timezone('Asia/Ho_Chi_Minh')->format('H:i:s d/m/Y') : '',
+                'ngayHuy' => $d->updatedAt ? $d->updatedAt->timezone('Asia/Ho_Chi_Minh')->format('H:i:s d/m/Y') : '',
+            ];
+        });
+
+        return response()->json([
+            'tongDonOnline' => $tongDonOnline,
+            'tongDonHuy' => $tongDonHuy,
+            'tyLeHuy' => $tyLeHuy,
+            'tongGiaTriHuy' => $tongGiaTriHuy,
+            'huyTheoNgay' => $huyTheoNgay,
+            'lyDoHuy' => $lyDoHuy,
+            'sanPhamTrongDonHuy' => $sanPhamHuy,
+            'nguonYeuCauHuy' => $nguonYeuCauHuy,
+            'chiTietDonHuy' => $chiTiet,
+            'capNhat' => now()->timezone('Asia/Ho_Chi_Minh')->format('H:i:s d/m/Y'),
+        ]);
     }
 }

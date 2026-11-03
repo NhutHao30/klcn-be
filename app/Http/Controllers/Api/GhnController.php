@@ -46,6 +46,81 @@ class GhnController extends Controller
         return $response->json();
     }
 
+    /**
+     * Lấy danh sách toàn bộ Phường/Xã trực thuộc Tỉnh/Thành
+     * Phục vụ giao diện địa giới hành chính mới (gộp tỉnh thành, bỏ cấp quận/huyện trên UI)
+     */
+    public function getWardsByProvince(Request $request)
+    {
+        $provinceId = $request->input('province_id');
+        if (!$provinceId) {
+            return response()->json(['code' => 400, 'message' => 'province_id là bắt buộc', 'data' => []]);
+        }
+
+        $cacheKey = "ghn_province_wards_v2_{$provinceId}";
+        $wards = \Illuminate\Support\Facades\Cache::remember($cacheKey, 86400, function () use ($provinceId) {
+            try {
+                $districtsRes = Http::withoutVerifying()->withHeaders([
+                    'Token' => env('GHN_API_TOKEN'),
+                ])->get($this->apiUrl . '/master-data/district', [
+                    'province_id' => $provinceId
+                ]);
+
+                $districts = $districtsRes->json('data') ?? [];
+                if (empty($districts)) {
+                    return [];
+                }
+
+                $responses = Http::pool(function (\Illuminate\Http\Client\Pool $pool) use ($districts) {
+                    foreach ($districts as $d) {
+                        $dId = $d['DistrictID'];
+                        $pool->as($dId)->withoutVerifying()->withHeaders([
+                            'Token' => env('GHN_API_TOKEN'),
+                        ])->get($this->apiUrl . '/master-data/ward', [
+                            'district_id' => $dId
+                        ]);
+                    }
+                });
+
+                $allWards = [];
+                $districtMap = [];
+                foreach ($districts as $d) {
+                    $districtMap[$d['DistrictID']] = $d['DistrictName'] ?? '';
+                }
+
+                foreach ($responses as $districtId => $response) {
+                    if ($response && method_exists($response, 'successful') && $response->successful()) {
+                        $wardList = $response->json('data') ?? [];
+                        foreach ($wardList as $w) {
+                            $allWards[] = [
+                                'WardCode' => (string)($w['WardCode'] ?? ''),
+                                'WardName' => $w['WardName'] ?? '',
+                                'DistrictID' => (int)$districtId,
+                                'DistrictName' => $districtMap[$districtId] ?? '',
+                            ];
+                        }
+                    }
+                }
+
+                // Sort alphabetically by WardName
+                usort($allWards, function ($a, $b) {
+                    return strcmp($a['WardName'], $b['WardName']);
+                });
+
+                return $allWards;
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error("Lỗi getWardsByProvince: " . $e->getMessage());
+                return [];
+            }
+        });
+
+        return response()->json([
+            'code' => 200,
+            'message' => 'Success',
+            'data' => $wards
+        ]);
+    }
+
     public function calculateFee(Request $request)
     {
         $request->validate([
@@ -241,9 +316,22 @@ class GhnController extends Controller
             ->first();
 
         if ($order) {
-            $oldStatus = $order->trangThaiDonHang;
+            $oldStatus = (int) $order->trangThaiDonHang;
             $newStatus = $oldStatus;
             $description = "Cập nhật từ GHN Webhook: Status [{$status}]";
+
+            // Nếu đơn đã hoàn thành hoặc đã hủy, không nhận cập nhật lùi lại từ webhook
+            if (in_array($oldStatus, [4, 5, 0, 6])) {
+                $order->ghnStatusCode = $status;
+                $order->save();
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Đơn hàng đã hoàn tất/hủy trong hệ thống, bỏ qua đồng bộ lùi trạng thái.',
+                    'order_id' => $order->id,
+                    'status' => $status,
+                    'trangThaiDonHang' => $oldStatus
+                ]);
+            }
 
             // Ánh xạ trạng thái GHN sang trạng thái hệ thống
             switch ($status) {
@@ -258,13 +346,19 @@ class GhnController extends Controller
                 case 'transporting':
                 case 'picking':
                 case 'picked':
-                    $newStatus = 3; // DANG_GIAO (Tự động cập nhật thành đang giao khi Shipper đã lấy hàng)
-                    $description = "GHN: Shipper đã lấy hàng / Đang vận chuyển";
+                    // Chỉ cập nhật nếu đơn chưa giao hoặc chưa hoàn thành
+                    if (!in_array($oldStatus, [3, 4, 5, 0, 6])) {
+                        $newStatus = 3; // DANG_GIAO
+                        $description = "GHN: Shipper đã lấy hàng / Đang vận chuyển";
+                    }
                     break;
 
                 case 'ready_to_pick':
-                    $newStatus = 7; // CHO_LAY_HANG
-                    $description = "GHN: Đang chờ shipper qua lấy hàng";
+                    // Không rollback nếu đơn đã chuyển sang Đang giao (3) hoặc đã xong
+                    if (!in_array($oldStatus, [7, 3, 4, 5, 0, 6])) {
+                        $newStatus = 7; // CHO_LAY_HANG
+                        $description = "GHN: Đang chờ shipper qua lấy hàng";
+                    }
                     break;
 
                 case 'cancel':
@@ -348,40 +442,48 @@ class GhnController extends Controller
 
             if ($order && $ghnStatus) {
                 $order->ghnStatusCode = $ghnStatus;
-                if ($ghnStatus === 'delivered' && $order->trangThaiDonHang != 4) {
-                    $order->trangThaiDonHang = 4; // HOAN_THANH
-                    $order->trangThaiThanhToan = 1; // DA_THANH_TOAN
+
+                // Nếu đơn hàng đã hoàn thành (4, 5) hoặc đã hủy (0, 6), tuyệt đối không thay đổi trạng thái đơn
+                if (in_array((int)$order->trangThaiDonHang, [4, 5, 0, 6])) {
                     $order->save();
-                } elseif (in_array($ghnStatus, ['picking', 'picked', 'storing', 'transporting', 'delivering']) && $order->trangThaiDonHang != 3) {
-                    $order->trangThaiDonHang = 3; // DANG_GIAO
-                    $order->save();
-                } elseif ($ghnStatus === 'ready_to_pick' && $order->trangThaiDonHang != 7) {
-                    $order->trangThaiDonHang = 7; // CHO_LAY_HANG
-                    $order->save();
-                } elseif (in_array(strtolower($ghnStatus), ['cancel', 'cancelled', 'canceled', 'return', 'returned', 'returning', 'returned_to_sender', 'damage', 'lost'])) {
-                    if (!in_array($order->trangThaiDonHang, [0, 6])) {
-                        $oldStatus = $order->trangThaiDonHang;
-                        $order->trangThaiDonHang = 0; // DA_HUY
-                        $order->ghnStatusCode = $ghnStatus;
+                } else {
+                    if ($ghnStatus === 'delivered' && !in_array((int)$order->trangThaiDonHang, [4, 5])) {
+                        $order->trangThaiDonHang = 4; // HOAN_THANH
+                        $order->trangThaiThanhToan = 1; // DA_THANH_TOAN
                         $order->save();
+                    } elseif (in_array($ghnStatus, ['picking', 'picked', 'storing', 'transporting', 'delivering']) && !in_array((int)$order->trangThaiDonHang, [3, 4, 5, 0, 6])) {
+                        $order->trangThaiDonHang = 3; // DANG_GIAO
+                        $order->save();
+                    } elseif ($ghnStatus === 'ready_to_pick' && !in_array((int)$order->trangThaiDonHang, [7, 3, 4, 5, 0, 6])) {
+                        $order->trangThaiDonHang = 7; // CHO_LAY_HANG
+                        $order->save();
+                    } elseif (in_array(strtolower($ghnStatus), ['cancel', 'cancelled', 'canceled', 'return', 'returned', 'returning', 'returned_to_sender', 'damage', 'lost'])) {
+                        if (!in_array((int)$order->trangThaiDonHang, [0, 6, 4, 5])) {
+                            $oldStatus = $order->trangThaiDonHang;
+                            $order->trangThaiDonHang = 0; // DA_HUY
+                            $order->ghnStatusCode = $ghnStatus;
+                            $order->save();
 
-                        foreach ($order->chitiet as $item) {
-                            $tonKho = \App\Models\TonKhoChiNhanh::where('cuaHangId', $order->cuaHangId)
-                                ->where('sanPhamId', $item->sanPhamId)
-                                ->first();
-                            if ($tonKho) {
-                                $tonKho->increment('soLuongTon', $item->soLuong);
+                            foreach ($order->chitiet as $item) {
+                                $tonKho = \App\Models\TonKhoChiNhanh::where('cuaHangId', $order->cuaHangId)
+                                    ->where('sanPhamId', $item->sanPhamId)
+                                    ->first();
+                                if ($tonKho) {
+                                    $tonKho->increment('soLuongTon', $item->soLuong);
+                                }
                             }
-                        }
 
-                        \App\Models\LichSuTrangThaiDonHang::create([
-                            'donHangId' => $order->id,
-                            'trangThaiCu' => $oldStatus,
-                            'trangThaiMoi' => 0,
-                            'ghnStatusCode' => $ghnStatus,
-                            'moTaChiTiet' => "Đồng bộ từ GHN API: Đơn hàng đã bị hủy trên GHN ({$ghnStatus})",
-                            'nguonCapNhat' => 0,
-                        ]);
+                            \App\Models\LichSuTrangThaiDonHang::create([
+                                'donHangId' => $order->id,
+                                'trangThaiCu' => $oldStatus,
+                                'trangThaiMoi' => 0,
+                                'ghnStatusCode' => $ghnStatus,
+                                'moTaChiTiet' => "Đồng bộ từ GHN API: Đơn hàng đã bị hủy trên GHN ({$ghnStatus})",
+                                'nguonCapNhat' => 0,
+                            ]);
+                        }
+                    } else {
+                        $order->save();
                     }
                 }
             }

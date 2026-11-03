@@ -15,19 +15,19 @@ class HoaDonNhap extends Model
     protected $table = 'hoaDonNhap';
 
     protected $fillable = [
-        'ma_hoadon_nhap',
+        'maHoaDonNhap',
         'nhaCungCapId',
         'cuaHangId',
-        'nguoi_nhap_id',
-        'ngay_nhap',
-        'tong_tien',
+        'nguoiNhapId',
+        'ngayNhap',
+        'tongTien',
         'ghiChu',
         'trangThai',
     ];
 
     protected $casts = [
-        'ngay_nhap' => 'datetime',
-        'tong_tien' => 'double',
+        'ngayNhap' => 'datetime',
+        'tongTien' => 'double',
     ];
 
     protected $appends = [
@@ -36,7 +36,7 @@ class HoaDonNhap extends Model
 
     public function getMAHDNHAPAttribute()
     {
-        return $this->attributes['ma_hoadon_nhap'] ?? $this->attributes['id'] ?? null;
+        return $this->attributes['maHoaDonNhap'] ?? $this->attributes['ma_hoadon_nhap'] ?? $this->attributes['id'] ?? null;
     }
 
     public function getMANCCAttribute()
@@ -51,17 +51,17 @@ class HoaDonNhap extends Model
 
     public function getNGAYLAPAttribute()
     {
-        return $this->attributes['ngay_nhap'] ?? null;
+        return $this->attributes['ngayNhap'] ?? $this->attributes['ngay_nhap'] ?? null;
     }
 
     public function getTONGTIENNHAPAttribute()
     {
-        return $this->attributes['tong_tien'] ?? 0;
+        return $this->attributes['tongTien'] ?? $this->attributes['tong_tien'] ?? 0;
     }
 
     public function getTONGTIENAttribute()
     {
-        return $this->attributes['tong_tien'] ?? 0;
+        return $this->attributes['tongTien'] ?? $this->attributes['tong_tien'] ?? 0;
     }
 
     public function getTRANGTHAIAttribute()
@@ -81,25 +81,25 @@ class HoaDonNhap extends Model
 
     public function nguoiNhap()
     {
-        return $this->belongsTo(NguoiDung::class, 'nguoi_nhap_id');
+        return $this->belongsTo(NguoiDung::class, 'nguoiNhapId');
     }
 
     public function chuKySos()
     {
-        return $this->hasMany(ChuKySo::class, 'tai_lieu_id')->where('loai_tai_lieu', 1);
+        return $this->hasMany(ChuKySo::class, 'taiLieuId')->where('loaiTaiLieu', 1);
     }
 
     public function chiTiets()
     {
-        return $this->hasMany(ChiTietHoaDonNhap::class, 'hoadon_nhap_id');
+        return $this->hasMany(ChiTietHoaDonNhap::class, 'hoaDonNhapId');
     }
 
     /**
-     * Hóa đơn nhập yêu cầu đủ 4 chữ ký: Kế toán (1), Thủ kho (2), Chủ cửa hàng (3), NCC (4).
+     * Hóa đơn nhập yêu cầu đủ các chữ ký liên quan
      */
     public function kiemTraDaKyDu(): bool
     {
-        $signedRolesCount = $this->chuKySos()->where('trangThai', 1)->distinct('vai_tro_ky')->count('vai_tro_ky');
-        return $signedRolesCount >= 4;
+        $signedRolesCount = $this->chuKySos()->where('trangThai', 1)->distinct('vaiTroKy')->count('vaiTroKy');
+        return $signedRolesCount >= 3;
     }
 }

@@ -34,6 +34,15 @@ class CustomerController extends Controller
                 $rank = 'Bạc';
             }
 
+            // Lấy địa chỉ an toàn (tránh lỗi Call to a member function first() on string)
+            $diaChiText = null;
+            if (is_string($c->diaChi) && !empty($c->diaChi)) {
+                $diaChiText = $c->diaChi;
+            } elseif (method_exists($c, 'diachi')) {
+                $dc = $c->diachi()->first();
+                $diaChiText = $dc ? $dc->diaChiChiTiet : null;
+            }
+
             return [
                 'id' => $c->id,
                 'maKH' => 'KH' . sprintf('%06d', $c->id),
@@ -42,7 +51,7 @@ class CustomerController extends Controller
                 'email' => $c->taikhoan ? $c->taikhoan->email : null,
                 'ngaySinh' => $c->ngaySinh,
                 'gioiTinh' => $c->gioiTinh,
-                'diaChi' => $c->diachi->first()->diaChiChiTiet ?? null,
+                'diaChi' => $diaChiText,
                 'diemTichLuy' => $diemTichLuy,
                 'membershipRank' => $rank,
                 'totalOrders' => $totalOrders,
