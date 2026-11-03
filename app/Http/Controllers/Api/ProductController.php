@@ -236,7 +236,7 @@ class ProductController extends Controller
         $isNewInput = $request->input('IS_NEW') ?? $request->input('isNew') ?? $request->input('is_new');
         $isNewVal = ($isNewInput == '1' || $isNewInput === 'true' || $isNewInput === true) ? 1 : 0;
 
-        $product = SanPham::create([
+        $createData = [
             'tenSanPham' => $validated['tenSanPham'],
             'slug' => $slug,
             'loaiId' => $validated['loaiId'],
@@ -245,20 +245,29 @@ class ProductController extends Controller
             'moTa' => $validated['moTa'] ?? '',
             'hinhAnh' => $hinhAnhPath,
             'trangThai' => 1,
-            'isNew' => $isNewVal,
-        ]);
+        ];
+
+        if (\Illuminate\Support\Facades\Schema::hasColumn('sanPham', 'isNew') || \Illuminate\Support\Facades\Schema::hasColumn('san_pham', 'isNew')) {
+            $createData['isNew'] = $isNewVal;
+        }
+
+        $product = SanPham::create($createData);
 
         $phanTramGiam = (float) ($request->input('PHAN_TRAM_GIAM') ?? $request->input('phanTramGiam') ?? $request->input('phan_tram_giam') ?? 0);
 
         // Ghi nhận lịch sử giá ban đầu
-        LichSuGiaSanPham::create([
-            'sanPhamId' => $product->id,
-            'giaCu' => null,
-            'giaMoi' => $validated['giaBan'],
-            'phanTramGiam' => max(0, $phanTramGiam),
-            'lyDo' => $phanTramGiam > 0 ? "Khởi tạo sản phẩm với giảm giá {$phanTramGiam}%" : 'Khởi tạo sản phẩm mới',
-            'ngayApDung' => now(),
-        ]);
+        try {
+            LichSuGiaSanPham::create([
+                'sanPhamId' => $product->id,
+                'giaCu' => null,
+                'giaMoi' => $validated['giaBan'],
+                'phanTramGiam' => max(0, $phanTramGiam),
+                'lyDo' => $phanTramGiam > 0 ? "Khởi tạo sản phẩm với giảm giá {$phanTramGiam}%" : 'Khởi tạo sản phẩm mới',
+                'ngayApDung' => now(),
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("LichSuGia create error: " . $e->getMessage());
+        }
 
         self::clearProductCache();
 
@@ -304,7 +313,7 @@ class ProductController extends Controller
         }
 
         $isNewInput = $request->input('IS_NEW') ?? $request->input('isNew') ?? $request->input('is_new');
-        if ($isNewInput !== null) {
+        if ($isNewInput !== null && (\Illuminate\Support\Facades\Schema::hasColumn('sanPham', 'isNew') || \Illuminate\Support\Facades\Schema::hasColumn('san_pham', 'isNew'))) {
             $validated['isNew'] = ($isNewInput == '1' || $isNewInput === 'true' || $isNewInput === true) ? 1 : 0;
         }
 
@@ -317,14 +326,18 @@ class ProductController extends Controller
             $newPrice = isset($validated['giaBan']) ? (float)$validated['giaBan'] : (float)$product->giaBan;
             $discountPct = $phanTramGiamInput !== null ? (float)$phanTramGiamInput : ($oldPrice > 0 && $newPrice < $oldPrice ? round((($oldPrice - $newPrice) / $oldPrice) * 100, 2) : 0);
 
-            LichSuGiaSanPham::create([
-                'sanPhamId' => $product->id,
-                'giaCu' => $oldPrice,
-                'giaMoi' => $newPrice,
-                'phanTramGiam' => max(0, $discountPct),
-                'lyDo' => $request->ly_do_doi_gia ?? ($discountPct > 0 ? "Điều chỉnh % giảm giá: {$discountPct}%" : 'Điều chỉnh giá bán'),
-                'ngayApDung' => now(),
-            ]);
+            try {
+                LichSuGiaSanPham::create([
+                    'sanPhamId' => $product->id,
+                    'giaCu' => $oldPrice,
+                    'giaMoi' => $newPrice,
+                    'phanTramGiam' => max(0, $discountPct),
+                    'lyDo' => $request->ly_do_doi_gia ?? ($discountPct > 0 ? "Điều chỉnh % giảm giá: {$discountPct}%" : 'Điều chỉnh giá bán'),
+                    'ngayApDung' => now(),
+                ]);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("LichSuGia create error: " . $e->getMessage());
+            }
         }
 
         self::clearProductCache($id);
@@ -427,11 +440,13 @@ class ProductController extends Controller
             Cache::flush();
         } catch (\Throwable $e) {}
 
-        Cache::forget('products_homepage');
-        Cache::forget('products_bestsellers');
-        if ($productId) {
-            Cache::forget('product_detail_' . $productId);
-        }
+        try {
+            Cache::forget('products_homepage');
+            Cache::forget('products_bestsellers');
+            if ($productId) {
+                Cache::forget('product_detail_' . $productId);
+            }
+        } catch (\Throwable $e) {}
 
         try {
             $redis = Redis::connection('cache');

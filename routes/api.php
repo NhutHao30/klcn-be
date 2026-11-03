@@ -293,7 +293,7 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
 
         // Quản lý Sản phẩm (Catalog)
         Route::post('/admin/products', [ProductController::class, 'store'])->middleware(['feature.lock:PRODUCT_CATALOG']);
-        Route::put('/admin/products/{id}', [ProductController::class, 'update'])->middleware(['feature.lock:PRODUCT_CATALOG']);
+        Route::match(['put', 'post'], '/admin/products/{id}', [ProductController::class, 'update'])->middleware(['feature.lock:PRODUCT_CATALOG']);
         Route::delete('/admin/products/{id}', [ProductController::class, 'destroy'])->middleware(['feature.lock:PRODUCT_CATALOG']);
         Route::put('/admin/products/{id}/restore', [ProductController::class, 'restore'])->middleware(['feature.lock:PRODUCT_CATALOG']);
 
