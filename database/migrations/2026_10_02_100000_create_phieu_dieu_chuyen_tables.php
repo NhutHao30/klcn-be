@@ -14,24 +14,37 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // 1. Alter yeucaudieuchuyen: make cuaHangXuatId nullable (request doesn't know source yet)
-        //    Add new status field as varchar for descriptive statuses
-        Schema::table('yeucaudieuchuyen', function (Blueprint $table) {
-            // Make cuaHangXuatId nullable since request doesn't specify source store
-            $table->unsignedInteger('cuaHangXuatId')->nullable()->change();
-            // Rename soLuongChuyen -> soLuongYeuCau in chitiet
-        });
+        $ycTable = Schema::hasTable('yeuCauDieuChuyen') ? 'yeuCauDieuChuyen' : (Schema::hasTable('yeucaudieuchuyen') ? 'yeucaudieuchuyen' : 'yeucau_dieuchuyen');
+        $ctTable = Schema::hasTable('chiTietDieuChuyen') ? 'chiTietDieuChuyen' : (Schema::hasTable('chitietdieuchuyen') ? 'chitietdieuchuyen' : 'chitiet_dieuchuyen');
+        $spTable = Schema::hasTable('sanPham') ? 'sanPham' : (Schema::hasTable('sanpham') ? 'sanpham' : 'san_pham');
+
+        // 1. Alter yeucaudieuchuyen
+        if (Schema::hasTable($ycTable)) {
+            Schema::table($ycTable, function (Blueprint $table) use ($ycTable) {
+                if (Schema::hasColumn($ycTable, 'cuaHangXuatId')) {
+                    $table->unsignedInteger('cuaHangXuatId')->nullable()->change();
+                } elseif (Schema::hasColumn($ycTable, 'cuahang_xuat_id')) {
+                    $table->unsignedInteger('cuahang_xuat_id')->nullable()->change();
+                }
+            });
+        }
 
         // Rename columns in chitietdieuchuyen for clarity
-        if (Schema::hasColumn('chitietdieuchuyen', 'soLuongChuyen')) {
-            Schema::table('chitietdieuchuyen', function (Blueprint $table) {
-                $table->renameColumn('soLuongChuyen', 'soLuongYeuCau');
-            });
+        if (Schema::hasTable($ctTable)) {
+            if (Schema::hasColumn($ctTable, 'soLuongChuyen') && !Schema::hasColumn($ctTable, 'soLuongYeuCau')) {
+                Schema::table($ctTable, function (Blueprint $table) {
+                    $table->renameColumn('soLuongChuyen', 'soLuongYeuCau');
+                });
+            } elseif (Schema::hasColumn($ctTable, 'so_luong_chuyen') && !Schema::hasColumn($ctTable, 'soLuongYeuCau')) {
+                Schema::table($ctTable, function (Blueprint $table) {
+                    $table->renameColumn('so_luong_chuyen', 'soLuongYeuCau');
+                });
+            }
         }
 
         // 2. Create phieudieuchuyen (transfer voucher) table
         if (!Schema::hasTable('phieudieuchuyen')) {
-            Schema::create('phieudieuchuyen', function (Blueprint $table) {
+            Schema::create('phieudieuchuyen', function (Blueprint $table) use ($ycTable) {
                 $table->id();
                 $table->unsignedBigInteger('yeuCauId');
                 $table->unsignedInteger('cuaHangXuatId'); // store that provides goods
@@ -47,7 +60,7 @@ return new class extends Migration
                 $table->timestamp('createdAt')->nullable();
                 $table->timestamp('updatedAt')->nullable();
 
-                $table->foreign('yeuCauId')->references('id')->on('yeucaudieuchuyen');
+                $table->foreign('yeuCauId')->references('id')->on($ycTable);
                 $table->foreign('cuaHangXuatId')->references('id')->on('cuahang');
                 $table->foreign('cuaHangNhapId')->references('id')->on('cuahang');
                 $table->foreign('nguoiTaoId')->references('id')->on('nguoidung');
@@ -56,7 +69,7 @@ return new class extends Migration
 
         // 3. Create chitiet_phieu_dieuchuyen (transfer voucher details)
         if (!Schema::hasTable('chitiet_phieu_dieuchuyen')) {
-            Schema::create('chitiet_phieu_dieuchuyen', function (Blueprint $table) {
+            Schema::create('chitiet_phieu_dieuchuyen', function (Blueprint $table) use ($spTable) {
                 $table->id();
                 $table->unsignedBigInteger('phieuId');
                 $table->unsignedInteger('sanPhamId');
@@ -67,7 +80,7 @@ return new class extends Migration
                 $table->timestamp('updatedAt')->nullable();
 
                 $table->foreign('phieuId')->references('id')->on('phieudieuchuyen');
-                $table->foreign('sanPhamId')->references('id')->on('sanpham');
+                $table->foreign('sanPhamId')->references('id')->on($spTable);
             });
         }
     }
@@ -77,8 +90,9 @@ return new class extends Migration
         Schema::dropIfExists('chitiet_phieu_dieuchuyen');
         Schema::dropIfExists('phieudieuchuyen');
 
-        if (Schema::hasColumn('chitietdieuchuyen', 'soLuongYeuCau')) {
-            Schema::table('chitietdieuchuyen', function (Blueprint $table) {
+        $ctTable = Schema::hasTable('chiTietDieuChuyen') ? 'chiTietDieuChuyen' : (Schema::hasTable('chitietdieuchuyen') ? 'chitietdieuchuyen' : 'chitiet_dieuchuyen');
+        if (Schema::hasTable($ctTable) && Schema::hasColumn($ctTable, 'soLuongYeuCau')) {
+            Schema::table($ctTable, function (Blueprint $table) {
                 $table->renameColumn('soLuongYeuCau', 'soLuongChuyen');
             });
         }

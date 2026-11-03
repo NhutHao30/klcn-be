@@ -23,33 +23,42 @@ return new class extends Migration
 
         // Đồng bộ lại điểm tích lũy và hạng thành viên cho tất cả người dùng hiện có từ các đơn hoàn tất
         $users = DB::table('nguoidung')->get();
-        foreach ($users as $u) {
-            $totalSpent = (float) DB::table('donhang')
-                ->where('nguoidungId', $u->id)
-                ->whereIn('trangThaiDonHang', [4, 5])
-                ->sum('tongThanhToan');
+        $orderTable = Schema::hasTable('donHang') ? 'donHang' : (Schema::hasTable('donhang') ? 'donhang' : null);
+        if ($orderTable) {
+            $userCol = Schema::hasColumn($orderTable, 'nguoidungId') ? 'nguoidungId' : 'nguoidung_id';
+            $statusCol = Schema::hasColumn($orderTable, 'trangThaiDonHang') ? 'trangThaiDonHang' : 'trang_thai_don_hang';
+            $amountCol = Schema::hasColumn($orderTable, 'tongThanhToan') ? 'tongThanhToan' : 'tong_thanhtoan';
 
-            $points = (int) floor($totalSpent / 10000);
-            $rank = 'Đồng';
-            if ($points >= 1000) $rank = 'Thách đấu';
-            elseif ($points >= 500) $rank = 'Kim cương';
-            elseif ($points >= 200) $rank = 'Vàng';
-            elseif ($points >= 50) $rank = 'Bạc';
+            foreach ($users as $u) {
+                $totalSpent = (float) DB::table($orderTable)
+                    ->where($userCol, $u->id)
+                    ->whereIn($statusCol, [4, 5])
+                    ->sum($amountCol);
 
-            DB::table('nguoidung')->where('id', $u->id)->update([
-                'tongChiTieu' => $totalSpent,
-                'diemTichLuy' => $points,
-                'hangThanhVien' => $rank,
-            ]);
+                $points = (int) floor($totalSpent / 10000);
+                $rank = 'Đồng';
+                if ($points >= 1000) $rank = 'Thách đấu';
+                elseif ($points >= 500) $rank = 'Kim cương';
+                elseif ($points >= 200) $rank = 'Vàng';
+                elseif ($points >= 50) $rank = 'Bạc';
+
+                DB::table('nguoidung')->where('id', $u->id)->update([
+                    'tongChiTieu' => $totalSpent,
+                    'diemTichLuy' => $points,
+                    'hangThanhVien' => $rank,
+                ]);
+            }
         }
 
         // Gia hạn các voucher hiện có và bổ sung thêm các voucher mới để khách hàng lưu vào Ví Voucher
         if (Schema::hasTable('voucher')) {
-            DB::table('voucher')->update([
-                'NGAY_BAT_DAU' => '2026-10-01 00:00:00',
-                'NGAY_KET_THUC' => '2026-12-31 23:59:59',
-                'TRANG_THAI' => 1,
-            ]);
+            $voucherUpdate = [];
+            if (Schema::hasColumn('voucher', 'NGAY_BAT_DAU')) $voucherUpdate['NGAY_BAT_DAU'] = '2026-10-01 00:00:00';
+            if (Schema::hasColumn('voucher', 'NGAY_KET_THUC')) $voucherUpdate['NGAY_KET_THUC'] = '2026-12-31 23:59:59';
+            if (Schema::hasColumn('voucher', 'TRANG_THAI')) $voucherUpdate['TRANG_THAI'] = 1;
+            if (!empty($voucherUpdate)) {
+                DB::table('voucher')->update($voucherUpdate);
+            }
 
             $sampleVouchers = [
                 [

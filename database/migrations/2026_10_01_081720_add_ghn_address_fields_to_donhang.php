@@ -11,10 +11,25 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('donHang', function (Blueprint $table) {
-            $table->string('toWardCode', 20)->nullable()->after('diaChiGiaoHang');
-            $table->integer('toDistrictId')->nullable()->after('toWardCode');
-        });
+        $table = Schema::hasTable('donHang') ? 'donHang' : (Schema::hasTable('donhang') ? 'donhang' : null);
+        if ($table) {
+            Schema::table($table, function (Blueprint $t) use ($table) {
+                if (!Schema::hasColumn($table, 'toWardCode')) {
+                    if (Schema::hasColumn($table, 'diaChiGiaoHang')) {
+                        $t->string('toWardCode', 20)->nullable()->after('diaChiGiaoHang');
+                    } else {
+                        $t->string('toWardCode', 20)->nullable();
+                    }
+                }
+                if (!Schema::hasColumn($table, 'toDistrictId')) {
+                    if (Schema::hasColumn($table, 'toWardCode')) {
+                        $t->integer('toDistrictId')->nullable()->after('toWardCode');
+                    } else {
+                        $t->integer('toDistrictId')->nullable();
+                    }
+                }
+            });
+        }
     }
 
     /**
@@ -22,8 +37,20 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('donHang', function (Blueprint $table) {
-            $table->dropColumn(['toWardCode', 'toDistrictId']);
-        });
+        $table = Schema::hasTable('donHang') ? 'donHang' : (Schema::hasTable('donhang') ? 'donhang' : null);
+        if ($table) {
+            Schema::table($table, function (Blueprint $t) use ($table) {
+                $colsToDrop = [];
+                if (Schema::hasColumn($table, 'toDistrictId')) {
+                    $colsToDrop[] = 'toDistrictId';
+                }
+                if (Schema::hasColumn($table, 'toWardCode')) {
+                    $colsToDrop[] = 'toWardCode';
+                }
+                if (!empty($colsToDrop)) {
+                    $t->dropColumn($colsToDrop);
+                }
+            });
+        }
     }
 };

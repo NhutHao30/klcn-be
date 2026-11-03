@@ -1,5 +1,5 @@
 -- =========================================================================================
--- HỆ THỐNG QUẢN LÝ TIỆM BÁNH DOLA BAKERY
+-- HỆ THỐNG QUẢN LÝ TIỆM BÁNH GIVRAL BAKERY
 -- TỔNG HỢP CÁC STORED PROCEDURE, FUNCTION VÀ TRIGGER CỐT LÕI (DÙNG ĐỂ BÁO CÁO & CHỤP HÌNH)
 -- Database: Laravel_DB (MySQL 8.0)
 -- =========================================================================================

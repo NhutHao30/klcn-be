@@ -9,11 +9,23 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement('ALTER TABLE `donhang` MODIFY `minhChungThanhToan` LONGTEXT NULL');
+        $table = Schema::hasTable('donHang') ? 'donHang' : (Schema::hasTable('donhang') ? 'donhang' : null);
+        if ($table) {
+            if (!Schema::hasColumn($table, 'minhChungThanhToan')) {
+                Schema::table($table, function (Blueprint $t) {
+                    $t->longText('minhChungThanhToan')->nullable();
+                });
+            } else {
+                DB::statement("ALTER TABLE `{$table}` MODIFY `minhChungThanhToan` LONGTEXT NULL");
+            }
+        }
     }
 
     public function down(): void
     {
-        DB::statement('ALTER TABLE `donhang` MODIFY `minhChungThanhToan` VARCHAR(255) NULL');
+        $table = Schema::hasTable('donHang') ? 'donHang' : (Schema::hasTable('donhang') ? 'donhang' : null);
+        if ($table && Schema::hasColumn($table, 'minhChungThanhToan')) {
+            DB::statement("ALTER TABLE `{$table}` MODIFY `minhChungThanhToan` VARCHAR(255) NULL");
+        }
     }
 };

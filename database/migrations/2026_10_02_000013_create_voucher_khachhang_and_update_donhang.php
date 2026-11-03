@@ -8,10 +8,15 @@ use Illuminate\Support\Facades\DB;
 return new class extends Migration {
     public function up(): void
     {
+        $table = Schema::hasTable('donHang') ? 'donHang' : (Schema::hasTable('donhang') ? 'donhang' : null);
         // 1. Ensure donhang has maVoucher column
-        if (Schema::hasTable('donhang') && !Schema::hasColumn('donhang', 'maVoucher')) {
-            Schema::table('donhang', function (Blueprint $table) {
-                $table->string('maVoucher', 50)->nullable()->after('voucherId');
+        if ($table && !Schema::hasColumn($table, 'maVoucher')) {
+            Schema::table($table, function (Blueprint $t) use ($table) {
+                if (Schema::hasColumn($table, 'voucherId')) {
+                    $t->string('maVoucher', 50)->nullable()->after('voucherId');
+                } else {
+                    $t->string('maVoucher', 50)->nullable();
+                }
             });
         }
 
@@ -35,9 +40,10 @@ return new class extends Migration {
     public function down(): void
     {
         Schema::dropIfExists('voucher_khachhang');
-        if (Schema::hasColumn('donhang', 'maVoucher')) {
-            Schema::table('donhang', function (Blueprint $table) {
-                $table->dropColumn('maVoucher');
+        $table = Schema::hasTable('donHang') ? 'donHang' : (Schema::hasTable('donhang') ? 'donhang' : null);
+        if ($table && Schema::hasColumn($table, 'maVoucher')) {
+            Schema::table($table, function (Blueprint $t) {
+                $t->dropColumn('maVoucher');
             });
         }
     }
