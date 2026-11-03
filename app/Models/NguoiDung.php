@@ -69,7 +69,8 @@ class NguoiDung extends Model
             return $this;
         }
 
-        $totalSpent = (float) DB::table('donhang')
+        $orderTable = \Illuminate\Support\Facades\Schema::hasTable('donHang') ? 'donHang' : 'donhang';
+        $totalSpent = (float) DB::table($orderTable)
             ->where('nguoidungId', $this->id)
             ->whereIn('trangThaiDonHang', [4, 5])
             ->sum('tongThanhToan');
