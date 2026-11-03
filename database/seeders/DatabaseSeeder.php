@@ -196,28 +196,67 @@ class DatabaseSeeder extends Seeder
                 $vData = [
                     $maVoucherCol => 'GIVRAL2026',
                 ];
-                if (Schema::hasColumn('voucher', 'TEN_VOUCHER')) $vData['TEN_VOUCHER'] = 'Ưu đãi Givral Bakery 2026';
-                if (Schema::hasColumn('voucher', 'LOAI_GIAM')) $vData['LOAI_GIAM'] = 'PHAN_TRAM';
-                if (Schema::hasColumn('voucher', 'loai_giam_gia')) $vData['loai_giam_gia'] = 0;
-                if (Schema::hasColumn('voucher', 'GIA_TRI')) $vData['GIA_TRI'] = 10;
-                if (Schema::hasColumn('voucher', 'gia_tri_giam')) $vData['gia_tri_giam'] = 10.0;
-                if (Schema::hasColumn('voucher', 'DON_TOI_THIEU')) $vData['DON_TOI_THIEU'] = 100000;
-                if (Schema::hasColumn('voucher', 'don_hang_toi_thieu')) $vData['don_hang_toi_thieu'] = 100000;
-                if (Schema::hasColumn('voucher', 'GIAM_TOI_DA')) $vData['GIAM_TOI_DA'] = 50000;
-                if (Schema::hasColumn('voucher', 'giam_toi_da')) $vData['giam_toi_da'] = 50000;
-                if (Schema::hasColumn('voucher', 'PHAN_TRAM_GIAM')) $vData['PHAN_TRAM_GIAM'] = 10;
-                if (Schema::hasColumn('voucher', 'SO_LUONG_GIOI_HAN')) $vData['SO_LUONG_GIOI_HAN'] = 100;
-                if (Schema::hasColumn('voucher', 'so_luong')) $vData['so_luong'] = 100;
-                if (Schema::hasColumn('voucher', 'SO_LUONG_DA_DUNG')) $vData['SO_LUONG_DA_DUNG'] = 0;
-                if (Schema::hasColumn('voucher', 'da_su_dung')) $vData['da_su_dung'] = 0;
-                if (Schema::hasColumn('voucher', 'NGAY_BAT_DAU')) $vData['NGAY_BAT_DAU'] = $now;
-                if (Schema::hasColumn('voucher', 'ngay_bat_dau')) $vData['ngay_bat_dau'] = $now;
-                if (Schema::hasColumn('voucher', 'NGAY_KET_THUC')) $vData['NGAY_KET_THUC'] = $now->copy()->addMonths(6);
-                if (Schema::hasColumn('voucher', 'ngay_ket_thuc')) $vData['ngay_ket_thuc'] = $now->copy()->addMonths(6);
-                if (Schema::hasColumn('voucher', 'TRANG_THAI')) $vData['TRANG_THAI'] = 1;
-                if (Schema::hasColumn('voucher', 'trang_thai')) $vData['trang_thai'] = 1;
-                if (Schema::hasColumn('voucher', 'created_at')) $vData['created_at'] = $now;
-                if (Schema::hasColumn('voucher', 'updated_at')) $vData['updated_at'] = $now;
+                if (Schema::hasColumn('voucher', 'TEN_VOUCHER')) {
+                    $vData['TEN_VOUCHER'] = 'Ưu đãi Givral Bakery 2026';
+                }
+                if (Schema::hasColumn('voucher', 'LOAI_GIAM')) {
+                    $vData['LOAI_GIAM'] = 'PHAN_TRAM';
+                } elseif (Schema::hasColumn('voucher', 'loai_giam_gia')) {
+                    $vData['loai_giam_gia'] = 0;
+                }
+                if (Schema::hasColumn('voucher', 'GIA_TRI')) {
+                    $vData['GIA_TRI'] = 10;
+                } elseif (Schema::hasColumn('voucher', 'gia_tri_giam')) {
+                    $vData['gia_tri_giam'] = 10.0;
+                }
+                if (Schema::hasColumn('voucher', 'DON_TOI_THIEU')) {
+                    $vData['DON_TOI_THIEU'] = 100000;
+                } elseif (Schema::hasColumn('voucher', 'don_hang_toi_thieu')) {
+                    $vData['don_hang_toi_thieu'] = 100000;
+                }
+                if (Schema::hasColumn('voucher', 'GIAM_TOI_DA')) {
+                    $vData['GIAM_TOI_DA'] = 50000;
+                } elseif (Schema::hasColumn('voucher', 'giam_toi_da')) {
+                    $vData['giam_toi_da'] = 50000;
+                }
+                if (Schema::hasColumn('voucher', 'PHAN_TRAM_GIAM')) {
+                    $vData['PHAN_TRAM_GIAM'] = 10;
+                }
+                if (Schema::hasColumn('voucher', 'SO_LUONG_GIOI_HAN')) {
+                    $vData['SO_LUONG_GIOI_HAN'] = 100;
+                } elseif (Schema::hasColumn('voucher', 'so_luong')) {
+                    $vData['so_luong'] = 100;
+                }
+                if (Schema::hasColumn('voucher', 'SO_LUONG_DA_DUNG')) {
+                    $vData['SO_LUONG_DA_DUNG'] = 0;
+                } elseif (Schema::hasColumn('voucher', 'da_su_dung')) {
+                    $vData['da_su_dung'] = 0;
+                }
+                if (Schema::hasColumn('voucher', 'NGAY_BAT_DAU')) {
+                    $vData['NGAY_BAT_DAU'] = $now;
+                } elseif (Schema::hasColumn('voucher', 'ngay_bat_dau')) {
+                    $vData['ngay_bat_dau'] = $now;
+                }
+                if (Schema::hasColumn('voucher', 'NGAY_KET_THUC')) {
+                    $vData['NGAY_KET_THUC'] = $now->copy()->addMonths(6);
+                } elseif (Schema::hasColumn('voucher', 'ngay_ket_thuc')) {
+                    $vData['ngay_ket_thuc'] = $now->copy()->addMonths(6);
+                }
+                if (Schema::hasColumn('voucher', 'TRANG_THAI')) {
+                    $vData['TRANG_THAI'] = 1;
+                } elseif (Schema::hasColumn('voucher', 'trang_thai')) {
+                    $vData['trang_thai'] = 1;
+                }
+                if (Schema::hasColumn('voucher', 'createdAt')) {
+                    $vData['createdAt'] = $now;
+                } elseif (Schema::hasColumn('voucher', 'created_at')) {
+                    $vData['created_at'] = $now;
+                }
+                if (Schema::hasColumn('voucher', 'updatedAt')) {
+                    $vData['updatedAt'] = $now;
+                } elseif (Schema::hasColumn('voucher', 'updated_at')) {
+                    $vData['updated_at'] = $now;
+                }
 
                 DB::table('voucher')->insert($vData);
             }
