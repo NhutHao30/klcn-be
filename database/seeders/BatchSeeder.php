@@ -14,6 +14,7 @@ use App\Models\NhaCungCap;
 use App\Models\SanPham;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Schema;
 
 class BatchSeeder extends Seeder
 {
