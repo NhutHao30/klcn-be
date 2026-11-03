@@ -3,13 +3,31 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Schema;
 
 class AuditLog extends Model
 {
-    protected $table = 'auditlogs';
+    protected $table = 'auditLogs';
 
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
+
+    public function __construct(array $attributes = [])
+    {
+        parent::__construct($attributes);
+
+        try {
+            if (Schema::hasTable('auditLogs')) {
+                $this->setTable('auditLogs');
+            } elseif (Schema::hasTable('auditlogs')) {
+                $this->setTable('auditlogs');
+            } elseif (Schema::hasTable('audit_logs')) {
+                $this->setTable('audit_logs');
+            }
+        } catch (\Throwable $e) {
+            // Fallback gracefully if schema check fails during bootstrap
+        }
+    }
 
     protected $fillable = [
         'taiKhoanId',
