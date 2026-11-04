@@ -82,6 +82,11 @@ class GoogleAuthController extends Controller
         $buildRedirect = function ($path, $params = []) use ($frontendUrl, $isMobileDeepLink) {
             if ($isMobileDeepLink) {
                 $base = strtok($frontendUrl, '?');
+                // Chuẩn hóa dạng scheme://path (2 gạch chéo) thành scheme:///path (3 gạch chéo)
+                // để Expo Router nhận diện đúng path segment (/google-auth) thay vì parse thành hostname
+                if (preg_match('#^([a-zA-Z0-9_\-]+)://([^/]+)$#', $base, $matches)) {
+                    $base = $matches[1] . ':///' . $matches[2];
+                }
                 $query = http_build_query($params);
                 return $base . ($query ? '?' . $query : '');
             }
