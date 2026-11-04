@@ -24,6 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api(append: [
             \App\Http\Middleware\RewriteImageUrls::class,
             \App\Http\Middleware\UserPresenceMiddleware::class,
+            \App\Http\Middleware\CheckSingleSessionMiddleware::class,
         ]);
         
         $middleware->alias([

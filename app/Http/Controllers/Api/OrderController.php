@@ -122,7 +122,17 @@ class OrderController extends Controller
                 : 'Khách lẻ';
 
             $khName = $order->nguoidung ? $order->nguoidung->hoTen : 'Khách Vãng Lai';
-            $khSdt = $order->nguoidung ? $order->nguoidung->soDienThoai : '';
+            $khSdt = $order->nguoidung ? ($order->nguoidung->soDienThoai ?? '') : '';
+            if (empty($khSdt) && $order->nguoidungId) {
+                $defaultDiaChi = \App\Models\DiaChi::where('nguoidungId', $order->nguoidungId)
+                    ->whereNotNull('soDienThoai')
+                    ->where('soDienThoai', '!=', '')
+                    ->orderBy('isDefault', 'desc')
+                    ->first();
+                if ($defaultDiaChi) {
+                    $khSdt = $defaultDiaChi->soDienThoai;
+                }
+            }
             $khEmail = ($order->nguoidung && $order->nguoidung->taikhoan) ? $order->nguoidung->taikhoan->email : '';
 
             $staff = $order->nhanVienId ? \Illuminate\Support\Facades\DB::table('nguoidung')->where('id', $order->nhanVienId)->first() : null;
@@ -227,7 +237,17 @@ class OrderController extends Controller
             : 'Khách lẻ';
 
         $khName = $order->nguoidung ? $order->nguoidung->hoTen : 'Khách Vãng Lai';
-        $khSdt = $order->nguoidung ? $order->nguoidung->soDienThoai : '';
+        $khSdt = $order->nguoidung ? ($order->nguoidung->soDienThoai ?? '') : '';
+        if (empty($khSdt) && $order->nguoidungId) {
+            $defaultDiaChi = \App\Models\DiaChi::where('nguoidungId', $order->nguoidungId)
+                ->whereNotNull('soDienThoai')
+                ->where('soDienThoai', '!=', '')
+                ->orderBy('isDefault', 'desc')
+                ->first();
+            if ($defaultDiaChi) {
+                $khSdt = $defaultDiaChi->soDienThoai;
+            }
+        }
         $khEmail = ($order->nguoidung && $order->nguoidung->taikhoan) ? $order->nguoidung->taikhoan->email : '';
 
         $staff = $order->nhanVienId ? \Illuminate\Support\Facades\DB::table('nguoidung')->where('id', $order->nhanVienId)->first() : null;
@@ -373,86 +393,89 @@ class OrderController extends Controller
      */
     public function updateStatus(Request $request, $id)
     {
-        $order = DonHang::where('maDonHang', $id)
-            ->orWhere('id', $id)
-            ->first();
+        try {
+            $order = DonHang::where('maDonHang', $id)
+                ->orWhere('id', $id)
+                ->first();
 
-        if (!$order) {
-            return response()->json(['error' => 'Không tìm thấy hóa đơn'], 404);
-        }
-
-        $currentStatus = (int) $order->trangThaiDonHang;
-        if (in_array($currentStatus, [0, 4, 5], true)) {
-            $statusName = $currentStatus === 0 ? 'Đã hủy' : 'Đã hoàn thành';
-            return response()->json([
-                'success' => false,
-                'error' => "Đơn hàng đã ở trạng thái [{$statusName}], không thể cập nhật thêm trạng thái khác!",
-                'message' => "Đơn hàng đã ở trạng thái [{$statusName}], không thể cập nhật thêm trạng thái khác!",
-            ], 400);
-        }
-
-        $statusText = $request->input('TRANGTHAI') ?? $request->input('TRANG_THAI') ?? $request->input('trangThai') ?? $request->input('trangThaiDonHang');
-
-        $statusMap = [
-            'CHO_XAC_NHAN' => 1,
-            'DANG_CHE_BIEN' => 2,
-            'CHO_LAY_HANG' => 7,
-            'DANG_GIAO' => 3,
-            'HOAN_THANH' => 4,
-            'DA_HUY' => 0,
-            'Chờ xác nhận' => 1,
-            'Chờ xử lý' => 1,
-            'Đang chuẩn bị' => 2,
-            'Chờ lấy hàng' => 7,
-            'Đang giao' => 3,
-            'Đã hoàn thành' => 4,
-            'Đã hủy' => 0,
-        ];
-
-        if (isset($statusMap[$statusText])) {
-            $order->trangThaiDonHang = $statusMap[$statusText];
-        } elseif (isset(self::$stringToStatusMap[$statusText])) {
-            $order->trangThaiDonHang = self::$stringToStatusMap[$statusText];
-        } elseif (is_numeric($statusText)) {
-            $order->trangThaiDonHang = (int) $statusText;
-        }
-
-        if (in_array($order->trangThaiDonHang, [4, 5])) {
-            $order->trangThaiThanhToan = 1;
-        }
-
-        // Tự động khởi tạo đơn GHN Express khi chuẩn bị xong bánh (chuyển sang 'Chờ lấy hàng' 7 hoặc 'Đang giao' 3)
-        $ghnMsg = '';
-        if (in_array($order->trangThaiDonHang, [7, 3]) && empty($order->maVanDonGhn)) {
-            // Ưu tiên ward/district từ request, nếu không có thì dùng giá trị đã lưu khi checkout
-            $toWardCode = $request->input('to_ward_code') ?? $request->input('ward_code') ?? $order->toWardCode;
-            $toDistrictId = $request->input('to_district_id') ?? $request->input('district_id') ?? $order->toDistrictId;
-
-            // Gọi đồng bộ tạo đơn GHN (không dispatch Job để tránh tạo đơn trùng)
-            $ghnRes = GhnController::createShippingOrderForDonHang($order, $toWardCode, $toDistrictId);
-            if ($ghnRes['success']) {
-                $ghnMsg = " " . $ghnRes['message'];
-            } else {
-                $ghnMsg = " (Lưu ý: " . ($ghnRes['message'] ?? 'Không thể tạo đơn GHN') . ")";
+            if (!$order) {
+                return response()->json(['error' => 'Không tìm thấy hóa đơn'], 404);
             }
+
+            $currentStatus = (int) $order->trangThaiDonHang;
+            if (in_array($currentStatus, [0, 4, 5], true)) {
+                $statusName = $currentStatus === 0 ? 'Đã hủy' : 'Đã hoàn thành';
+                return response()->json([
+                    'success' => false,
+                    'error' => "Đơn hàng đã ở trạng thái [{$statusName}], không thể cập nhật thêm trạng thái khác!",
+                    'message' => "Đơn hàng đã ở trạng thái [{$statusName}], không thể cập nhật thêm trạng thái khác!",
+                ], 400);
+            }
+
+            $statusText = $request->input('TRANGTHAI') ?? $request->input('TRANG_THAI') ?? $request->input('trangThai') ?? $request->input('trangThaiDonHang');
+
+            $statusMap = [
+                'CHO_XAC_NHAN' => 1,
+                'DANG_CHE_BIEN' => 2,
+                'CHO_LAY_HANG' => 7,
+                'DANG_GIAO' => 3,
+                'HOAN_THANH' => 4,
+                'DA_HUY' => 0,
+                'Chờ xác nhận' => 1,
+                'Chờ xử lý' => 1,
+                'Đang chuẩn bị' => 2,
+                'Chờ lấy hàng' => 7,
+                'Đang giao' => 3,
+                'Đã hoàn thành' => 4,
+                'Đã hủy' => 0,
+            ];
+
+            if (isset($statusMap[$statusText])) {
+                $order->trangThaiDonHang = $statusMap[$statusText];
+            } elseif (isset(self::$stringToStatusMap[$statusText])) {
+                $order->trangThaiDonHang = self::$stringToStatusMap[$statusText];
+            } elseif (is_numeric($statusText)) {
+                $order->trangThaiDonHang = (int) $statusText;
+            }
+
+            if (in_array($order->trangThaiDonHang, [4, 5])) {
+                $order->trangThaiThanhToan = 1;
+            }
+
+            // Tự động khởi tạo đơn GHN Express khi chuẩn bị xong bánh (chuyển sang 'Chờ lấy hàng' 7 hoặc 'Đang giao' 3)
+            $ghnMsg = '';
+            if (in_array($order->trangThaiDonHang, [7, 3]) && empty($order->maVanDonGhn)) {
+                // Ưu tiên ward/district từ request, nếu không có thì dùng giá trị đã lưu khi checkout
+                $toWardCode = $request->input('to_ward_code') ?? $request->input('ward_code') ?? $order->toWardCode;
+                $toDistrictId = $request->input('to_district_id') ?? $request->input('district_id') ?? $order->toDistrictId;
+
+                // Gọi đồng bộ tạo đơn GHN (không dispatch Job để tránh tạo đơn trùng)
+                $ghnRes = GhnController::createShippingOrderForDonHang($order, $toWardCode, $toDistrictId);
+                if ($ghnRes['success']) {
+                    $ghnMsg = " " . $ghnRes['message'];
+                } else {
+                    $ghnMsg = " (Lưu ý: " . ($ghnRes['message'] ?? 'Không thể tạo đơn GHN') . ")";
+                }
+            }
+
+            // Lưu trực tiếp các trường hợp lệ vào donHang
+            $order->save();
+
+            // Tự động đồng bộ điểm tích lũy & hạng thành viên cho khách hàng khi đơn hàng hoàn tất
+            if (in_array((int)$order->trangThaiDonHang, [4, 5], true) && $order->nguoidung) {
+                try {
+                    $order->nguoidung->syncLoyaltyPoints();
+                } catch (\Throwable $eLoyalty) {}
+            }
+
+            // Refresh để trả về dữ liệu mới nhất (bao gồm maVanDonGhn vừa được GHN tạo)
+            $order->refresh();
+
+            return response()->json(['message' => 'Cập nhật trạng thái thành công!' . $ghnMsg, 'data' => $order]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Lỗi updateStatus đơn hàng: ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine());
+            return response()->json(['error' => 'Lỗi khi cập nhật trạng thái đơn hàng: ' . $e->getMessage()], 400);
         }
-
-        $user = Auth::guard('api')->user();
-        if ($user && $user->nguoidung && !$order->nhanVienId) {
-            $order->nhanVienId = $user->nguoidung->id;
-        }
-
-        $order->save();
-
-        // Tự động đồng bộ điểm tích lũy & hạng thành viên cho khách hàng khi đơn hàng hoàn tất
-        if (in_array((int)$order->trangThaiDonHang, [4, 5], true) && $order->nguoidung) {
-            $order->nguoidung->syncLoyaltyPoints();
-        }
-
-        // Refresh để trả về dữ liệu mới nhất (bao gồm maVanDonGhn vừa được GHN tạo)
-        $order->refresh();
-
-        return response()->json(['message' => 'Cập nhật trạng thái thành công!' . $ghnMsg, 'data' => $order]);
     }
 
     /**
@@ -628,7 +651,17 @@ class OrderController extends Controller
             $ngayTao = $order->createdAt ? $order->createdAt->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i:s') : '';
 
             $khName = $order->nguoidung ? $order->nguoidung->hoTen : 'Khách hàng';
-            $khSdt = $order->nguoidung ? $order->nguoidung->soDienThoai : '';
+            $khSdt = $order->nguoidung ? ($order->nguoidung->soDienThoai ?? '') : '';
+            if (empty($khSdt) && $order->nguoidungId) {
+                $defaultDiaChi = \App\Models\DiaChi::where('nguoidungId', $order->nguoidungId)
+                    ->whereNotNull('soDienThoai')
+                    ->where('soDienThoai', '!=', '')
+                    ->orderBy('isDefault', 'desc')
+                    ->first();
+                if ($defaultDiaChi) {
+                    $khSdt = $defaultDiaChi->soDienThoai;
+                }
+            }
             $khEmail = ($order->nguoidung && $order->nguoidung->taikhoan) ? $order->nguoidung->taikhoan->email : '';
 
             return [

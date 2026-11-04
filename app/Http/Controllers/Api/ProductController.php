@@ -141,6 +141,8 @@ class ProductController extends Controller
                 $p->setAttribute('soLuongTon', $qty);
                 $p->setAttribute('SOLUONG_TON', $qty);
                 $p->setAttribute('TONKHO_THUCTE', $qty);
+                $p->setAttribute('isOutOfStock', $qty <= 0);
+                $p->setAttribute('IS_OUT_OF_STOCK', $qty <= 0);
                 return $p;
             });
 

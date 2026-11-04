@@ -165,7 +165,9 @@ class GoogleAuthController extends Controller
 
             /** @var \Tymon\JWTAuth\JWTGuard $guard */
             $guard = Auth::guard('api');
-            $token = $guard->login($existingUser);
+            $sessionId = (string) \Illuminate\Support\Str::uuid();
+            \Illuminate\Support\Facades\Cache::forever("user_active_session_{$existingUser->id}", $sessionId);
+            $token = $guard->claims(['session_id' => $sessionId])->login($existingUser);
 
             return redirect($buildRedirect('/', ['token' => $token, 'google' => 'true']));
 
@@ -249,7 +251,9 @@ class GoogleAuthController extends Controller
 
             /** @var \Tymon\JWTAuth\JWTGuard $guard */
             $guard = Auth::guard('api');
-            $token = $guard->login($taikhoan);
+            $sessionId = (string) \Illuminate\Support\Str::uuid();
+            \Illuminate\Support\Facades\Cache::forever("user_active_session_{$taikhoan->id}", $sessionId);
+            $token = $guard->claims(['session_id' => $sessionId])->login($taikhoan);
 
             return response()->json([
                 'message' => 'Đăng ký thành công',

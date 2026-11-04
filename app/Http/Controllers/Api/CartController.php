@@ -289,6 +289,14 @@ class CartController extends Controller
         $receiverName = $request->input('HOTEN') ?? $request->input('receiverName') ?? $request->input('hoTenNguoiNhan') ?? $nguoidung->hoTen;
         $receiverPhone = $request->input('SDT') ?? $request->input('receiverPhone') ?? $request->input('soDienThoai') ?? $nguoidung->soDienThoai;
 
+        // Tự động cập nhật số điện thoại vào hồ sơ người dùng nếu hồ sơ chưa có số điện thoại
+        if (!empty($receiverPhone) && (empty($nguoidung->soDienThoai) || $nguoidung->soDienThoai === '0900000000')) {
+            try {
+                $nguoidung->soDienThoai = $receiverPhone;
+                $nguoidung->save();
+            } catch (\Throwable $ePhone) {}
+        }
+
         // Auto-save or update default customer address in DiaChi table
         if ($address && $address !== 'Địa chỉ mặc định') {
             $existingAddrCount = \App\Models\DiaChi::where('nguoidungId', $nguoidung->id)->count();

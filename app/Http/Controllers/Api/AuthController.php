@@ -62,7 +62,11 @@ class AuthController extends Controller
 
         /** @var \Tymon\JWTAuth\JWTGuard $guard */
         $guard = Auth::guard('api');
-        $token = $guard->login($account);
+        
+        // Single Session: Tạo session id mới và lưu vào Cache để đá các phiên đăng nhập cũ
+        $sessionId = (string) \Illuminate\Support\Str::uuid();
+        Cache::forever("user_active_session_{$account->id}", $sessionId);
+        $token = $guard->claims(['session_id' => $sessionId])->login($account);
 
         // Ghi nhận trực tuyến cho hệ thống giám sát & phân tích người dùng
         \App\Services\UserPresenceService::record($account, $request);
