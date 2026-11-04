@@ -70,14 +70,32 @@ class GoogleAuthController extends Controller
         $frontendUrl = env('FRONTEND_URL', 'http://localhost:5173');
         if ($request->has('state')) {
             $decoded = base64_decode($request->state);
-            if (filter_var($decoded, FILTER_VALIDATE_URL)) {
+            if (filter_var($decoded, FILTER_VALIDATE_URL) || str_starts_with($decoded, 'frontend://') || str_starts_with($decoded, 'exp://')) {
                 $frontendUrl = $decoded;
             }
         }
 
+        $isMobileDeepLink = str_starts_with($frontendUrl, 'frontend://') 
+            || str_starts_with($frontendUrl, 'exp://') 
+            || str_starts_with($frontendUrl, 'givral://');
+
+        $buildRedirect = function ($path, $params = []) use ($frontendUrl, $isMobileDeepLink) {
+            if ($isMobileDeepLink) {
+                $base = strtok($frontendUrl, '?');
+                $query = http_build_query($params);
+                return $base . ($query ? '?' . $query : '');
+            }
+            $base = rtrim($frontendUrl, '/');
+            $url = $base . $path;
+            if (!empty($params)) {
+                $url .= (str_contains($url, '?') ? '&' : '?') . http_build_query($params);
+            }
+            return $url;
+        };
+
         if ($request->has('error')) {
             Log::warning('Google OAuth cancelled or returned error: ' . $request->get('error'));
-            return redirect($frontendUrl . '/dang-nhap?error=google_cancelled');
+            return redirect($buildRedirect('/dang-nhap', ['error' => 'google_cancelled']));
         }
 
         try {
@@ -85,7 +103,7 @@ class GoogleAuthController extends Controller
 
             if (!$googleUser || !$googleUser->getEmail()) {
                 Log::error('Google OAuth failed to get user email');
-                return redirect($frontendUrl . '/dang-nhap?error=google_no_email');
+                return redirect($buildRedirect('/dang-nhap', ['error' => 'google_no_email']));
             }
 
             // Tìm tài khoản theo googleId hoặc email
@@ -149,11 +167,11 @@ class GoogleAuthController extends Controller
             $guard = Auth::guard('api');
             $token = $guard->login($existingUser);
 
-            return redirect($frontendUrl . '/?token=' . $token . '&google=true');
+            return redirect($buildRedirect('/', ['token' => $token, 'google' => 'true']));
 
         } catch (\Exception $e) {
             Log::error('Google Login Error: ' . $e->getMessage());
-            return redirect($frontendUrl . '/dang-nhap?error=google_login_failed');
+            return redirect($buildRedirect('/dang-nhap', ['error' => 'google_login_failed']));
         }
     }
 
