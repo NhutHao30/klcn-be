@@ -17,8 +17,9 @@ class GhnController extends Controller
 
     public function getProvinces()
     {
+        $token = env('GHN_API_TOKEN') ?: '27a3c9ca-82a2-11f1-84b1-62196476b988';
         $response = Http::withoutVerifying()->withHeaders([
-            'Token' => env('GHN_API_TOKEN'),
+            'Token' => $token,
         ])->get($this->apiUrl . '/master-data/province');
 
         return $response->json();
@@ -26,8 +27,9 @@ class GhnController extends Controller
 
     public function getDistricts(Request $request)
     {
+        $token = env('GHN_API_TOKEN') ?: '27a3c9ca-82a2-11f1-84b1-62196476b988';
         $response = Http::withoutVerifying()->withHeaders([
-            'Token' => env('GHN_API_TOKEN'),
+            'Token' => $token,
         ])->get($this->apiUrl . '/master-data/district', [
             'province_id' => $request->province_id
         ]);
@@ -37,8 +39,9 @@ class GhnController extends Controller
 
     public function getWards(Request $request)
     {
+        $token = env('GHN_API_TOKEN') ?: '27a3c9ca-82a2-11f1-84b1-62196476b988';
         $response = Http::withoutVerifying()->withHeaders([
-            'Token' => env('GHN_API_TOKEN'),
+            'Token' => $token,
         ])->get($this->apiUrl . '/master-data/ward', [
             'district_id' => $request->district_id
         ]);
@@ -137,9 +140,12 @@ class GhnController extends Controller
             'weight' => 'required|integer',
         ]);
 
+        $token = env('GHN_API_TOKEN') ?: '27a3c9ca-82a2-11f1-84b1-62196476b988';
+        $shopId = env('GHN_SHOP_ID') ?: 6556036;
+
         $response = Http::withoutVerifying()->withHeaders([
-            'Token' => env('GHN_API_TOKEN'),
-            'ShopId' => env('GHN_SHOP_ID')
+            'Token' => $token,
+            'ShopId' => (string)$shopId
         ])->post($this->apiUrl . '/v2/shipping-order/fee', [
             'service_type_id' => 2, // Standard delivery
             'insurance_value' => $request->insurance_value ?? 0,
@@ -181,7 +187,7 @@ class GhnController extends Controller
             ];
         }
 
-        $token = env('GHN_API_TOKEN');
+        $token = env('GHN_API_TOKEN') ?: '27a3c9ca-82a2-11f1-84b1-62196476b988';
         $envShopId = env('GHN_SHOP_ID');
         $shopId = !empty($envShopId) ? (int)$envShopId : 0;
 
@@ -192,7 +198,7 @@ class GhnController extends Controller
             }
         }
         if (empty($shopId)) {
-            $shopId = 226234; // Default fallback shop ID
+            $shopId = 6556036; // Default production shop ID (DLBakery Tân Phú)
         }
 
         $customer = $order->nguoidung;

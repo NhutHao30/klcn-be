@@ -180,7 +180,7 @@ class ProductController extends Controller
     {
         $cleanId = preg_replace('/^(SP|#)/i', '', trim($id));
         $cacheKey = 'product_detail_' . $id;
-        $product = Cache::remember($cacheKey, 1800, function () use ($id, $cleanId) {
+        $product = Cache::remember($cacheKey, 60, function () use ($id, $cleanId) {
             $query = SanPham::with(['loaiSanPham', 'tonKhoChiNhanhs.cuahang', 'loai', 'tonkho.cuahang']);
             if (is_numeric($cleanId)) {
                 $p = $query->find((int)$cleanId);
@@ -192,6 +192,40 @@ class ProductController extends Controller
 
         if (!$product) {
             return response()->json(['error' => 'Không tìm thấy sản phẩm'], 404);
+        }
+
+        // Tình trạng còn hàng tại các chi nhánh (chỉ cho biết trạng thái còn hàng/hết hàng, không hiển thị số lượng tồn kho)
+        try {
+            $stores = \App\Models\CuaHang::where('trangThai', 1)->get();
+            $existingStocks = $product['tonKhoChiNhanhs'] ?? $product['tonkho'] ?? [];
+            $stockMap = [];
+            foreach ($existingStocks as $st) {
+                $cId = $st['cuaHangId'] ?? $st['cuahang_id'] ?? ($st['cuahang']['id'] ?? 0);
+                if ($cId) {
+                    $stockMap[$cId] = (int)($st['soLuongTon'] ?? $st['so_luong_ton'] ?? 0);
+                }
+            }
+
+            $branchAvailability = [];
+            $hasAnyStock = false;
+            foreach ($stores as $store) {
+                $qty = $stockMap[$store->id] ?? 0;
+                $inStock = $qty > 0;
+                if ($inStock) $hasAnyStock = true;
+
+                $branchAvailability[] = [
+                    'cuaHangId' => $store->id,
+                    'tenCuaHang' => $store->tenCuaHang,
+                    'diaChi' => $store->diaChiChiTiet ?? '',
+                    'soDienThoai' => $store->soDienThoai ?? '',
+                    'conHang' => $inStock,
+                    'trangThaiText' => $inStock ? 'Còn hàng' : 'Tạm hết'
+                ];
+            }
+            $product['branchAvailability'] = $branchAvailability;
+            $product['isOutOfStock'] = !$hasAnyStock;
+        } catch (\Throwable $eBr) {
+            $product['branchAvailability'] = [];
         }
 
         return response()->json($product);
