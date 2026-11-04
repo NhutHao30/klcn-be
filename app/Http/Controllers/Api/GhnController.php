@@ -57,7 +57,7 @@ class GhnController extends Controller
             return response()->json(['code' => 400, 'message' => 'province_id là bắt buộc', 'data' => []]);
         }
 
-        $cacheKey = "ghn_province_wards_v2_{$provinceId}";
+        $cacheKey = "ghn_province_wards_v3_{$provinceId}";
         $wards = \Illuminate\Support\Facades\Cache::remember($cacheKey, 86400, function () use ($provinceId) {
             try {
                 $districtsRes = Http::withoutVerifying()->withHeaders([
@@ -92,19 +92,27 @@ class GhnController extends Controller
                     if ($response && method_exists($response, 'successful') && $response->successful()) {
                         $wardList = $response->json('data') ?? [];
                         foreach ($wardList as $w) {
+                            $distName = $districtMap[$districtId] ?? '';
+                            $wardName = $w['WardName'] ?? '';
+                            $fullName = !empty($distName) ? "{$wardName} ({$distName})" : $wardName;
                             $allWards[] = [
                                 'WardCode' => (string)($w['WardCode'] ?? ''),
-                                'WardName' => $w['WardName'] ?? '',
+                                'WardName' => $wardName,
                                 'DistrictID' => (int)$districtId,
-                                'DistrictName' => $districtMap[$districtId] ?? '',
+                                'DistrictName' => $distName,
+                                'FullName' => $fullName,
                             ];
                         }
                     }
                 }
 
-                // Sort alphabetically by WardName
+                // Sort alphabetically by WardName, then DistrictName
                 usort($allWards, function ($a, $b) {
-                    return strcmp($a['WardName'], $b['WardName']);
+                    $cmp = strcmp($a['WardName'], $b['WardName']);
+                    if ($cmp === 0) {
+                        return strcmp($a['DistrictName'] ?? '', $b['DistrictName'] ?? '');
+                    }
+                    return $cmp;
                 });
 
                 return $allWards;

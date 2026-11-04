@@ -222,32 +222,18 @@ class CartController extends Controller
             ]);
         }
 
-        // 1. Resolve Cart items (Either from DB Cart or direct payload from Mobile/POS)
+        // 1. Resolve Cart items (Either direct payload from Mobile/POS or DB Cart)
         $cart = GioHang::firstOrCreate(['nguoidungId' => $nguoidung->id]);
         $cartItems = ChiTietGioHang::with('sanpham')->where('gioHangId', $cart->id)->get();
 
         $resolvedItems = [];
-        if ($cartItems->isNotEmpty()) {
-            foreach ($cartItems as $ci) {
-                $sp = $ci->sanpham;
-                if ($sp) {
-                    $resolvedItems[] = [
-                        'sanPhamId' => $sp->id,
-                        'soLuong' => (int)$ci->soLuong,
-                        'donGia' => (float)$sp->giaBan,
-                        'sp' => $sp
-                    ];
-                }
-            }
+        // Ưu tiên danh sách items truyền trực tiếp từ client (Mobile App hoặc POS)
+        $rawPayloadItems = $request->input('CHI_TIET') ?? $request->input('items') ?? $request->input('cartItems') ?? [];
+        if (is_string($rawPayloadItems)) {
+            $rawPayloadItems = json_decode($rawPayloadItems, true) ?? [];
         }
 
-        // If DB cart is empty, fallback to items passed in request payload (common for mobile app)
-        if (empty($resolvedItems)) {
-            $rawPayloadItems = $request->input('CHI_TIET') ?? $request->input('items') ?? $request->input('cartItems') ?? [];
-            if (is_string($rawPayloadItems)) {
-                $rawPayloadItems = json_decode($rawPayloadItems, true) ?? [];
-            }
-
+        if (!empty($rawPayloadItems) && is_array($rawPayloadItems)) {
             foreach ($rawPayloadItems as $it) {
                 $rawId = $it['sanPhamId'] ?? $it['MASP'] ?? $it['id'] ?? $it['masp'] ?? null;
                 $spId = $this->resolveProductId($rawId);
@@ -257,6 +243,21 @@ class CartController extends Controller
                     $resolvedItems[] = [
                         'sanPhamId' => $sp->id,
                         'soLuong' => $qty,
+                        'donGia' => (float)$sp->giaBan,
+                        'sp' => $sp
+                    ];
+                }
+            }
+        }
+
+        // Nếu payload rỗng thì lấy từ giỏ hàng trong DB
+        if (empty($resolvedItems) && $cartItems->isNotEmpty()) {
+            foreach ($cartItems as $ci) {
+                $sp = $ci->sanpham;
+                if ($sp) {
+                    $resolvedItems[] = [
+                        'sanPhamId' => $sp->id,
+                        'soLuong' => (int)$ci->soLuong,
                         'donGia' => (float)$sp->giaBan,
                         'sp' => $sp
                     ];
@@ -341,12 +342,28 @@ class CartController extends Controller
         $totalPayment = max(0, ($subtotal + $shippingFee) - $voucherDiscount);
         
         // Dynamically find nearest store with sufficient stock for ALL cart items
-        $storeId = $request->input('cuaHangId') ?? $this->findBestFulfillingStore($cartItems, $address);
+        $storeId = $request->input('cuaHangId') ?? $this->findBestFulfillingStore($resolvedItems, $address);
         if (!$storeId) $storeId = 1;
+
+        // Xử lý upload ảnh minh chứng thanh toán (nếu có từ Mobile/Website)
+        $receiptUrl = null;
+        if ($request->hasFile('receipt') || $request->hasFile('bill') || $request->hasFile('minhChung') || $request->hasFile('image')) {
+            $file = $request->file('receipt') ?? $request->file('bill') ?? $request->file('minhChung') ?? $request->file('image');
+            try {
+                $uploadService = new \App\Services\UploadService();
+                $receiptUrl = $uploadService->uploadImage($file, 'receipts');
+            } catch (\Exception $e) {
+                $filename = time() . '_receipt_' . preg_replace('/[^a-zA-Z0-9_\.-]/', '_', $file->getClientOriginalName());
+                $file->move(public_path('assets/receipts'), $filename);
+                $receiptUrl = '/assets/receipts/' . $filename;
+            }
+        } else if ($request->input('minhChungThanhToan') || $request->input('receipt_url') || $request->input('receiptUri')) {
+            $receiptUrl = $request->input('minhChungThanhToan') ?? $request->input('receipt_url') ?? $request->input('receiptUri');
+        }
 
         DB::beginTransaction();
         try {
-            $donHang = DonHang::create([
+            $orderData = [
                 'maDonHang' => $maDonHang,
                 'nguoidungId' => $nguoidung->id,
                 'cuaHangId' => $storeId,
@@ -358,23 +375,42 @@ class CartController extends Controller
                 'phiVanChuyen' => $shippingFee,
                 'tongThanhToan' => $totalPayment,
                 'phuongThucThanhToan' => $pmCode,
-                'trangThaiThanhToan' => $pmCode == 0 ? 0 : 1,
+                'trangThaiThanhToan' => ($pmCode == 0 ? 0 : ($receiptUrl ? 1 : ($pmCode == 1 ? 0 : 1))),
                 'trangThaiDonHang' => 1, // 1: Chờ xác nhận
                 'diaChiGiaoHang' => $address,
-                'toWardCode' => $request->input('to_ward_code'),
-                'toDistrictId' => $request->input('to_district_id') ? (int)$request->input('to_district_id') : null,
                 'ghiChu' => $note,
-            ]);
+            ];
+
+            if ($receiptUrl) {
+                $orderData['minhChungThanhToan'] = $receiptUrl;
+            }
+
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasColumn('donHang', 'toWardCode')) {
+                    $orderData['toWardCode'] = $request->input('to_ward_code');
+                }
+                if (\Illuminate\Support\Facades\Schema::hasColumn('donHang', 'toDistrictId')) {
+                    $orderData['toDistrictId'] = $request->input('to_district_id') ? (int)$request->input('to_district_id') : null;
+                }
+            } catch (\Throwable $eCol) {
+                // Ignore schema check error
+            }
+
+            $donHang = DonHang::create($orderData);
 
             if ($voucherCode) {
-                DB::table('voucher_khachhang')
-                    ->where('nguoidungId', $nguoidung->id)
-                    ->where('maVoucher', $voucherCode)
-                    ->update([
-                        'trangThai' => 1,
-                        'ngaySuDung' => now(),
-                        'maDonHang' => $maDonHang
-                    ]);
+                try {
+                    DB::table('voucher_khachhang')
+                        ->where('nguoidungId', $nguoidung->id)
+                        ->where('maVoucher', $voucherCode)
+                        ->update([
+                            'trangThai' => 1,
+                            'ngaySuDung' => now(),
+                            'maDonHang' => $maDonHang
+                        ]);
+                } catch (\Throwable $eVo) {
+                    \Illuminate\Support\Facades\Log::warning('Lỗi cập nhật voucher_khachhang: ' . $eVo->getMessage());
+                }
             }
 
             foreach ($resolvedItems as $item) {
@@ -386,17 +422,23 @@ class CartController extends Controller
                     'thanhTien' => $item['donGia'] * $item['soLuong'],
                 ]);
 
-                $stockItem = TonKhoChiNhanh::where('cuaHangId', $storeId)
-                    ->where('sanPhamId', $item['sanPhamId'])
-                    ->first();
-                if ($stockItem && $stockItem->soLuongTon >= $item['soLuong']) {
-                    $stockItem->decrement('soLuongTon', $item['soLuong']);
+                try {
+                    $stockItem = TonKhoChiNhanh::where('cuaHangId', $storeId)
+                        ->where('sanPhamId', $item['sanPhamId'])
+                        ->first();
+                    if ($stockItem && $stockItem->soLuongTon >= $item['soLuong']) {
+                        $stockItem->decrement('soLuongTon', $item['soLuong']);
+                    }
+                } catch (\Throwable $eStock) {
+                    \Illuminate\Support\Facades\Log::warning('Lỗi trừ kho: ' . $eStock->getMessage());
                 }
             }
 
             // Clear DB cart items if any
             if ($cart) {
-                ChiTietGioHang::where('gioHangId', $cart->id)->delete();
+                try {
+                    ChiTietGioHang::where('gioHangId', $cart->id)->delete();
+                } catch (\Throwable $eCartDel) {}
             }
 
             // Ghi nhận lịch sử trạng thái ban đầu của đơn hàng
@@ -408,10 +450,10 @@ class CartController extends Controller
                     'ghnStatusCode' => $pmCode == 0 ? 'created_cod' : ($pmCode == 1 ? 'paid_vietqr' : 'paid_momo'),
                     'moTaChiTiet' => $pmCode == 0 
                         ? 'Khách đặt đơn hàng Online (COD - Chưa thanh toán)' 
-                        : ($pmCode == 1 ? 'Khách đã thanh toán trực tuyến qua VietQR tự động thành công' : 'Khách đã thanh toán trực tuyến qua Ví MoMo tự động thành công'),
+                        : ($pmCode == 1 ? 'Khách đặt đơn hàng chuyển khoản VietQR' : 'Khách đặt đơn hàng thanh toán Ví MoMo'),
                     'nguonCapNhat' => 2, // Khách hàng / Hệ thống
                 ]);
-            } catch (\Exception $eHist) {
+            } catch (\Throwable $eHist) {
                 \Illuminate\Support\Facades\Log::warning('Lỗi ghi lịch sử đơn hàng: ' . $eHist->getMessage());
             }
 
@@ -422,7 +464,7 @@ class CartController extends Controller
             if (!empty($userEmail)) {
                 try {
                     \App\Jobs\SendOrderEmailJob::dispatch($userEmail, $donHang->maDonHang, $donHang->tongThanhToan, $nguoidung->hoTen ?? 'Khách hàng');
-                } catch (\Exception $emailError) {
+                } catch (\Throwable $emailError) {
                     \Illuminate\Support\Facades\Log::warning('Không thể khởi chạy job gửi email đơn hàng: ' . $emailError->getMessage());
                 }
             }
@@ -432,8 +474,9 @@ class CartController extends Controller
                 'data' => $donHang->load('chitiet')
             ], 201);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             DB::rollBack();
+            \Illuminate\Support\Facades\Log::error('Lỗi checkout: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
             return response()->json(['error' => 'Lỗi xử lý đơn hàng: ' . $e->getMessage()], 500);
         }
     }
@@ -441,7 +484,7 @@ class CartController extends Controller
     /**
      * Dynamically route order to the nearest active branch that has sufficient stock for ALL items
      */
-    private function findBestFulfillingStore($cartItems, $addressString)
+    private function findBestFulfillingStore($items, $addressString)
     {
         $stores = \App\Models\CuaHang::where('trangThai', 1)->get();
         if ($stores->isEmpty()) {
@@ -451,11 +494,15 @@ class CartController extends Controller
         $eligibleStores = [];
         foreach ($stores as $store) {
             $hasAllStock = true;
-            foreach ($cartItems as $ci) {
+            foreach ($items as $ci) {
+                $spId = is_array($ci) ? ($ci['sanPhamId'] ?? 0) : ($ci->sanPhamId ?? 0);
+                $qty = is_array($ci) ? ($ci['soLuong'] ?? 1) : ($ci->soLuong ?? 1);
+                if (!$spId) continue;
+
                 $stockItem = TonKhoChiNhanh::where('cuaHangId', $store->id)
-                    ->where('sanPhamId', $ci->sanPhamId)
+                    ->where('sanPhamId', $spId)
                     ->first();
-                if (!$stockItem || $stockItem->soLuongTon < $ci->soLuong) {
+                if (!$stockItem || $stockItem->soLuongTon < $qty) {
                     $hasAllStock = false;
                     break;
                 }
@@ -489,7 +536,7 @@ class CartController extends Controller
             }
         }
 
-        return $bestStore ? $bestStore->id : 1;
+        return $bestStore ? $bestStore->id : ($stores->first()->id ?? 1);
     }
 
     /**
