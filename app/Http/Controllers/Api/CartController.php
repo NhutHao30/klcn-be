@@ -282,6 +282,9 @@ class CartController extends Controller
         $address = $request->input('address') ?? $request->input('diaChiGiaoHang') ?? $request->input('DIACHI') ?? 'Địa chỉ mặc định';
         $note = $request->input('note') ?? $request->input('ghiChu') ?? $request->input('GHICHU') ?? '';
         $maDonHang = $request->input('mahd') ?? $request->input('MAHD') ?? ('HD' . date('YmdHis') . rand(100, 999));
+        while (DonHang::where('maDonHang', $maDonHang)->exists()) {
+            $maDonHang = 'HD' . date('YmdHis') . rand(1000, 9999);
+        }
 
         $receiverName = $request->input('HOTEN') ?? $request->input('receiverName') ?? $request->input('hoTenNguoiNhan') ?? $nguoidung->hoTen;
         $receiverPhone = $request->input('SDT') ?? $request->input('receiverPhone') ?? $request->input('soDienThoai') ?? $nguoidung->soDienThoai;

@@ -144,15 +144,28 @@ class GhnController extends Controller
             'service_type_id' => 2, // Standard delivery
             'insurance_value' => $request->insurance_value ?? 0,
             'coupon' => null,
-            'to_ward_code' => $request->to_ward_code,
-            'to_district_id' => $request->to_district_id,
-            'weight' => $request->weight,
+            'to_ward_code' => (string)$request->to_ward_code,
+            'to_district_id' => (int)$request->to_district_id,
+            'weight' => (int)$request->weight,
             'length' => 20,
             'width' => 20,
             'height' => 10
         ]);
 
-        return $response->json();
+        $data = $response->json();
+        if (!$response->successful() || empty($data['data']['total'])) {
+            return response()->json([
+                'code' => 200,
+                'message' => 'Success (fallback standard fee)',
+                'data' => [
+                    'total' => 30000,
+                    'service_fee' => 30000,
+                    'insurance_fee' => 0
+                ]
+            ]);
+        }
+
+        return $data;
     }
 
     /**
