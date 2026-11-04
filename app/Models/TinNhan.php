@@ -9,8 +9,24 @@ class TinNhan extends Model
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'tinnhan';
+    protected $table = 'tinNhan';
     protected $primaryKey = 'id';
+
+    public function getTable()
+    {
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('tinNhan')) {
+                return 'tinNhan';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('tinnhan')) {
+                return 'tinnhan';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('tin_nhan')) {
+                return 'tin_nhan';
+            }
+        } catch (\Throwable $e) {}
+        return 'tinNhan';
+    }
 
     protected $fillable = [
         'cuocTroChuyenId',

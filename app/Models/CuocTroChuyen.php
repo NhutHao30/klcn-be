@@ -9,8 +9,24 @@ class CuocTroChuyen extends Model
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'cuoctrochuyen';
+    protected $table = 'cuocTroChuyen';
     protected $primaryKey = 'id';
+
+    public function getTable()
+    {
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('cuocTroChuyen')) {
+                return 'cuocTroChuyen';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('cuoctrochuyen')) {
+                return 'cuoctrochuyen';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('cuoc_tro_chuyen')) {
+                return 'cuoc_tro_chuyen';
+            }
+        } catch (\Throwable $e) {}
+        return 'cuocTroChuyen';
+    }
 
     protected $fillable = [
         'khachHangId',

@@ -22,38 +22,51 @@ class ChatController extends Controller
      */
     public function getConversations(Request $request)
     {
-        $userLogin = Auth::guard('api')->user();
-        if (!$userLogin) {
-            return response()->json(['error' => 'Chưa đăng nhập'], 401);
-        }
-
-        if ($userLogin->MAROLE == 3) {
-            // Khách hàng -> Lấy danh sách đoạn chat của họ
-            $khachHang = KhachHang::findByUsername($userLogin->username) ?? NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-            if (!$khachHang) {
-                return response()->json(['error' => 'Không tìm thấy hồ sơ khách hàng'], 404);
+        try {
+            $userLogin = Auth::guard('api')->user();
+            if (!$userLogin) {
+                return response()->json(['error' => 'Chưa đăng nhập'], 401);
             }
 
-            $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
-                $q->orderBy('id', 'desc')->take(1);
-            }, 'khachhang'])
-            ->where('khachHangId', $khachHang->id)
-            ->orderBy('updatedAt', 'desc')
-            ->get();
+            $isCustomer = ($userLogin->vaiTroId == 3 || $userLogin->MAROLE == 3 || $userLogin->MAROLE == 0);
 
-            return response()->json($conversations);
+            if ($isCustomer) {
+                // Khách hàng -> Lấy danh sách đoạn chat của họ
+                $khachHang = KhachHang::findByUsername($userLogin->username) ?? NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+                if (!$khachHang) {
+                    $khachHang = NguoiDung::create([
+                        'taiKhoanId' => $userLogin->id,
+                        'hoTen' => $userLogin->username ?? 'Khách hàng',
+                        'loaiNguoiDung' => 0,
+                    ]);
+                }
 
-        } else {
-            // Nhân viên / Admin / CSKH -> Ghi nhận đang trực tuyến & Lấy tất cả đoạn chat
-            \App\Services\StaffPresenceService::recordOnline((int)$userLogin->id);
+                $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
+                    $q->orderBy('id', 'desc')->take(1);
+                }, 'khachhang'])
+                ->where('khachHangId', $khachHang->id)
+                ->orderBy('updatedAt', 'desc')
+                ->get();
 
-            $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
-                $q->orderBy('id', 'desc')->take(1);
-            }, 'khachhang'])
-            ->orderBy('updatedAt', 'desc')
-            ->get();
+                return response()->json($conversations);
 
-            return response()->json($conversations);
+            } else {
+                // Nhân viên / Admin / CSKH -> Ghi nhận đang trực tuyến & Lấy tất cả đoạn chat
+                try {
+                    \App\Services\StaffPresenceService::recordOnline((int)$userLogin->id);
+                } catch (\Throwable $eStaff) {}
+
+                $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
+                    $q->orderBy('id', 'desc')->take(1);
+                }, 'khachhang'])
+                ->orderBy('updatedAt', 'desc')
+                ->get();
+
+                return response()->json($conversations);
+            }
+        } catch (\Throwable $e) {
+            Log::error('Lỗi getConversations: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            return response()->json(['error' => 'Lỗi tải danh sách trò chuyện: ' . $e->getMessage()], 500);
         }
     }
 
@@ -62,35 +75,40 @@ class ChatController extends Controller
      */
     public function startConversation(Request $request)
     {
-        $userLogin = Auth::guard('api')->user();
-        if (!$userLogin) {
-            return response()->json(['error' => 'Vui lòng đăng nhập để bắt đầu trò chuyện'], 401);
+        try {
+            $userLogin = Auth::guard('api')->user();
+            if (!$userLogin) {
+                return response()->json(['error' => 'Vui lòng đăng nhập để bắt đầu trò chuyện'], 401);
+            }
+
+            $khachHang = KhachHang::findByUsername($userLogin->username) ?? NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            if (!$khachHang) {
+                // Tự động tạo hồ sơ khách hàng nếu tài khoản chưa có bản ghi nguoidung
+                $khachHang = NguoiDung::create([
+                    'taiKhoanId' => $userLogin->id,
+                    'hoTen' => $userLogin->username ?? 'Khách hàng',
+                    'loaiNguoiDung' => 0,
+                ]);
+            }
+
+            // Tìm đoạn chat đang hoạt động
+            $conversation = CuocTroChuyen::where('khachHangId', $khachHang->id)
+                                         ->where('trangThaiChat', 'DANG_HOAT_DONG')
+                                         ->first();
+
+            if (!$conversation) {
+                // Tạo đoạn chat mới
+                $conversation = CuocTroChuyen::create([
+                    'khachHangId' => $khachHang->id,
+                    'trangThaiChat' => 'DANG_HOAT_DONG'
+                ]);
+            }
+
+            return response()->json($conversation);
+        } catch (\Throwable $e) {
+            Log::error('Lỗi startConversation: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            return response()->json(['error' => 'Lỗi khởi tạo đoạn chat: ' . $e->getMessage()], 500);
         }
-
-        $khachHang = KhachHang::findByUsername($userLogin->username) ?? NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-        if (!$khachHang) {
-            // Tự động tạo hồ sơ khách hàng nếu tài khoản chưa có bản ghi nguoidung
-            $khachHang = NguoiDung::create([
-                'taiKhoanId' => $userLogin->id,
-                'hoTen' => $userLogin->username,
-                'loaiNguoiDung' => 0,
-            ]);
-        }
-
-        // Tìm đoạn chat đang hoạt động
-        $conversation = CuocTroChuyen::where('khachHangId', $khachHang->id)
-                                     ->where('trangThaiChat', 'DANG_HOAT_DONG')
-                                     ->first();
-
-        if (!$conversation) {
-            // Tạo đoạn chat mới
-            $conversation = CuocTroChuyen::create([
-                'khachHangId' => $khachHang->id,
-                'trangThaiChat' => 'DANG_HOAT_DONG'
-            ]);
-        }
-
-        return response()->json($conversation);
     }
 
     /**

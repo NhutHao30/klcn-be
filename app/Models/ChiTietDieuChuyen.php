@@ -11,7 +11,23 @@ class ChiTietDieuChuyen extends Model
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'chitietdieuchuyen';
+    protected $table = 'chiTietDieuChuyen';
+
+    public function getTable()
+    {
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('chiTietDieuChuyen')) {
+                return 'chiTietDieuChuyen';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('chitietdieuchuyen')) {
+                return 'chitietdieuchuyen';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('chitiet_dieuchuyen')) {
+                return 'chitiet_dieuchuyen';
+            }
+        } catch (\Throwable $e) {}
+        return 'chiTietDieuChuyen';
+    }
 
     protected $fillable = [
         'yeuCauId',

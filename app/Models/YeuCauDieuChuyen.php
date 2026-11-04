@@ -11,7 +11,23 @@ class YeuCauDieuChuyen extends Model
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'yeucaudieuchuyen';
+    protected $table = 'yeuCauDieuChuyen';
+
+    public function getTable()
+    {
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('yeuCauDieuChuyen')) {
+                return 'yeuCauDieuChuyen';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('yeucaudieuchuyen')) {
+                return 'yeucaudieuchuyen';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('yeucau_dieuchuyen')) {
+                return 'yeucau_dieuchuyen';
+            }
+        } catch (\Throwable $e) {}
+        return 'yeuCauDieuChuyen';
+    }
 
     protected $fillable = [
         'cuaHangXuatId',

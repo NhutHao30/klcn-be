@@ -345,8 +345,11 @@ class CartController extends Controller
         $totalPayment = max(0, ($subtotal + $shippingFee) - $voucherDiscount);
         
         // Dynamically find nearest store with sufficient stock for ALL cart items
+        $defaultStoreId = \App\Models\CuaHang::where('trangThai', 1)->value('id') ?? \App\Models\CuaHang::value('id') ?? 1;
         $storeId = $request->input('cuaHangId') ?? $this->findBestFulfillingStore($resolvedItems, $address);
-        if (!$storeId) $storeId = 1;
+        if (!$storeId || !\App\Models\CuaHang::where('id', $storeId)->exists()) {
+            $storeId = $defaultStoreId;
+        }
 
         // Xử lý upload ảnh minh chứng thanh toán (nếu có từ Mobile/Website)
         $receiptUrl = null;
