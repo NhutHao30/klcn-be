@@ -76,14 +76,12 @@ class ChatController extends Controller
 
             if ($isCustomer) {
                 $khachHang = $this->resolveProfile($userLogin);
+                $khCol = CuocTroChuyen::getKhachHangCol();
 
                 $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
                     $q->orderBy('id', 'desc')->take(1);
                 }, 'khachhang'])
-                ->where(function($q) use ($khachHang) {
-                    $q->where('khachHangId', $khachHang->id)
-                      ->orWhere('khachhang_id', $khachHang->id);
-                })
+                ->where($khCol, $khachHang->id)
                 ->orderBy('id', 'desc')
                 ->get();
 
@@ -95,10 +93,12 @@ class ChatController extends Controller
                     \App\Services\StaffPresenceService::recordOnline((int)$userLogin->id);
                 } catch (\Throwable $eStaff) {}
 
+                $updatedCol = (new CuocTroChuyen)->getUpdatedAtColumn();
+
                 $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
                     $q->orderBy('id', 'desc')->take(1);
                 }, 'khachhang'])
-                ->orderBy('updatedAt', 'desc')
+                ->orderBy($updatedCol, 'desc')
                 ->get();
 
                 return response()->json($conversations);
@@ -121,23 +121,22 @@ class ChatController extends Controller
             }
 
             $khachHang = $this->resolveProfile($userLogin);
+            $khCol = CuocTroChuyen::getKhachHangCol();
+            $ttCol = CuocTroChuyen::getTrangThaiCol();
 
             // Tìm đoạn chat gần nhất của khách hàng (bảo toàn lịch sử tin nhắn)
-            $conversation = CuocTroChuyen::where(function($q) use ($khachHang) {
-                $q->where('khachHangId', $khachHang->id)
-                  ->orWhere('khachhang_id', $khachHang->id);
-            })->latest('id')->first();
+            $conversation = CuocTroChuyen::where($khCol, $khachHang->id)->latest('id')->first();
 
             if (!$conversation) {
                 // Tạo đoạn chat mới nếu khách hàng chưa từng chat
                 $conversation = CuocTroChuyen::create([
-                    'khachHangId' => $khachHang->id,
-                    'trangThaiChat' => 0
+                    $khCol => $khachHang->id,
+                    $ttCol => 0
                 ]);
             } else {
                 // Kích hoạt lại đoạn chat nếu trước đó bị đóng
-                if (($conversation->trangThaiChat ?? 0) != 0) {
-                    $conversation->trangThaiChat = 0;
+                if (($conversation->{$ttCol} ?? 0) != 0) {
+                    $conversation->{$ttCol} = 0;
                     $conversation->save();
                 }
             }
@@ -155,24 +154,28 @@ class ChatController extends Controller
     public function getMessages($conversationId)
     {
         $userLogin = Auth::guard('api')->user();
+        $chatFk = TinNhan::getCuocTroChuyenCol();
+        $typeCol = TinNhan::getNguoiGuiTypeCol();
 
         // Tự động đánh dấu tin nhắn đối phương là ĐÃ XEM (daDoc = 1)
         if ($userLogin) {
             $isCustomer = $this->isCustomerUser($userLogin);
-            if ($isCustomer) {
-                TinNhan::where('cuocTroChuyenId', $conversationId)
-                       ->whereIn('nguoiGuiType', [1, 2, 'nhanvien', 'bot'])
-                       ->where('daDoc', 0)
-                       ->update(['daDoc' => 1]);
-            } else {
-                TinNhan::where('cuocTroChuyenId', $conversationId)
-                       ->whereIn('nguoiGuiType', [0, 'khachhang'])
-                       ->where('daDoc', 0)
-                       ->update(['daDoc' => 1]);
-            }
+            try {
+                if ($isCustomer) {
+                    TinNhan::where($chatFk, $conversationId)
+                           ->whereIn($typeCol, [1, 2, 'nhanvien', 'bot'])
+                           ->where('daDoc', 0)
+                           ->update(['daDoc' => 1]);
+                } else {
+                    TinNhan::where($chatFk, $conversationId)
+                           ->whereIn($typeCol, [0, 'khachhang'])
+                           ->where('daDoc', 0)
+                           ->update(['daDoc' => 1]);
+                }
+            } catch (\Throwable $eDoc) {}
         }
 
-        $messages = TinNhan::where('cuocTroChuyenId', $conversationId)
+        $messages = TinNhan::where($chatFk, $conversationId)
                            ->orderBy('id', 'asc')
                            ->get();
         return response()->json($messages);
@@ -207,10 +210,14 @@ class ChatController extends Controller
             } catch (\Throwable $te) {}
         }
 
+        $chatFk = TinNhan::getCuocTroChuyenCol();
+        $typeCol = TinNhan::getNguoiGuiTypeCol();
+        $contentCol = TinNhan::getNoiDungCol();
+
         $tinNhan = TinNhan::create([
-            'cuocTroChuyenId' => $conversationId,
-            'nguoiGuiType' => $loaiNguoiGui,
-            'noiDung' => $request->NOIDUNG,
+            $chatFk => $conversationId,
+            $typeCol => $loaiNguoiGui,
+            $contentCol => $request->NOIDUNG,
         ]);
 
         // Cập nhật thời gian update của đoạn chat
@@ -231,9 +238,9 @@ class ChatController extends Controller
                     $reply = $geminiService->generateReply((int) $conversationId, $request->NOIDUNG);
                     if ($reply) {
                         $botMessage = TinNhan::create([
-                            'cuocTroChuyenId' => $conversationId,
-                            'nguoiGuiType' => 'bot', // 2
-                            'noiDung' => $reply,
+                            $chatFk => $conversationId,
+                            $typeCol => 'bot', // 2
+                            $contentCol => $reply,
                             'daDoc' => 0,
                         ]);
 
