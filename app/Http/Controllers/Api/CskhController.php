@@ -186,11 +186,10 @@ class CskhController extends Controller
 
             $products = $query->select(
                 'id',
-                'id as MASP',
                 'loaiId',
-                'tenSanPham as TENSP',
-                'giaBan as GIABAN',
-                'hinhAnh as HINHANH',
+                'tenSanPham',
+                'giaBan',
+                'hinhAnh',
                 'donViTinh',
                 'moTa'
             )

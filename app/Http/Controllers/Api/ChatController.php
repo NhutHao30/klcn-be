@@ -210,83 +210,109 @@ class ChatController extends Controller
             } catch (\Throwable $te) {}
         }
 
-        $chatFk = TinNhan::getCuocTroChuyenCol();
-        $typeCol = TinNhan::getNguoiGuiTypeCol();
-        $contentCol = TinNhan::getNoiDungCol();
-
-        $tinNhan = TinNhan::create([
-            $chatFk => $conversationId,
-            $typeCol => $loaiNguoiGui,
-            $contentCol => $request->NOIDUNG,
-        ]);
-
-        // Cập nhật thời gian update của đoạn chat
-        $conversation->touch();
-
-        // Broadcast sự kiện qua Pusher (an toàn)
         try {
-            broadcast(new MessageSent($tinNhan, $conversationId))->toOthers();
-        } catch (\Exception $e) {
-            Log::warning('Pusher broadcast failed: ' . $e->getMessage());
-        }
+            $chatFk = TinNhan::getCuocTroChuyenCol();
+            $typeCol = TinNhan::getNguoiGuiTypeCol();
+            $contentCol = TinNhan::getNoiDungCol();
 
-        // TỰ ĐỘNG PHẢN HỒI BẰNG BOT AI NẾU KHÁCH HÀNG GỬI TIN NHẮN
-        if ($isCustomer) {
+            $tinNhan = new TinNhan();
+            $tinNhan->{$chatFk} = $conversationId;
+            $tinNhan->{$typeCol} = $loaiNguoiGui;
+            $tinNhan->{$contentCol} = $request->NOIDUNG;
+
+            $createdCol = $tinNhan->getCreatedAtColumn();
+            $updatedCol = $tinNhan->getUpdatedAtColumn();
+            $tinNhan->{$createdCol} = now();
+            $tinNhan->{$updatedCol} = now();
+            $tinNhan->save();
+
+            // Cập nhật thời gian update của đoạn chat
             try {
-                $geminiService = app(\App\Services\GeminiChatService::class);
-                if ($geminiService->shouldReply((int) $conversationId)) {
-                    $reply = $geminiService->generateReply((int) $conversationId, $request->NOIDUNG);
-                    if ($reply) {
-                        $botMessage = TinNhan::create([
-                            $chatFk => $conversationId,
-                            $typeCol => 'bot', // 2
-                            $contentCol => $reply,
-                            'daDoc' => 0,
-                        ]);
+                $conversation->touch();
+            } catch (\Throwable $eTouch) {}
 
-                        $conversation->touch();
-
-                        try {
-                            broadcast(new MessageSent($botMessage, $conversationId));
-                        } catch (\Exception $e) {
-                            Log::warning('Pusher broadcast bot reply failed: ' . $e->getMessage());
-                        }
-
-                        // Gắn bot_reply vào response để client (web/mobile) nhận được ngay lập tức
-                        $tinNhan->setAttribute('bot_reply', $botMessage);
-                    }
-                }
+            // Broadcast sự kiện qua Pusher (an toàn)
+            try {
+                broadcast(new MessageSent($tinNhan, $conversationId))->toOthers();
             } catch (\Throwable $e) {
-                Log::error('Bot auto-reply error: ' . $e->getMessage());
+                Log::warning('Pusher broadcast failed: ' . $e->getMessage());
             }
-        }
 
-        return response()->json($tinNhan);
+            // TỰ ĐỘNG PHẢN HỒI BẰNG BOT AI NẾU KHÁCH HÀNG GỬI TIN NHẮN
+            if ($isCustomer) {
+                try {
+                    $geminiService = app(\App\Services\GeminiChatService::class);
+                    if ($geminiService->shouldReply((int) $conversationId)) {
+                        $reply = $geminiService->generateReply((int) $conversationId, $request->NOIDUNG);
+                        if ($reply) {
+                            $botMessage = new TinNhan();
+                            $botMessage->{$chatFk} = $conversationId;
+                            $botMessage->{$typeCol} = 'bot'; // 2
+                            $botMessage->{$contentCol} = $reply;
+                            $botMessage->{$createdCol} = now();
+                            $botMessage->{$updatedCol} = now();
+                            if (\Illuminate\Support\Facades\Schema::hasColumn($tinNhan->getTable(), 'daDoc')) {
+                                $botMessage->daDoc = 0;
+                            }
+                            $botMessage->save();
+
+                            try {
+                                $conversation->touch();
+                            } catch (\Throwable $eTouch) {}
+
+                            try {
+                                broadcast(new MessageSent($botMessage, $conversationId));
+                            } catch (\Throwable $e) {}
+
+                            // Gắn bot_reply vào response để client (web/mobile) nhận được ngay lập tức
+                            $tinNhan->setAttribute('bot_reply', $botMessage);
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    Log::error('Bot auto-reply error: ' . $e->getMessage());
+                }
+            }
+
+            return response()->json($tinNhan);
+        } catch (\Throwable $e) {
+            Log::error('Lỗi sendMessage: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            return response()->json(['error' => 'Lỗi gửi tin nhắn: ' . $e->getMessage()], 500);
+        }
     }
 
     /**
      * Thu hồi tin nhắn
      */
-    public function recallMessage(Request $request, $messageId)
+    public function recallMessage(Request $request, $id, $msgId = null)
     {
+        $targetMsgId = $msgId ?: $id;
         $userLogin = Auth::guard('api')->user();
         if (!$userLogin) {
             return response()->json(['error' => 'Chưa đăng nhập'], 401);
         }
 
-        $tinNhan = TinNhan::find($messageId);
+        $tinNhan = TinNhan::find($targetMsgId);
         if (!$tinNhan) {
             return response()->json(['error' => 'Tin nhắn không tồn tại'], 404);
         }
 
-        $tinNhan->daThuHoi = 1;
-        $tinNhan->save();
+        try {
+            $contentCol = TinNhan::getNoiDungCol();
+            $tinNhan->{$contentCol} = '🚫 Tin nhắn đã bị thu hồi';
+            if (\Illuminate\Support\Facades\Schema::hasColumn($table, 'daThuHoi')) {
+                $tinNhan->daThuHoi = 1;
+            }
+            $tinNhan->save();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Đã thu hồi tin nhắn',
-            'data' => $tinNhan
-        ]);
+            return response()->json([
+                'success' => true,
+                'message' => 'Đã thu hồi tin nhắn thành công',
+                'data' => $tinNhan
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Lỗi recallMessage: ' . $e->getMessage());
+            return response()->json(['error' => 'Không thể thu hồi tin nhắn: ' . $e->getMessage()], 500);
+        }
     }
 
     /**

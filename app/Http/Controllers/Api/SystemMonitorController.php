@@ -631,46 +631,46 @@ class SystemMonitorController extends Controller
                 [
                     'maLoi' => md5('SQLSTATE[HY000] [2002] Connection refused'),
                     'loaiLoi' => 'DATABASE_ERROR',
-                    'tenLoi' => 'SQLSTATE[HY000] [2002] MySQL Connection Refused',
-                    'thongDiep' => 'Không thể kết nối đến máy chủ MySQL cổng 3306. Dịch vụ Database đã bị tắt hoặc gặp sự cố sập (Downtime).',
-                    'tepTin' => 'vendor/laravel/framework/src/Illuminate/Database/Connection.php',
-                    'dongSo' => 825,
+                    'tieuDeLoi' => 'SQLSTATE[HY000] [2002] MySQL Connection Refused',
+                    'file' => 'vendor/laravel/framework/src/Illuminate/Database/Connection.php',
+                    'dong' => 825,
                     'url' => '/api/products',
                     'soLanXuatHien' => 14,
                     'mucDo' => 'CRITICAL',
                     'trangThai' => 0,
+                    'lanCuoiXuatHien' => now(),
                     'stackTrace' => "PDOException: [2002] Connection refused.\nVui lòng khởi động lại dịch vụ MySQL trong XAMPP / Laragon / Docker."
                 ],
                 [
                     'maLoi' => md5('Symfony\Component\HttpKernel\Exception\HttpException: 500 Server Error'),
                     'loaiLoi' => 'SERVER_500',
-                    'tenLoi' => 'HttpException: 500 Internal Server Error',
-                    'thongDiep' => 'Call to undefined method App\Services\AuditTrail::logCustom() in StoreController',
-                    'tepTin' => 'app/Http/Controllers/Api/StoreController.php',
-                    'dongSo' => 48,
+                    'tieuDeLoi' => 'HttpException: 500 Internal Server Error',
+                    'file' => 'app/Http/Controllers/Api/StoreController.php',
+                    'dong' => 48,
                     'url' => '/api/admin/stores',
                     'soLanXuatHien' => 8,
                     'mucDo' => 'HIGH',
                     'trangThai' => 1,
+                    'lanCuoiXuatHien' => now()->subHours(2),
                     'stackTrace' => "Error: Call to undefined method App\\Services\\AuditTrail::logCustom() at StoreController.php:48"
                 ],
                 [
                     'maLoi' => md5('Illuminate\Session\TokenMismatchException: CSRF token mismatch'),
                     'loaiLoi' => 'BUG',
-                    'tenLoi' => 'JWTException: Token Expired or Invalid',
-                    'thongDiep' => 'Phiên đăng nhập JWT hết hạn hoặc Token xác thực không hợp lệ',
-                    'tepTin' => 'app/Http/Middleware/Authenticate.php',
-                    'dongSo' => 32,
+                    'tieuDeLoi' => 'JWTException: Token Expired or Invalid',
+                    'file' => 'app/Http/Middleware/Authenticate.php',
+                    'dong' => 32,
                     'url' => '/api/admin/reviews/6/toggle-visibility',
                     'soLanXuatHien' => 5,
                     'mucDo' => 'MEDIUM',
                     'trangThai' => 0,
+                    'lanCuoiXuatHien' => now()->subDay(),
                     'stackTrace' => "Tymon\\JWTAuth\\Exceptions\\TokenExpiredException: Token has expired at JWTGuard.php:65"
                 ]
             ];
 
             foreach ($samples as $s) {
-                SystemErrorLog::create($s);
+                SystemErrorLog::updateOrCreate(['maLoi' => $s['maLoi']], $s);
             }
         } catch (\Throwable $e) {}
     }

@@ -45,9 +45,37 @@ class VoucherController extends Controller
         return response()->json($vouchers);
     }
 
+    private function findVoucherByIdentifier($id)
+    {
+        if (empty($id)) return null;
+
+        $voucher = null;
+        try {
+            $voucher = Voucher::where('MA_VOUCHER', $id)->first();
+        } catch (\Throwable $e) {}
+
+        if (!$voucher) {
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasColumn('voucher', 'ma_voucher')) {
+                    $voucher = Voucher::where('ma_voucher', $id)->first();
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        if (!$voucher && is_numeric($id)) {
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasColumn('voucher', 'id')) {
+                    $voucher = Voucher::where('id', $id)->first();
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        return $voucher;
+    }
+
     public function show($code)
     {
-        $voucher = Voucher::where('MA_VOUCHER', $code)->first();
+        $voucher = $this->findVoucherByIdentifier($code);
         if (!$voucher || !$voucher->isValid) {
             return response()->json(['error' => 'Mã Voucher không tồn tại hoặc đã hết hạn'], 404);
         }
@@ -119,7 +147,7 @@ class VoucherController extends Controller
 
     public function update(Request $request, $id)
     {
-        $voucher = Voucher::where('MA_VOUCHER', $id)->first();
+        $voucher = $this->findVoucherByIdentifier($id);
         if (!$voucher) {
             return response()->json(['error' => 'Không tìm thấy Voucher'], 404);
         }
@@ -155,10 +183,21 @@ class VoucherController extends Controller
 
     public function destroy($id)
     {
-        $voucher = Voucher::where('MA_VOUCHER', $id)->first();
+        $voucher = $this->findVoucherByIdentifier($id);
         if (!$voucher) {
             return response()->json(['error' => 'Không tìm thấy Voucher'], 404);
         }
+
+        $voucherCode = $voucher->MA_VOUCHER ?? $voucher->ma_voucher ?? $id;
+
+        // Xóa các liên kết trong ví của khách hàng nếu có
+        try {
+            DB::table('voucher_khachhang')->where('maVoucher', $voucherCode)->delete();
+        } catch (\Throwable $e) {}
+
+        try {
+            DB::table('khuyenmai_khachhang')->where('maKhuyenMai', $voucherCode)->delete();
+        } catch (\Throwable $e) {}
 
         $voucher->delete();
         return response()->json(['message' => 'Xóa Voucher thành công']);
