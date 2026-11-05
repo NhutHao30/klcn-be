@@ -213,7 +213,10 @@ class NewsController extends Controller
         }
         unset($cmt);
 
-        return response()->json(array_values($roots));
+        return response()->json(array_values($roots))
+            ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            ->header('Pragma', 'no-cache')
+            ->header('Expires', '0');
     }
 
     public function postComment(Request $request, $id)

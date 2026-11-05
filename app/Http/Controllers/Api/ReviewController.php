@@ -95,7 +95,10 @@ class ReviewController extends Controller
             ];
         });
 
-        return response()->json($data);
+        return response()->json($data)
+            ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            ->header('Pragma', 'no-cache')
+            ->header('Expires', '0');
     }
 
     /**
@@ -328,7 +331,10 @@ class ReviewController extends Controller
             ];
         });
 
-        return response()->json($reviews);
+        return response()->json($reviews)
+            ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            ->header('Pragma', 'no-cache')
+            ->header('Expires', '0');
     }
 
     /**
