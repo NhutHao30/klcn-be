@@ -37,6 +37,12 @@ class GeminiChatService
             return false;
         }
 
+        // QUY TẮC BẮT BUỘC: Chatbot AI CHỈ hoạt động khi KHÔNG CÓ nhân viên CSKH nào online!
+        // Nếu có ít nhất 1 nhân viên CSKH/Admin đang trực tuyến, Chatbot AI sẽ dừng và nhường quyền tư vấn cho nhân viên.
+        if (\App\Services\StaffPresenceService::isStaffOnline()) {
+            return false;
+        }
+
         if ($this->mode === 'night_only') {
             $hour = (int) now()->timezone('Asia/Ho_Chi_Minh')->format('H');
             return ($hour >= 21 || $hour < 8);
@@ -98,14 +104,19 @@ QUY TẮC BẢO MẬT & PHẠM VI TRẢ LỜI:
    - Gợi ý bánh sinh nhật, kỷ niệm, quà tặng, sự kiện...
    - Cách bảo quản bánh và ưu đãi công khai.
    - Trả lời ngắn gọn, thân thiện, lịch sự (khoảng 2-4 câu).
-2. TUYỆT ĐỐI KHÔNG tiết lộ doanh thu, chi phí, lợi nhuận, lương nhân viên hay tài chính nội bộ.
-3. Về tồn kho: Chỉ nói "Hiện đang Còn hàng" hoặc "Tạm hết hàng", KHÔNG nói số lượng tồn cụ thể.
+2. QUY TẮC BẮT BUỘC VỀ TỒN KHO TẠI TỪNG CHI NHÁNH:
+   - Khi khách hàng hỏi một sản phẩm cụ thể còn hàng ở chi nhánh / cửa hàng nào gần họ: Bạn BẮT BUỘC phải đọc mục 'Tình trạng tồn kho' của sản phẩm đó trong danh mục "SẢN PHẨM & TỒN KHO THEO CHI NHÁNH" bên dưới.
+   - CHỈ ĐƯỢC BÁO CÒN HÀNG tại đúng các chi nhánh được ghi nhận là 'CÒN HÀNG tại: [...]'.
+   - Nếu sản phẩm chỉ còn hàng ở 1 chi nhánh duy nhất, bạn PHẢI NÓI RÕ: Dạ sản phẩm hiện chỉ còn hàng tại [tên chi nhánh], các chi nhánh khác hiện đang tạm hết hàng ạ.
+   - TUYỆT ĐỐI KHÔNG ĐƯỢC TỰ Ý NÓI "còn hàng ở tất cả các chi nhánh" nếu dữ liệu bên dưới không ghi nhận!
+   - Không được nói ra con số tồn kho cụ thể (chỉ nói "Còn hàng" hoặc "Tạm hết hàng").
+3. TUYỆT ĐỐI KHÔNG tiết lộ doanh thu, chi phí, lợi nhuận, lương nhân viên hay tài chính nội bộ.
 4. Nếu khách hỏi ngoài lề (chính trị, code, giải toán...): Lịch sự từ chối và hướng về bánh Givral.
 
 --- DANH SÁCH CHI NHÁNH ---
 {$storesContext}
 
---- SẢN PHẨM HIỆN CÓ ---
+--- SẢN PHẨM & TỒN KHO THEO CHI NHÁNH ---
 {$productsContext}
 TEXT;
 
@@ -208,7 +219,7 @@ TEXT;
     protected function buildStoresContext(): string
     {
         try {
-            $stores = CuaHang::where('trangThai', 1)->take(5)->get();
+            $stores = CuaHang::where('trangThai', 1)->get();
             if ($stores->isEmpty()) {
                 return "- Trụ sở Givral Bakery: 140 Lê Trọng Tấn, Tây Thạnh, Tân Phú, TP.HCM (Hotline: 028 3844 4544)";
             }
@@ -223,19 +234,44 @@ TEXT;
     }
 
     /**
-     * Xây dựng ngữ cảnh sản phẩm từ DB
+     * Xây dựng ngữ cảnh sản phẩm kèm tồn kho theo từng chi nhánh cụ thể từ DB
      */
     protected function buildProductsContext(): string
     {
         try {
-            $products = SanPham::where('trangThai', 1)->take(12)->get();
+            $products = SanPham::with(['tonKhoChiNhanhs.cuahang'])->where('trangThai', 1)->take(30)->get();
             if ($products->isEmpty()) {
                 return "- Bánh Kem Bắp Givral (320.000đ), Bánh Donut Socola (19.920đ), Bánh Tiramisu (65.000đ)";
             }
             $lines = [];
             foreach ($products as $p) {
                 $price = number_format($p->giaGiam ?: $p->giaBan, 0, ',', '.');
-                $lines[] = "- {$p->tenSanPham}: {$price} đ";
+                $code = $p->MASP ?: ('SP' . str_pad($p->id, 3, '0', STR_PAD_LEFT));
+
+                // Bóc tách tồn kho thực tế tại từng chi nhánh (soLuongTon > 0)
+                $availableBranches = [];
+                $outOfStockBranches = [];
+                if ($p->tonKhoChiNhanhs && $p->tonKhoChiNhanhs->isNotEmpty()) {
+                    foreach ($p->tonKhoChiNhanhs as $tk) {
+                        $storeName = $tk->cuahang ? ($tk->cuahang->tenCuaHang ?? "Chi nhánh #{$tk->cuaHangId}") : "Chi nhánh #{$tk->cuaHangId}";
+                        if ((int)$tk->soLuongTon > 0) {
+                            $availableBranches[] = $storeName;
+                        } else {
+                            $outOfStockBranches[] = $storeName;
+                        }
+                    }
+                }
+
+                if (!empty($availableBranches)) {
+                    $stockDesc = "CÒN HÀNG tại: [" . implode(', ', $availableBranches) . "]";
+                    if (!empty($outOfStockBranches)) {
+                        $stockDesc .= " (Tạm hết tại: " . implode(', ', $outOfStockBranches) . ")";
+                    }
+                } else {
+                    $stockDesc = (int)$p->soLuongTon > 0 ? "Còn hàng tại hệ thống" : "Tạm hết hàng trên toàn hệ thống";
+                }
+
+                $lines[] = "- {$p->tenSanPham} (#{$code}): {$price} đ | Tình trạng: {$stockDesc}";
             }
             return implode("\n", $lines);
         } catch (\Throwable $e) {

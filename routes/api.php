@@ -120,6 +120,7 @@ Route::get('/ghn/districts', [\App\Http\Controllers\Api\GhnController::class, 'g
 Route::get('/ghn/wards', [\App\Http\Controllers\Api\GhnController::class, 'getWards']);
 Route::get('/ghn/wards-by-province', [\App\Http\Controllers\Api\GhnController::class, 'getWardsByProvince']);
 Route::post('/ghn/fee', [\App\Http\Controllers\Api\GhnController::class, 'calculateFee']);
+Route::post('/ghn/create-order/{orderId}', [\App\Http\Controllers\Api\GhnController::class, 'createOrderManual']);
 Route::post('/ghn/webhook', [\App\Http\Controllers\Api\GhnController::class, 'webhook']);
 Route::get('/ghn/tracking/{orderCode}', [\App\Http\Controllers\Api\GhnController::class, 'getTrackingDetail']);
 

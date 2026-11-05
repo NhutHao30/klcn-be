@@ -786,7 +786,7 @@ class OrderController extends Controller
                 'tongTien' => (float) $order->tongThanhToan,
                 'TONG_TIEN' => (float) $order->tongThanhToan,
                 'total' => (float) $order->tongThanhToan,
-                'donViVanChuyen' => $order->loaiDonHang == 1 ? 'Mua tại cửa hàng (POS)' : 'Giao hàng tiêu chuẩn',
+                'donViVanChuyen' => $order->loaiDonHang == 1 ? 'Mua tại cửa hàng (POS)' : 'Giao Hàng Nhanh (GHN Express)',
                 'maVanDon' => $order->maVanDonGhn ?? '',
                 'maVanDonGhn' => $order->maVanDonGhn ?? '',
                 'MAVANDON' => $order->maVanDonGhn ?? '',
@@ -879,13 +879,12 @@ class OrderController extends Controller
             }
         }
 
-        // Đơn hàng chỉ được hủy khi trạng thái là chờ xử lý hoặc chưa giao hàng (1: Chờ xác nhận, 2: Đang chuẩn bị, 7: Chờ lấy hàng)
-        if (in_array((int)$order->trangThaiDonHang, [3, 4, 5])) {
-            return response()->json(['error' => 'Đơn hàng đang giao hoặc đã hoàn thành, không thể hủy!'], 400);
-        }
-
-        if (in_array((int)$order->trangThaiDonHang, [0, 6, 8])) {
-            return response()->json(['error' => 'Đơn hàng này không ở trạng thái có thể hủy!'], 400);
+        // QUY TẮC NGHIỆP VỤ BẮT BUỘC: Đơn hàng CHỈ được phép hủy khi ở trạng thái "đang xử lý" (1: Chờ xác nhận / Chờ xử lý ban đầu).
+        // Khi nhân viên đã xác nhận đơn hàng (2: Đang chuẩn bị / Đang chế biến bánh, 7: Chờ bàn giao GHN, 3: Đang giao, 4/5: Hoàn thành), KHÔNG ĐƯỢC PHÉP HỦY ĐƠN!
+        if ((int)$order->trangThaiDonHang !== 1) {
+            return response()->json([
+                'error' => 'Đơn hàng đã được nhân viên xác nhận và đang trong quy trình chế biến / chuẩn bị giao hàng cho GHN nên không thể hủy đơn! Quý khách vui lòng đợi nhận hàng hoặc yêu cầu Trả hàng & Hoàn tiền sau khi nhận bánh nếu không ưng ý.'
+            ], 400);
         }
 
         // QUY TẮC BẮT BUỘC: Đơn hàng chỉ cho phép hủy khi khách CHƯA THANH TOÁN (trangThaiThanhToan == 0).

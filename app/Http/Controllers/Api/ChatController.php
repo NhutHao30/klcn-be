@@ -378,4 +378,37 @@ class ChatController extends Controller
 
         return response()->json($tinNhan);
     }
+
+    /**
+     * Lấy trạng thái hoạt động của nhân viên CSKH
+     */
+    public function getStaffPresence()
+    {
+        return response()->json([
+            'is_staff_online' => \App\Services\StaffPresenceService::isStaffOnline(),
+            'online_staff_ids' => \App\Services\StaffPresenceService::getOnlineStaffIds(),
+        ]);
+    }
+
+    /**
+     * Nhân viên CSKH định kỳ gửi ping báo hiệu đang trực tuyến
+     */
+    public function pingStaffPresence()
+    {
+        $user = Auth::guard('api')->user();
+        if ($user && in_array((int)$user->vaiTroId, [0, 1, 2, 3, 4, 5])) {
+            \App\Services\StaffPresenceService::recordOnline((int)$user->id);
+            return response()->json(['success' => true, 'is_staff_online' => true]);
+        }
+        return response()->json(['success' => false, 'message' => 'Tài khoản không phải nhân viên CSKH']);
+    }
+
+    /**
+     * Xóa toàn bộ trạng thái trực tuyến của nhân viên (hỗ trợ kiểm thử bot)
+     */
+    public function clearStaffPresence()
+    {
+        \App\Services\StaffPresenceService::clearAll();
+        return response()->json(['success' => true, 'message' => 'Đã xóa toàn bộ trạng thái trực tuyến']);
+    }
 }
