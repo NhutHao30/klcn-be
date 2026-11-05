@@ -938,6 +938,14 @@ class OrderController extends Controller
                     ->first();
                 if ($tonKho) {
                     $tonKho->increment('soLuongTon', $item->soLuong);
+                    \App\Services\InventoryLedgerService::record(
+                        (int)$order->cuaHangId,
+                        (int)$item->sanPhamId,
+                        1,
+                        (int)$item->soLuong,
+                        $order->maDonHang ?? ('HD' . $order->id),
+                        (int)$tonKho->fresh()->soLuongTon
+                    );
                 }
             }
         }
@@ -1195,6 +1203,14 @@ class OrderController extends Controller
                     ->first();
                 if ($tonKho) {
                     $tonKho->increment('soLuongTon', $item->soLuong);
+                    \App\Services\InventoryLedgerService::record(
+                        (int)$order->cuaHangId,
+                        (int)$item->sanPhamId,
+                        1,
+                        (int)$item->soLuong,
+                        $order->maDonHang ?? ('HD' . $order->id),
+                        (int)$tonKho->fresh()->soLuongTon
+                    );
                 }
             }
             $desc = "Xác nhận hàng hoàn: Bánh còn dùng được -> Đã cộng trả lại kho. Ghi chú: {$reason}";
@@ -1382,6 +1398,14 @@ class OrderController extends Controller
                     ->first();
                 if ($tonKho) {
                     $tonKho->increment('soLuongTon', $item->soLuong);
+                    \App\Services\InventoryLedgerService::record(
+                        (int)$order->cuaHangId,
+                        (int)$item->sanPhamId,
+                        1,
+                        (int)$item->soLuong,
+                        $order->maDonHang ?? ('HD' . $order->id),
+                        (int)$tonKho->fresh()->soLuongTon
+                    );
                 }
             }
             $desc = "Duyệt trả hàng: Bánh còn nguyên -> Đã cộng trả lại kho. Ghi chú: {$note}";

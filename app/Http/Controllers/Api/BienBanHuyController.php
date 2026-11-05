@@ -104,14 +104,124 @@ class BienBanHuyController extends Controller
 
             $disposal = BienBanHuy::find($res->bienban_id);
 
+            if ($autoSign && $disposal) {
+                try {
+                    $disposal->load('chiTiets');
+                    foreach ($disposal->chiTiets as $ct) {
+                        $hasLedger = \App\Models\NhatKyKho::where('cuaHangId', $disposal->cuaHangId)
+                            ->where('sanPhamId', $ct->sanPhamId)
+                            ->where('maThamChieu', $disposal->maBienBan)
+                            ->exists();
+                        if (!$hasLedger) {
+                            \App\Services\InventoryLedgerService::record(
+                                (int)$disposal->cuaHangId,
+                                (int)$ct->sanPhamId,
+                                5, // 5: Xuất hủy hàng
+                                -(int)$ct->soLuongHuy,
+                                $disposal->maBienBan
+                            );
+                        }
+                    }
+                } catch (\Throwable $eLedger) {}
+            }
+
             return response()->json([
                 'success' => true,
                 'status' => true,
-                'message' => $autoSign ? 'Tạo biên bản hủy & tự động ký duyệt thành công' : 'Tạo biên bản hủy thành công, đã gửi yêu cầu trình ký',
+                'message' => $autoSign ? 'Tạo biên bản hủy & tự động ký duyệt thành công' : 'Nhân viên kho đã lập biên bản hủy thành công, đang chờ Quản lý chi nhánh phê duyệt',
                 'data' => $disposal ? $disposal->load(['cuaHang', 'nguoiLap', 'chuKySos', 'chiTiets.loHang', 'chiTiets.sanPham']) : null,
             ], 201);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Lỗi tạo biên bản hủy: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function duyet(Request $request, $id)
+    {
+        $user = auth('api')->user();
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Chưa đăng nhập'], 401);
+        }
+        $vaiTroId = (int) ($user->vaiTroId ?? 0);
+        $maRole = isset($user->MAROLE) ? (int) $user->MAROLE : -1;
+        if ($vaiTroId !== 2 && $maRole !== 1) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Chỉ Quản lý chi nhánh mới có quyền phê duyệt biên bản hủy!',
+            ], 403);
+        }
+
+        $disposal = BienBanHuy::with(['chiTiets.loHang', 'cuaHang', 'chuKySos'])->find($id);
+        if (!$disposal) {
+            return response()->json(['success' => false, 'message' => 'Không tìm thấy biên bản hủy'], 404);
+        }
+
+        if ((int)$disposal->trangThai === 1) {
+            return response()->json(['success' => false, 'message' => 'Biên bản hủy này đã được phê duyệt trước đó!'], 400);
+        }
+
+        $profile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first() ?? $user->nguoidung;
+        $tenNguoiKy = $profile?->hoTen ?? $user->username;
+
+        DB::beginTransaction();
+        try {
+            $slot = ChuKySo::firstOrCreate(
+                ['loaiTaiLieu' => 2, 'taiLieuId' => $disposal->id, 'vaiTroKy' => 3],
+                [
+                    'maChuKy' => 'SIG-BBH-' . $disposal->id . '-R3-' . strtoupper(substr(md5(uniqid()), 0, 6)),
+                    'tenNguoiKy' => $tenNguoiKy,
+                    'trangThai' => 0,
+                ]
+            );
+
+            DB::statement('CALL sp_sign_role(?, ?, ?, ?, ?, @is_fully_signed, @error)', [
+                $slot->id,
+                $profile?->id ?? $user->id,
+                json_encode(['docId' => $disposal->id, 'signer' => $tenNguoiKy, 'type' => 'BBH']),
+                'BRANCH_MANAGER_SIGNATURE',
+                'Quản lý chi nhánh đã phê duyệt biên bản hủy'
+            ]);
+
+            $res = DB::select('SELECT @is_fully_signed AS is_fully_signed, @error AS error')[0];
+            if ($res->error) {
+                DB::rollBack();
+                return response()->json(['success' => false, 'message' => $res->error], 400);
+            }
+
+            $slot->update(['tenNguoiKy' => $tenNguoiKy]);
+            DB::commit();
+
+            // Đảm bảo sổ cái được ghi nhận
+            try {
+                $freshBB = BienBanHuy::with('chiTiets')->find($disposal->id);
+                if ($freshBB) {
+                    foreach ($freshBB->chiTiets as $ct) {
+                        $hasLedger = \App\Models\NhatKyKho::where('cuaHangId', $freshBB->cuaHangId)
+                            ->where('sanPhamId', $ct->sanPhamId)
+                            ->where('maThamChieu', $freshBB->maBienBan)
+                            ->exists();
+                        if (!$hasLedger) {
+                            \App\Services\InventoryLedgerService::record(
+                                (int)$freshBB->cuaHangId,
+                                (int)$ct->sanPhamId,
+                                5, // 5: Xuất hủy hàng
+                                -(int)$ct->soLuongHuy,
+                                $freshBB->maBienBan
+                            );
+                        }
+                    }
+                }
+            } catch (\Throwable $eLedger) {}
+
+            return response()->json([
+                'success' => true,
+                'status' => true,
+                'message' => 'Quản lý chi nhánh đã phê duyệt biên bản hủy thành công! Tồn kho đã được xuất hủy.',
+                'data' => $disposal->fresh(['cuaHang', 'nguoiLap', 'chuKySos', 'chiTiets.loHang', 'chiTiets.sanPham'])
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Lỗi khi phê duyệt: ' . $e->getMessage()], 500);
         }
     }
 

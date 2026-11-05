@@ -426,6 +426,16 @@ class PosShiftController extends Controller
                 );
                 $tonKho->soLuongTon = max(0, (int)$tonKho->soLuongTon - $it['soLuong']);
                 $tonKho->save();
+
+                // Ghi nhận vào sổ cái tồn kho (Loại 0: Bán hàng POS)
+                \App\Services\InventoryLedgerService::record(
+                    (int)$cuahangId,
+                    (int)$it['sanPhamId'],
+                    0, // Bán hàng (POS)
+                    -$it['soLuong'],
+                    $donHang->maDonHang ?? ('POS_' . $donHang->id),
+                    (int)$tonKho->soLuongTon
+                );
             }
 
             DB::commit();

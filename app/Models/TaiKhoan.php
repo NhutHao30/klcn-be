@@ -77,14 +77,15 @@ class TaiKhoan extends Authenticatable implements JWTSubject
 
     /**
      * Map vaitro_id sang cờ MAROLE cho Frontend Router:
-     * 0: ADMIN, 1: MANAGER, 2: CASHIER/WAREHOUSE, 3: CUSTOMER, 4: CSKH, 5: DIRECTOR, 6: ACCOUNTANT
+     * 0: ADMIN, 1: MANAGER, 2: CASHIER, 3: CUSTOMER, 4: CSKH, 5: DIRECTOR, 6: ACCOUNTANT, 7: WAREHOUSE
      */
     public function getMAROLEAttribute()
     {
         return match ((int)($this->attributes['vaiTroId'] ?? 1)) {
             1 => 0, // ADMIN
             2 => 1, // MANAGER
-            3, 4 => 2, // CASHIER / WAREHOUSE
+            3 => 2, // CASHIER
+            4 => 7, // WAREHOUSE (Nhân viên kho)
             5 => 4, // CSKH
             6 => 3, // CUSTOMER
             7 => 6, // ACCOUNTANT

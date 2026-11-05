@@ -443,6 +443,14 @@ class CartController extends Controller
                     if ($stockItem && $stockItem->soLuongTon >= $item['soLuong']) {
                         $stockItem->decrement('soLuongTon', $item['soLuong']);
                     }
+                    \App\Services\InventoryLedgerService::record(
+                        (int)$storeId,
+                        (int)$item['sanPhamId'],
+                        1, // 1: Bán hàng Online
+                        -(int)$item['soLuong'],
+                        $donHang->maDonHang ?? ('HD' . $donHang->id),
+                        $stockItem ? (int)$stockItem->fresh()->soLuongTon : null
+                    );
                 } catch (\Throwable $eStock) {
                     \Illuminate\Support\Facades\Log::warning('Lỗi trừ kho: ' . $eStock->getMessage());
                 }

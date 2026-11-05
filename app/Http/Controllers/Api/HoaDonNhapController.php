@@ -86,21 +86,24 @@ class HoaDonNhapController extends Controller
         if ($vaiTroId === 8 || $maRole === 5) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ban Giám Đốc chỉ duyệt các đơn yêu cầu nhập hàng khi cần thiết, không trực tiếp tham gia tạo đơn nhập hàng mới. Việc tạo đơn nhập hàng mới do Quản lý chi nhánh thực hiện cho chi nhánh của mình!',
+                'message' => 'Ban Giám Đốc chỉ duyệt các đơn yêu cầu nhập hàng khi cần thiết, không trực tiếp tham gia tạo đơn nhập hàng mới. Việc tạo đơn nhập hàng mới do Quản lý chi nhánh hoặc Nhân viên kho thực hiện cho chi nhánh của mình!',
             ], 403);
         }
 
         if ($vaiTroId === 1 || $maRole === 0 || $username === 'admin') {
             return response()->json([
                 'success' => false,
-                'message' => 'Tài khoản Quản trị viên (Admin) không được phép tạo hoặc tham gia ký duyệt đơn nhập hàng! Việc tạo đơn nhập hàng mới do Quản lý chi nhánh thực hiện.',
+                'message' => 'Tài khoản Quản trị viên (Admin) không được phép tạo hoặc tham gia ký duyệt đơn nhập hàng! Việc tạo đơn nhập hàng mới do Quản lý chi nhánh hoặc Nhân viên kho thực hiện.',
             ], 403);
         }
 
-        if ($vaiTroId !== 2 && $maRole !== 1) {
+        $isBranchManager = ($vaiTroId === 2 || $maRole === 1);
+        $isWarehouseStaff = ($vaiTroId === 4 || $maRole === 7);
+
+        if (!$isBranchManager && !$isWarehouseStaff) {
             return response()->json([
                 'success' => false,
-                'message' => 'Chỉ Quản lý chi nhánh mới có quyền tạo đơn nhập hàng mới cho chi nhánh của mình!',
+                'message' => 'Chỉ Nhân viên kho (tạo yêu cầu nhập) hoặc Quản lý chi nhánh mới có quyền tạo đơn nhập hàng cho chi nhánh!',
             ], 403);
         }
 
@@ -157,11 +160,15 @@ class HoaDonNhapController extends Controller
             'items.*.hsd' => 'required|date',
         ]);
 
-        // Nếu Quản lý chi nhánh ký duyệt ngay (truyền chữ ký hoặc chọn ký duyệt ngay):
-        // -> Quản lý chi nhánh (vaiTroKy = 3) được ghi nhận đã ký, đơn nhập hoàn tất ngay và không cần các role khác ký nữa!
-        // Ngược lại nếu không ký ngay -> đơn ở trạng thái chờ ký (cần chữ ký của Nhân viên kho & Nhân viên kế toán, hoặc Quản lý chi nhánh ký sau).
-        $kyQuanLy = $request->input('ky_quan_ly') ?? $request->input('ky_giam_doc') ?? null;
-        $signImmediately = $request->boolean('auto_sign_all', false) || !empty($kyQuanLy);
+        // Nếu Quản lý chi nhánh tạo: có thể ký duyệt ngay để đơn hoàn tất lập tức và cộng tồn kho
+        // Nếu Nhân viên kho tạo: lập yêu cầu nhập lô hàng mới (signImmediately = false), chờ Quản lý chi nhánh duyệt
+        $kyQuanLy = null;
+        $signImmediately = false;
+
+        if ($isBranchManager) {
+            $kyQuanLy = $request->input('ky_quan_ly') ?? $request->input('ky_giam_doc') ?? null;
+            $signImmediately = $request->boolean('auto_sign_all', false) || !empty($kyQuanLy);
+        }
         $yeuCauId = $request->input('yeuCauId') ?? $request->input('yeu_cau_id');
 
         try {
@@ -181,7 +188,28 @@ class HoaDonNhapController extends Controller
                 return response()->json(['success' => false, 'message' => $res->error], 500);
             }
 
-            $invoice = HoaDonNhap::find($res->hoadon_id);
+            $invoice = HoaDonNhap::with('chiTiets')->find($res->hoadon_id);
+
+            // Ghi nhận sổ cái tồn kho nếu đơn đã được ký duyệt ngay lập tức
+            if ($signImmediately && $invoice) {
+                try {
+                    foreach ($invoice->chiTiets as $ct) {
+                        $hasLedger = \App\Models\NhatKyKho::where('cuaHangId', $invoice->cuaHangId)
+                            ->where('sanPhamId', $ct->sanPhamId)
+                            ->where('maThamChieu', $invoice->maHoaDonNhap)
+                            ->exists();
+                        if (!$hasLedger) {
+                            \App\Services\InventoryLedgerService::record(
+                                (int)$invoice->cuaHangId,
+                                (int)$ct->sanPhamId,
+                                4, // 4: Nhập lô mới
+                                (int)$ct->soLuong,
+                                $invoice->maHoaDonNhap
+                            );
+                        }
+                    }
+                } catch (\Throwable $eLedger) {}
+            }
 
             // Invalidate product & stock cache immediately
             \App\Http\Controllers\Api\ProductController::clearProductCache();
@@ -203,7 +231,9 @@ class HoaDonNhapController extends Controller
                 'status' => true,
                 'message' => $signImmediately
                     ? "Quản lý chi nhánh đã tạo và ký duyệt đơn nhập hàng {$invoice->maHoaDonNhap} thành công! Không cần các vai trò khác ký thêm, tồn kho chi nhánh đã được cập nhật."
-                    : "Đã tạo đơn nhập hàng {$invoice->maHoaDonNhap} cho chi nhánh! Đơn đang chờ Quản lý chi nhánh ký duyệt, hoặc cần đủ chữ ký của Nhân viên kho và Nhân viên kế toán.",
+                    : ($isWarehouseStaff
+                        ? "Nhân viên kho đã tạo yêu cầu nhập lô hàng mới {$invoice->maHoaDonNhap} thành công! Đang chờ Quản lý chi nhánh phê duyệt."
+                        : "Đã tạo đơn nhập hàng {$invoice->maHoaDonNhap} cho chi nhánh! Đơn đang chờ Quản lý chi nhánh ký duyệt, hoặc cần đủ chữ ký của Nhân viên kho và Nhân viên kế toán."),
                 'data' => $invoice->load(['nhaCungCap', 'cuaHang', 'nguoiNhap', 'chuKySos', 'chiTiets.loHang', 'chiTiets.sanPham']),
             ], 201);
         } catch (\Exception $e) {
@@ -374,6 +404,30 @@ class HoaDonNhapController extends Controller
 
             DB::commit();
             $isFullySigned = (bool) $res->is_fully_signed;
+
+            // Đảm bảo Sổ cái tồn kho (nhatKyKho) ghi nhận đầy đủ khi đơn hoàn tất
+            if ($isFullySigned) {
+                try {
+                    $freshInv = HoaDonNhap::with('chiTiets')->find($invoice->id);
+                    if ($freshInv) {
+                        foreach ($freshInv->chiTiets as $ct) {
+                            $hasLedger = \App\Models\NhatKyKho::where('cuaHangId', $freshInv->cuaHangId)
+                                ->where('sanPhamId', $ct->sanPhamId)
+                                ->where('maThamChieu', $freshInv->maHoaDonNhap)
+                                ->exists();
+                            if (!$hasLedger) {
+                                \App\Services\InventoryLedgerService::record(
+                                    (int)$freshInv->cuaHangId,
+                                    (int)$ct->sanPhamId,
+                                    4, // 4: Nhập lô mới
+                                    (int)$ct->soLuong,
+                                    $freshInv->maHoaDonNhap
+                                );
+                            }
+                        }
+                    }
+                } catch (\Throwable $eLedger) {}
+            }
 
             // Invalidate product & stock cache immediately
             \App\Http\Controllers\Api\ProductController::clearProductCache();

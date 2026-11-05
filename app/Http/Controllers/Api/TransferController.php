@@ -97,10 +97,10 @@ class TransferController extends Controller
         }
 
         $nd = $user->nguoidung;
-        $cuaHangId = $request->input('MACUAHANG_NHAP') ?? $request->input('MACUAHANG_YEUCAU') ?? $request->input('cuaHangNhapId') ?? $nd->cuaHangId;
+        $cuaHangId = $request->input('MACUAHANG_NHAP') ?? $request->input('MACUAHANG_YEUCAU') ?? $request->input('cuaHangNhapId') ?? $nd?->cuaHangId ?? 1;
 
         if (!$cuaHangId) {
-            return response()->json(['error' => 'Vui lòng chọn chi nhánh yêu cầu nhập hàng'], 400);
+            $cuaHangId = 1;
         }
 
         $details = $request->input('details') ?? $request->input('CHI_TIET') ?? $request->input('chi_tiet') ?? [];
@@ -110,11 +110,11 @@ class TransferController extends Controller
 
         DB::beginTransaction();
         try {
-            $cuaHangXuatId = $request->input('MACUAHANG_XUAT') ?? $request->input('cuaHangXuatId');
+            $cuaHangXuatId = $request->input('MACUAHANG_XUAT') ?? $request->input('cuaHangXuatId') ?? null;
             $yeuCau = YeuCauDieuChuyen::create([
-                'cuaHangXuatId' => $cuaHangXuatId,
-                'cuaHangNhapId' => $cuaHangId,
-                'nguoiTaoId' => $nd->id,
+                'cuaHangXuatId' => $cuaHangXuatId ?: null,
+                'cuaHangNhapId' => (int)$cuaHangId,
+                'nguoiTaoId' => $nd?->id ?? $user->id,
                 'trangThai' => 0, // Chờ tiếp nhận
                 'ghiChu' => $request->input('GHICHU', $request->input('ghiChu', '')),
             ]);
@@ -402,14 +402,14 @@ class TransferController extends Controller
                     if ($tonKho) {
                         $tonKho->decrement('soLuongTon', $d->soLuongXuat);
                     }
-                    \App\Models\NhatKyKho::create([
-                        'cuaHangId' => $phieu->cuaHangXuatId,
-                        'sanPhamId' => $d->sanPhamId,
-                        'loaiBienDong' => 2, // Chuyển kho xuất
-                        'soLuongThayDoi' => -$d->soLuongXuat,
-                        'soLuongTonSau' => $tonKho ? $tonKho->fresh()->soLuongTon : 0,
-                        'maThamChieu' => "P" . $phieu->id,
-                    ]);
+                    \App\Services\InventoryLedgerService::record(
+                        (int)$phieu->cuaHangXuatId,
+                        (int)$d->sanPhamId,
+                        2, // Chuyển kho (Xuất)
+                        -$d->soLuongXuat,
+                        $phieu->maVanDon ?: ("DC_" . $phieu->id),
+                        $tonKho ? $tonKho->fresh()->soLuongTon : 0
+                    );
                 }
                 $phieu->update(['trangThai' => 'Đang vận chuyển']);
 
@@ -435,14 +435,14 @@ class TransferController extends Controller
                         );
                         $tonKho->increment('soLuongTon', $soLuongNhan);
 
-                        \App\Models\NhatKyKho::create([
-                            'cuaHangId' => $phieu->cuaHangNhapId,
-                            'sanPhamId' => $ct->sanPhamId,
-                            'loaiBienDong' => 3, // Chuyển kho nhập
-                            'soLuongThayDoi' => (int)$soLuongNhan,
-                            'soLuongTonSau' => $tonKho->fresh()->soLuongTon,
-                            'maThamChieu' => "P" . $phieu->id,
-                        ]);
+                        \App\Services\InventoryLedgerService::record(
+                            (int)$phieu->cuaHangNhapId,
+                            (int)$ct->sanPhamId,
+                            3, // Chuyển kho (Nhập)
+                            (int)$soLuongNhan,
+                            $phieu->maVanDon ?: ("DC_" . $phieu->id),
+                            $tonKho->fresh()->soLuongTon
+                        );
                     }
                 }
                 $phieu->update(['trangThai' => 'Đã nhận hàng']);
@@ -507,11 +507,14 @@ class TransferController extends Controller
         if (empty($raw)) {
             return null;
         }
-        $found = \App\Models\SanPham::where('maSanPham', $raw)->value('id');
-        if ($found) {
-            return (int)$found;
-        }
         $num = (int) preg_replace('/\D/', '', (string)$raw);
+        if ($num > 0 && \App\Models\SanPham::where('id', $num)->exists()) {
+            return $num;
+        }
+        $sp = \App\Models\SanPham::where('slug', (string)$raw)->orWhere('tenSanPham', (string)$raw)->first();
+        if ($sp) {
+            return (int)$sp->id;
+        }
         return $num > 0 ? $num : null;
     }
 

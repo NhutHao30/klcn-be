@@ -447,6 +447,7 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
             Route::get('/', [\App\Http\Controllers\Api\BienBanHuyController::class, 'index']);
             Route::post('/', [\App\Http\Controllers\Api\BienBanHuyController::class, 'store']);
             Route::get('/{id}', [\App\Http\Controllers\Api\BienBanHuyController::class, 'show']);
+            Route::post('/{id}/duyet', [\App\Http\Controllers\Api\BienBanHuyController::class, 'duyet']);
         });
 
         // ── Chữ Ký Số Đa Bên ──────────────────────────────────────────────
