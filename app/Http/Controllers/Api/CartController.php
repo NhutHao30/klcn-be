@@ -473,13 +473,22 @@ class CartController extends Controller
 
             DB::commit();
 
-            // Dispatch Order Confirmation Email to Customer
-            $userEmail = $user->email ?? ($nguoidung->taikhoan ? $nguoidung->taikhoan->email : null);
+            // Dispatch Order Confirmation Email to Customer synchronously
+            $userEmail = $request->input('email') 
+                ?? $request->input('EMAIL') 
+                ?? $user->email 
+                ?? ($nguoidung->taikhoan ? $nguoidung->taikhoan->email : null) 
+                ?? ($nguoidung->email ?? null);
             if (!empty($userEmail)) {
                 try {
-                    \App\Jobs\SendOrderEmailJob::dispatch($userEmail, $donHang->maDonHang, $donHang->tongThanhToan, $nguoidung->hoTen ?? 'Khách hàng');
+                    \App\Jobs\SendOrderEmailJob::dispatchSync(
+                        $userEmail, 
+                        $donHang->maDonHang, 
+                        $donHang->tongThanhToan, 
+                        $receiverName ?? $nguoidung->hoTen ?? 'Khách hàng'
+                    );
                 } catch (\Throwable $emailError) {
-                    \Illuminate\Support\Facades\Log::warning('Không thể khởi chạy job gửi email đơn hàng: ' . $emailError->getMessage());
+                    \Illuminate\Support\Facades\Log::warning('Không thể gửi email xác nhận đơn hàng: ' . $emailError->getMessage());
                 }
             }
 

@@ -25,7 +25,7 @@ class CuaHang extends Model
         'trangThai',
     ];
 
-    protected $appends = ['MACUAHANG', 'TENCUAHANG', 'DIACHI', 'SDT', 'name', 'address', 'phone'];
+    protected $appends = ['ten_cuahang', 'MACUAHANG', 'TENCUAHANG', 'DIACHI', 'SDT', 'name', 'address', 'phone'];
 
     public function getMACUAHANGAttribute()
     {

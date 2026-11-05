@@ -12,7 +12,7 @@ use App\Mail\OrderConfirmationMail;
 use App\Models\DonHang;
 use App\Models\ChiTietDonHang;
 
-class SendOrderEmailJob implements ShouldQueue
+class SendOrderEmailJob
 {
     use Dispatchable;
     use InteractsWithQueue;

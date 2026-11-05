@@ -38,6 +38,7 @@ class NguoiDung extends Model
     ];
 
     protected $appends = [
+        'ho_ten',
         'HOTEN',
         'SDT',
         'GioiTinh',
