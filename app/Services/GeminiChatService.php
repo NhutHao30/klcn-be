@@ -117,16 +117,17 @@ Khách hàng vừa hỏi: "{$customerMessage}"
 Hãy đóng vai Trợ lý ảo Givral AI và trả lời ngắn gọn, thân thiện:
 TEXT;
 
-        // Model ưu tiên
+        // Model ưu tiên (xếp các model ổn định, phản hồi tức thì và không bị nghẽn lên trước)
         $modelsToTry = [
-            'gemini-3.5-flash',
             'gemini-3.5-flash-lite',
+            'gemini-3.1-flash-lite',
+            'gemini-3.5-flash',
             'gemini-flash-lite-latest',
             'gemini-flash-latest',
         ];
 
         $client = new Client([
-            'timeout' => 8.0,
+            'timeout' => 12.0,
             'verify' => false,
         ]);
 
@@ -146,7 +147,7 @@ TEXT;
                         ],
                         'generationConfig' => [
                             'temperature' => 0.6,
-                            'maxOutputTokens' => 450,
+                            'maxOutputTokens' => 2048,
                         ]
                     ]
                 ]);
@@ -173,18 +174,27 @@ TEXT;
      */
     private function smartRuleFallback(string $lowerMsg, string $originalMsg): string
     {
+        // 1. Khách hỏi gợi ý bánh sinh nhật, mẫu bánh kem
+        if (str_contains($lowerMsg, 'sinh nhật') || (str_contains($lowerMsg, 'bánh') && (str_contains($lowerMsg, 'gợi ý') || str_contains($lowerMsg, 'mẫu')))) {
+            return "Dạ Givral Bakery xin chào bạn ạ! Givral rất vui được gợi ý cho bạn một số mẫu bánh kem sinh nhật được yêu thích nhất:\n- 🌽 Bánh Kem Bắp Givral (320.000đ): Cốt bánh xốp mịn hòa quyện lớp kem bắp thanh ngọt, bùi béo tự nhiên.\n- 🍓 Bánh Mousse Dâu Tây (280.000đ): Vị dâu chua ngọt thanh mát kết hợp lớp mousse mềm tan.\n- 🍫 Bánh Black Forest (350.000đ): Vị socola Bỉ đậm đà kết hợp quả anh đào đỏ tươi sang trọng.\n- ☕ Bánh Tiramisu Ý (290.000đ): Hương vị phô mai Mascarpone và cà phê nồng nàn quyến rũ.\nTất cả sản phẩm đều đang còn hàng tươi mới trong ngày. Bạn muốn đặt bánh cỡ mấy người ăn để tiệm tư vấn chuẩn nhất cho bạn nhé! 🎂";
+        }
+
+        // 2. Chào hỏi thông thường
         if (str_contains($lowerMsg, 'chào') || str_contains($lowerMsg, 'alo') || str_contains($lowerMsg, 'lô') || str_contains($lowerMsg, 'hu') || str_contains($lowerMsg, 'hi') || str_contains($lowerMsg, 'hello')) {
             return "Dạ Givral Bakery xin chào bạn ạ! 😊 Em là Trợ lý ảo Givral AI. Em có thể hỗ trợ tư vấn các loại bánh kem sinh nhật, bánh tươi trong ngày hoặc địa chỉ chi nhánh gần bạn nhất không ạ?";
         }
 
+        // 3. Địa chỉ & chi nhánh
         if (str_contains($lowerMsg, 'địa chỉ') || str_contains($lowerMsg, 'cửa hàng') || str_contains($lowerMsg, 'chi nhánh') || str_contains($lowerMsg, 'ở đâu')) {
             return "Dạ Givral Bakery hiện có chuỗi chi nhánh tại TP.HCM (Trụ sở chính: 140 Lê Trọng Tấn, Q.Tân Phú) mở cửa từ 07:00 đến 22:00 hàng ngày. Bạn có thể bấm vào mục 'Hệ thống cửa hàng' trên menu để xem chi nhánh gần bạn nhất nhé!";
         }
 
+        // 4. Giá cả & thực đơn
         if (str_contains($lowerMsg, 'giá') || str_contains($lowerMsg, 'bao nhiêu') || str_contains($lowerMsg, 'menu') || str_contains($lowerMsg, 'thực đơn') || str_contains($lowerMsg, 'bánh')) {
             return "Dạ tiệm có đa dạng các dòng bánh kem bắp, bánh Donut socola (từ 19.920đ), bánh Mousse, bánh Tiramisu tươi ngon mỗi ngày. Bạn có thể xem toàn bộ thực đơn chi tiết kèm giá ưu đãi tại mục 'Sản phẩm' hoặc cho em biết loại bánh bạn yêu thích để em gợi ý nhé! 🎂";
         }
 
+        // 5. Vận chuyển & Giao hàng
         if (str_contains($lowerMsg, 'ship') || str_contains($lowerMsg, 'giao hàng') || str_contains($lowerMsg, 'phí giao')) {
             return "Dạ Givral Bakery hỗ trợ giao bánh tận nơi nhanh chóng qua Giao Hàng Nhanh (GHN) và đội ngũ giao bánh chuyên dụng. Khi đặt hàng trên web/app bạn chỉ cần chọn địa chỉ là hệ thống sẽ tính phí vận chuyển chính xác đến tận nhà bạn ạ!";
         }
