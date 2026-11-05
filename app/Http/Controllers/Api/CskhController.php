@@ -184,20 +184,33 @@ class CskhController extends Controller
                 $query->where('loaiId', $loaiId);
             }
 
-            $products = $query->select(
-                'id',
-                'loaiId',
-                'tenSanPham',
-                'giaBan',
-                'hinhAnh',
-                'donViTinh',
-                'moTa'
-            )
-            ->orderBy('id', 'asc')
-            ->get();
+            $rawProducts = $query->orderBy('id', 'asc')->get();
+
+            $products = $rawProducts->map(function($sp) {
+                $name = $sp->tenSanPham ?: ($sp->ten_san_pham ?: ($sp->TENSP ?: ($sp->name ?: 'Bánh Givral')));
+                $price = (float)($sp->giaBan ?: ($sp->gia_ban ?: ($sp->GIABAN ?: 0)));
+                $img = $sp->hinhAnh ?: ($sp->hinh_anh ?: ($sp->HINHANH ?: ''));
+                return [
+                    'id' => $sp->id,
+                    'MASP' => 'SP' . str_pad($sp->id, 3, '0', STR_PAD_LEFT),
+                    'loaiId' => $sp->loaiId ?? $sp->loai_id,
+                    'tenSanPham' => $name,
+                    'TENSP' => $name,
+                    'name' => $name,
+                    'giaBan' => $price,
+                    'GIABAN' => $price,
+                    'price' => $price,
+                    'hinhAnh' => $img,
+                    'HINHANH' => $img,
+                    'image' => $img,
+                    'donViTinh' => $sp->donViTinh ?? $sp->don_vi_tinh ?? 'Cái',
+                    'moTa' => $sp->moTa ?? $sp->mo_ta ?? '',
+                ];
+            });
 
             return response()->json($products);
         } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Lỗi CskhController getProducts: ' . $e->getMessage());
             return response()->json([]);
         }
     }

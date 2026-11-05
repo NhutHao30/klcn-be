@@ -107,8 +107,8 @@ class CuocTroChuyen extends Model
     public function setTrangThaiChatAttribute($val)
     {
         $parsed = ($val === 'DA_DONG' || $val === 1 || $val === '1') ? 1 : 0;
-        $this->attributes['trangThaiChat'] = $parsed;
-        $this->attributes['trang_thai_chat'] = $parsed;
+        $col = static::getTrangThaiCol();
+        $this->attributes[$col] = $parsed;
     }
 
     public function getMACUOCTROCHUYENAttribute()

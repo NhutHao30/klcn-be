@@ -306,6 +306,30 @@ class SystemMonitorController extends Controller
     }
 
     /**
+     * Dọn dẹp toàn bộ lỗi hoặc đánh dấu tất cả đã xử lý
+     */
+    public function clearAllErrors(Request $request)
+    {
+        try {
+            $action = $request->input('action', 'resolve_all'); // 'delete_all' hoặc 'resolve_all'
+            if ($action === 'delete_all') {
+                SystemErrorLog::truncate();
+                $msg = 'Đã xóa sạch toàn bộ sự cố kỹ thuật thành công!';
+            } else {
+                SystemErrorLog::query()->update(['trangThai' => 1]);
+                $msg = 'Đã đánh dấu toàn bộ sự cố kỹ thuật là Đã xử lý!';
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $msg
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => 'Lỗi khi thao tác: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * 3. HỆ THỐNG CẢNH BÁO TỰ ĐỘNG & NGƯỠNG AN TOÀN (ALERTING SYSTEM)
      */
     public function getAlertSettings()

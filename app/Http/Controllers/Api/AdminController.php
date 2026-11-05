@@ -740,135 +740,157 @@ class AdminController extends Controller
      */
     public function thongKeLoiNhuan(Request $request)
     {
-        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $macuahang = null;
-        if ($userLogin && $userLogin->vaiTroId == 2) {
-            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
-        }
-        if (!$macuahang && $request->filled('macuahang')) {
-            $macuahang = (int) $request->macuahang;
-        }
-
-        $thang = (int) $request->input('thang', now()->month);
-        $nam   = (int) $request->input('nam', now()->year);
-
-        // ── Doanh thu: tổng tiền hóa đơn bán đã hoàn thành / đã thanh toán ─────────────
-        $doanhThuQuery = DB::table('donHang')
-            ->where(function($q) {
-                $q->where('trangThaiThanhToan', 1)->orWhereIn('trangThaiDonHang', [4, 5]);
-            })
-            ->whereMonth('createdAt', $thang)
-            ->whereYear('createdAt', $nam);
-
-        if ($macuahang) {
-            $doanhThuQuery->where('cuaHangId', $macuahang);
-        }
-
-        $doanhThu = (float) $doanhThuQuery->sum('tongThanhToan');
-
-        // ── Chi phí nhập: tổng (SL bán × đơn giá bán) theo tháng ───
-        $chiPhiQuery = DB::table('chiTietDonHang')
-            ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
-            ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
-            ->where(function($q) {
-                $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
-            })
-            ->whereMonth('donHang.createdAt', $thang)
-            ->whereYear('donHang.createdAt', $nam);
-
-        if ($macuahang) {
-            $chiPhiQuery->where('donHang.cuaHangId', $macuahang);
-        }
-
-        $chiPhi = (float) $chiPhiQuery->sum(DB::raw('chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)'));
-
-        // ── Chi phí hủy hàng (hết hạn, hỏng) trong tháng ──────────────
-        $chiPhiHuy = 0;
-        if (\Illuminate\Support\Facades\Schema::hasTable('bienbanhuy')) {
-            $chiPhiHuyQuery = DB::table('bienbanhuy')
-                ->leftJoin('chitietbienbanhuy', 'bienbanhuy.id', '=', 'chitietbienbanhuy.bienBanHuyId')
-                ->leftJoin('lohang', 'chitietbienbanhuy.loHangId', '=', 'lohang.id')
-                ->whereMonth('bienbanhuy.createdAt', $thang)
-                ->whereYear('bienbanhuy.createdAt', $nam);
-
-            if ($macuahang) {
-                $chiPhiHuyQuery->where('bienbanhuy.cuaHangId', $macuahang);
+        try {
+            $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+            $macuahang = null;
+            if ($userLogin && $userLogin->vaiTroId == 2) {
+                $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+                $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+            }
+            if (!$macuahang && $request->filled('macuahang')) {
+                $macuahang = (int) $request->macuahang;
             }
 
-            $chiPhiHuy = (float) $chiPhiHuyQuery->sum(DB::raw('COALESCE(chitietbienbanhuy.soLuongHuy, 0) * COALESCE(lohang.giaNhap, 0)'));
-        }
+            $thang = (int) $request->input('thang', now()->month);
+            $nam   = (int) $request->input('nam', now()->year);
 
-        // ── Tổng chi phí = nhập hàng + hủy ─────────────────────────────
-        $tongChiPhi = $chiPhi + $chiPhiHuy;
-        $loiNhuan   = $doanhThu - $tongChiPhi;
-        $biLoi      = $doanhThu > 0 ? round(($loiNhuan / $doanhThu) * 100, 2) : 0;
+            // ── Doanh thu: tổng tiền hóa đơn bán đã hoàn thành / đã thanh toán ─────────────
+            $doanhThuQuery = DB::table('donHang')
+                ->where(function($q) {
+                    $q->where('trangThaiThanhToan', 1)->orWhereIn('trangThaiDonHang', [4, 5]);
+                })
+                ->whereMonth('createdAt', $thang)
+                ->whereYear('createdAt', $nam);
 
-        // ── Lợi nhuận theo từng sản phẩm ───────────────────────────────
-        $loiNhuanTheoSP = DB::table('chiTietDonHang')
-            ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
-            ->join('sanPham', 'chiTietDonHang.sanPhamId', '=', 'sanPham.id')
-            ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
-            ->where(function($q) {
-                $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
-            })
-            ->whereMonth('donHang.createdAt', $thang)
-            ->whereYear('donHang.createdAt', $nam)
-            ->when($macuahang, fn($q) => $q->where('donHang.cuaHangId', $macuahang))
-            ->selectRaw("
-                sanPham.id as MASP,
-                sanPham.tenSanPham as TENSP,
-                SUM(chiTietDonHang.soLuong) as tong_ban,
-                SUM(chiTietDonHang.thanhTien) as doanh_thu,
-                SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as chi_phi,
-                SUM(chiTietDonHang.thanhTien) - SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as loi_nhuan
-            ")
-            ->groupBy('sanPham.id', 'sanPham.tenSanPham')
-            ->orderByDesc('loi_nhuan')
-            ->limit(10)
-            ->get();
+            if ($macuahang) {
+                $doanhThuQuery->where('cuaHangId', $macuahang);
+            }
 
-        // ── Lợi nhuận theo ngày trong tháng ────────────────────────────
-        $loiNhuanTheoNgay = DB::table('chiTietDonHang')
-            ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
-            ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
-            ->where(function($q) {
-                $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
-            })
-            ->whereMonth('donHang.createdAt', $thang)
-            ->whereYear('donHang.createdAt', $nam)
-            ->when($macuahang, fn($q) => $q->where('donHang.cuaHangId', $macuahang))
-            ->selectRaw("
-                DATE(donHang.createdAt) as ngay,
-                SUM(chiTietDonHang.thanhTien) as doanh_thu,
-                SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as chi_phi,
-                SUM(chiTietDonHang.thanhTien) - SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as loi_nhuan
-            ")
-            ->groupBy('ngay')
-            ->orderBy('ngay')
-            ->get()
-            ->map(fn($row) => [
-                'ngay'       => $row->ngay,
-                'doanh_thu'  => (float) $row->doanh_thu,
-                'chi_phi'    => (float) $row->chi_phi,
-                'loi_nhuan'  => round((float) $row->doanh_thu - (float) $row->chi_phi, 2),
+            $doanhThu = (float) $doanhThuQuery->sum('tongThanhToan');
+
+            // ── Chi phí nhập: tổng (SL bán × đơn giá bán) theo tháng ───
+            $chiPhiQuery = DB::table('chiTietDonHang')
+                ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
+                ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
+                ->where(function($q) {
+                    $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
+                })
+                ->whereMonth('donHang.createdAt', $thang)
+                ->whereYear('donHang.createdAt', $nam);
+
+            if ($macuahang) {
+                $chiPhiQuery->where('donHang.cuaHangId', $macuahang);
+            }
+
+            $chiPhi = (float) $chiPhiQuery->sum(DB::raw('chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)'));
+
+            // ── Chi phí hủy hàng (hết hạn, hỏng) trong tháng ──────────────
+            $chiPhiHuy = 0;
+            $bienBanTable = \Illuminate\Support\Facades\Schema::hasTable('bienBanHuy') ? 'bienBanHuy' : (\Illuminate\Support\Facades\Schema::hasTable('bienbanhuy') ? 'bienbanhuy' : null);
+            if ($bienBanTable) {
+                $chiTietTable = \Illuminate\Support\Facades\Schema::hasTable('chiTietBienBanHuy') ? 'chiTietBienBanHuy' : 'chitietbienbanhuy';
+                $loHangTable = \Illuminate\Support\Facades\Schema::hasTable('loHang') ? 'loHang' : 'lohang';
+                $chiPhiHuyQuery = DB::table($bienBanTable)
+                    ->leftJoin($chiTietTable, "{$bienBanTable}.id", '=', "{$chiTietTable}.bienBanHuyId")
+                    ->leftJoin($loHangTable, "{$chiTietTable}.loHangId", '=', "{$loHangTable}.id")
+                    ->whereMonth("{$bienBanTable}.createdAt", $thang)
+                    ->whereYear("{$bienBanTable}.createdAt", $nam);
+
+                if ($macuahang) {
+                    $chiPhiHuyQuery->where("{$bienBanTable}.cuaHangId", $macuahang);
+                }
+
+                $chiPhiHuy = (float) $chiPhiHuyQuery->sum(DB::raw("COALESCE({$chiTietTable}.soLuongHuy, 0) * COALESCE({$loHangTable}.giaNhap, 0)"));
+            }
+
+            // ── Tổng chi phí = nhập hàng + hủy ─────────────────────────────
+            $tongChiPhi = $chiPhi + $chiPhiHuy;
+            $loiNhuan   = $doanhThu - $tongChiPhi;
+            $biLoi      = $doanhThu > 0 ? round(($loiNhuan / $doanhThu) * 100, 2) : 0;
+
+            // ── Lợi nhuận theo từng sản phẩm ───────────────────────────────
+            $loiNhuanTheoSP = DB::table('chiTietDonHang')
+                ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
+                ->join('sanPham', 'chiTietDonHang.sanPhamId', '=', 'sanPham.id')
+                ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
+                ->where(function($q) {
+                    $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
+                })
+                ->whereMonth('donHang.createdAt', $thang)
+                ->whereYear('donHang.createdAt', $nam)
+                ->when($macuahang, fn($q) => $q->where('donHang.cuaHangId', $macuahang))
+                ->selectRaw("
+                    sanPham.id as MASP,
+                    sanPham.tenSanPham as TENSP,
+                    SUM(chiTietDonHang.soLuong) as tong_ban,
+                    SUM(chiTietDonHang.thanhTien) as doanh_thu,
+                    SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as chi_phi,
+                    SUM(chiTietDonHang.thanhTien) - SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as loi_nhuan
+                ")
+                ->groupBy('sanPham.id', 'sanPham.tenSanPham')
+                ->orderByDesc('loi_nhuan')
+                ->limit(10)
+                ->get();
+
+            // ── Lợi nhuận theo ngày trong tháng ────────────────────────────
+            $loiNhuanTheoNgay = DB::table('chiTietDonHang')
+                ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
+                ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
+                ->where(function($q) {
+                    $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
+                })
+                ->whereMonth('donHang.createdAt', $thang)
+                ->whereYear('donHang.createdAt', $nam)
+                ->when($macuahang, fn($q) => $q->where('donHang.cuaHangId', $macuahang))
+                ->selectRaw("
+                    DATE(donHang.createdAt) as ngay,
+                    SUM(chiTietDonHang.thanhTien) as doanh_thu,
+                    SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as chi_phi,
+                    SUM(chiTietDonHang.thanhTien) - SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as loi_nhuan
+                ")
+                ->groupBy('ngay')
+                ->orderBy('ngay')
+                ->get()
+                ->map(fn($row) => [
+                    'ngay'       => $row->ngay,
+                    'doanh_thu'  => (float) $row->doanh_thu,
+                    'chi_phi'    => (float) $row->chi_phi,
+                    'loi_nhuan'  => round((float) $row->doanh_thu - (float) $row->chi_phi, 2),
+                ]);
+
+            return response()->json([
+                'status'         => true,
+                'data'           => [
+                    'thang'          => $thang,
+                    'nam'            => $nam,
+                    'doanh_thu'      => round($doanhThu, 2),
+                    'chi_phi_nhap'   => round($chiPhi, 2),
+                    'chi_phi_huy'    => round($chiPhiHuy, 2),
+                    'tong_chi_phi'   => round($tongChiPhi, 2),
+                    'loi_nhuan'      => round($loiNhuan, 2),
+                    'bien_loi_nhuan' => $biLoi,
+                    'theo_san_pham'  => $loiNhuanTheoSP,
+                    'theo_ngay'      => $loiNhuanTheoNgay,
+                ]
             ]);
-
-        return response()->json([
-            'status'         => true,
-            'data'           => [
-                'thang'          => $thang,
-                'nam'            => $nam,
-                'doanh_thu'      => round($doanhThu, 2),
-                'chi_phi_nhap'   => round($chiPhi, 2),
-                'chi_phi_huy'    => round($chiPhiHuy, 2),
-                'tong_chi_phi'   => round($tongChiPhi, 2),
-                'loi_nhuan'      => round($loiNhuan, 2),
-                'bien_loi_nhuan' => $biLoi,
-                'theo_san_pham'  => $loiNhuanTheoSP,
-                'theo_ngay'      => $loiNhuanTheoNgay,
-            ]
-        ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Lỗi thongKeLoiNhuan: ' . $e->getMessage());
+            return response()->json([
+                'status' => true,
+                'data' => [
+                    'thang' => (int) $request->input('thang', now()->month),
+                    'nam' => (int) $request->input('nam', now()->year),
+                    'doanh_thu' => 0,
+                    'chi_phi_nhap' => 0,
+                    'chi_phi_huy' => 0,
+                    'tong_chi_phi' => 0,
+                    'loi_nhuan' => 0,
+                    'bien_loi_nhuan' => 0,
+                    'theo_san_pham' => [],
+                    'theo_ngay' => []
+                ]
+            ]);
+        }
     }
 
     /**
@@ -878,75 +900,94 @@ class AdminController extends Controller
      */
     public function thongKeNhapHang(Request $request)
     {
-        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $macuahang = null;
-        if ($userLogin && $userLogin->vaiTroId == 2) {
-            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+        try {
+            $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+            $macuahang = null;
+            if ($userLogin && $userLogin->vaiTroId == 2) {
+                $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+                $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+            }
+
+            $thang = (int) $request->input('thang', now()->month);
+            $nam   = (int) $request->input('nam', now()->year);
+
+            $loHangTable = \Illuminate\Support\Facades\Schema::hasTable('loHang') ? 'loHang' : 'lohang';
+            $sanPhamTable = \Illuminate\Support\Facades\Schema::hasTable('sanPham') ? 'sanPham' : 'sanpham';
+            $hoaDonNhapTable = \Illuminate\Support\Facades\Schema::hasTable('hoaDonNhap') ? 'hoaDonNhap' : 'hoadonnhap';
+            $nhaCungCapTable = \Illuminate\Support\Facades\Schema::hasTable('nhaCungCap') ? 'nhaCungCap' : 'nhacungcap';
+
+            // Tổng nhập theo phiếu trong tháng
+            $nhapTheoPhieu = DB::table($loHangTable)
+                ->join($sanPhamTable, "{$loHangTable}.sanPhamId", '=', "{$sanPhamTable}.id")
+                ->leftJoin($hoaDonNhapTable, "{$loHangTable}.cuaHangId", '=', "{$hoaDonNhapTable}.cuaHangId")
+                ->whereMonth("{$loHangTable}.createdAt", $thang)
+                ->whereYear("{$loHangTable}.createdAt", $nam)
+                ->when($macuahang, fn($q) => $q->where("{$loHangTable}.cuaHangId", $macuahang))
+                ->selectRaw("
+                    DATE({$loHangTable}.createdAt) as ngay,
+                    COUNT(DISTINCT {$loHangTable}.id) as so_phieu,
+                    SUM({$loHangTable}.soLuongNhap) as tong_sl_nhap,
+                    SUM({$loHangTable}.soLuongNhap * {$loHangTable}.giaNhap) as tong_chi_phi
+                ")
+                ->groupBy('ngay')
+                ->orderBy('ngay')
+                ->get();
+
+            // Top SP nhập nhiều nhất
+            $topSPNhap = DB::table($loHangTable)
+                ->join($sanPhamTable, "{$loHangTable}.sanPhamId", '=', "{$sanPhamTable}.id")
+                ->whereMonth("{$loHangTable}.createdAt", $thang)
+                ->whereYear("{$loHangTable}.createdAt", $nam)
+                ->when($macuahang, fn($q) => $q->where("{$loHangTable}.cuaHangId", $macuahang))
+                ->selectRaw("{$sanPhamTable}.id as MASP, {$sanPhamTable}.tenSanPham as TENSP,
+                             SUM({$loHangTable}.soLuongNhap) as tong_nhap,
+                             SUM({$loHangTable}.soLuongNhap * {$loHangTable}.giaNhap) as tong_chi_phi,
+                             COUNT(*) as so_lo")
+                ->groupBy("{$sanPhamTable}.id", "{$sanPhamTable}.tenSanPham")
+                ->orderByDesc('tong_nhap')
+                ->limit(10)
+                ->get();
+
+            // Nhập theo NCC trong tháng
+            $nhapTheoNCC = DB::table($loHangTable)
+                ->leftJoin($nhaCungCapTable, "{$loHangTable}.nhaCungCapId", '=', "{$nhaCungCapTable}.id")
+                ->whereMonth("{$loHangTable}.createdAt", $thang)
+                ->whereYear("{$loHangTable}.createdAt", $nam)
+                ->when($macuahang, fn($q) => $q->where("{$loHangTable}.cuaHangId", $macuahang))
+                ->selectRaw("
+                    COALESCE({$nhaCungCapTable}.tenNcc, 'Không xác định') as ten_ncc,
+                    {$loHangTable}.nhaCungCapId as MANCC,
+                    SUM({$loHangTable}.soLuongNhap * {$loHangTable}.giaNhap) as tong_tien,
+                    SUM({$loHangTable}.soLuongNhap) as tong_sl,
+                    COUNT(DISTINCT {$loHangTable}.id) as so_phieu
+                ")
+                ->groupBy("{$loHangTable}.nhaCungCapId", "{$nhaCungCapTable}.tenNcc")
+                ->orderByDesc('tong_tien')
+                ->get();
+
+            return response()->json([
+                'thang'          => $thang,
+                'nam'            => $nam,
+                'theo_ngay'      => $nhapTheoPhieu,
+                'top_sp_nhap'    => $topSPNhap,
+                'theo_ncc'       => $nhapTheoNCC,
+                'tong_chi_phi'   => round($nhapTheoPhieu->sum('tong_chi_phi'), 2),
+                'tong_phieu'     => $nhapTheoPhieu->sum('so_phieu'),
+                'tong_sl_nhap'   => $nhapTheoPhieu->sum('tong_sl_nhap'),
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Lỗi thongKeNhapHang: ' . $e->getMessage());
+            return response()->json([
+                'thang' => (int) $request->input('thang', now()->month),
+                'nam' => (int) $request->input('nam', now()->year),
+                'theo_ngay' => [],
+                'top_sp_nhap' => [],
+                'theo_ncc' => [],
+                'tong_chi_phi' => 0,
+                'tong_phieu' => 0,
+                'tong_sl_nhap' => 0
+            ]);
         }
-
-        $thang = (int) $request->input('thang', now()->month);
-        $nam   = (int) $request->input('nam', now()->year);
-
-        // Tổng nhập theo phiếu trong tháng
-        $nhapTheoPhieu = DB::table('lohang')
-            ->join('sanpham', 'lohang.sanPhamId', '=', 'sanpham.id')
-            ->leftJoin('hoadonnhap', 'lohang.cuaHangId', '=', 'hoadonnhap.cuaHangId')
-            ->whereMonth('lohang.createdAt', $thang)
-            ->whereYear('lohang.createdAt', $nam)
-            ->when($macuahang, fn($q) => $q->where('lohang.cuaHangId', $macuahang))
-            ->selectRaw("
-                DATE(lohang.createdAt) as ngay,
-                COUNT(DISTINCT lohang.id) as so_phieu,
-                SUM(lohang.soLuongNhap) as tong_sl_nhap,
-                SUM(lohang.soLuongNhap * lohang.giaNhap) as tong_chi_phi
-            ")
-            ->groupBy('ngay')
-            ->orderBy('ngay')
-            ->get();
-
-        // Top SP nhập nhiều nhất
-        $topSPNhap = DB::table('lohang')
-            ->join('sanpham', 'lohang.sanPhamId', '=', 'sanpham.id')
-            ->whereMonth('lohang.createdAt', $thang)
-            ->whereYear('lohang.createdAt', $nam)
-            ->when($macuahang, fn($q) => $q->where('lohang.cuaHangId', $macuahang))
-            ->selectRaw("sanpham.id as MASP, sanpham.tenSanPham as TENSP,
-                         SUM(lohang.soLuongNhap) as tong_nhap,
-                         SUM(lohang.soLuongNhap * lohang.giaNhap) as tong_chi_phi,
-                         COUNT(*) as so_lo")
-            ->groupBy('sanpham.id', 'sanpham.tenSanPham')
-            ->orderByDesc('tong_nhap')
-            ->limit(10)
-            ->get();
-
-        // Nhập theo NCC trong tháng
-        $nhapTheoNCC = DB::table('lohang')
-            ->leftJoin('nhacungcap', 'lohang.nhaCungCapId', '=', 'nhacungcap.id')
-            ->whereMonth('lohang.createdAt', $thang)
-            ->whereYear('lohang.createdAt', $nam)
-            ->when($macuahang, fn($q) => $q->where('lohang.cuaHangId', $macuahang))
-            ->selectRaw("
-                COALESCE(nhacungcap.tenNcc, 'Không xác định') as ten_ncc,
-                lohang.nhaCungCapId as MANCC,
-                SUM(lohang.soLuongNhap * lohang.giaNhap) as tong_tien,
-                SUM(lohang.soLuongNhap) as tong_sl,
-                COUNT(DISTINCT lohang.id) as so_phieu
-            ")
-            ->groupBy('lohang.nhaCungCapId', 'nhacungcap.tenNcc')
-            ->orderByDesc('tong_tien')
-            ->get();
-
-        return response()->json([
-            'thang'          => $thang,
-            'nam'            => $nam,
-            'theo_ngay'      => $nhapTheoPhieu,
-            'top_sp_nhap'    => $topSPNhap,
-            'theo_ncc'       => $nhapTheoNCC,
-            'tong_chi_phi'   => round($nhapTheoPhieu->sum('tong_chi_phi'), 2),
-            'tong_phieu'     => $nhapTheoPhieu->sum('so_phieu'),
-            'tong_sl_nhap'   => $nhapTheoPhieu->sum('tong_sl_nhap'),
-        ]);
     }
 
     /**
@@ -956,72 +997,98 @@ class AdminController extends Controller
      */
     public function thongKeHaoHut(Request $request)
     {
-        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $macuahang = null;
-        if ($userLogin && $userLogin->vaiTroId == 2) {
-            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+        try {
+            $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+            $macuahang = null;
+            if ($userLogin && $userLogin->vaiTroId == 2) {
+                $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+                $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+            }
+
+            $thang = (int) $request->input('thang', now()->month);
+            $nam   = (int) $request->input('nam', now()->year);
+
+            $loHangTable = \Illuminate\Support\Facades\Schema::hasTable('loHang') ? 'loHang' : 'lohang';
+            $sanPhamTable = \Illuminate\Support\Facades\Schema::hasTable('sanPham') ? 'sanPham' : 'sanpham';
+
+            $query = DB::table($loHangTable)
+                ->join($sanPhamTable, "{$loHangTable}.sanPhamId", '=', "{$sanPhamTable}.id")
+                ->whereMonth("{$loHangTable}.createdAt", $thang)
+                ->whereYear("{$loHangTable}.createdAt", $nam)
+                ->when($macuahang, fn($q) => $q->where("{$loHangTable}.cuaHangId", $macuahang));
+
+            // Tổng quan
+            $tongKet = (clone $query)
+                ->selectRaw("
+                    SUM({$loHangTable}.soLuongNhap) as tong_nhap,
+                    SUM({$loHangTable}.soLuongCon) as tong_con,
+                    COUNT(*) as so_lo,
+                    SUM(CASE WHEN {$loHangTable}.trangThai = 2 THEN 1 ELSE 0 END) as so_lo_het_han,
+                    SUM(CASE WHEN {$loHangTable}.trangThai = 1 THEN 1 ELSE 0 END) as so_lo_ban_het,
+                    SUM(CASE WHEN {$loHangTable}.trangThai = 3 THEN 1 ELSE 0 END) as so_lo_huy,
+                    SUM(CASE WHEN {$loHangTable}.trangThai = 3 THEN {$loHangTable}.soLuongCon * {$loHangTable}.giaNhap ELSE 0 END) as gia_tri_huy
+                ")
+                ->first();
+
+            // Hao hụt theo sản phẩm
+            $haoHutTheoSP = (clone $query)
+                ->selectRaw("
+                    {$sanPhamTable}.id as MASP, {$sanPhamTable}.tenSanPham as TENSP,
+                    SUM({$loHangTable}.soLuongNhap) as tong_nhap,
+                    SUM({$loHangTable}.soLuongCon) as tong_con,
+                    SUM(CASE WHEN {$loHangTable}.trangThai = 3 THEN {$loHangTable}.soLuongCon ELSE 0 END) as tong_huy,
+                    SUM(CASE WHEN {$loHangTable}.trangThai = 3 THEN {$loHangTable}.soLuongCon * {$loHangTable}.giaNhap ELSE 0 END) as gia_tri_huy,
+                    ROUND(SUM(CASE WHEN {$loHangTable}.trangThai = 3 THEN {$loHangTable}.soLuongCon ELSE 0 END) / NULLIF(SUM({$loHangTable}.soLuongNhap), 0) * 100, 2) as ty_le_huy
+                ")
+                ->groupBy("{$sanPhamTable}.id", "{$sanPhamTable}.tenSanPham")
+                ->orderByDesc('ty_le_huy')
+                ->get();
+
+            $tongNhap = ($tongKet->tong_nhap ?? 0) ?: 1;
+            $tongHuy = (int) ($tongKet->so_lo_huy ?? 0);
+            $tongCon = (int) ($tongKet->tong_con ?? 0);
+
+            return response()->json([
+                'status'           => true,
+                'data'             => [
+                    'thang'            => $thang,
+                    'nam'              => $nam,
+                    'tong_nhap'        => (int) ($tongKet->tong_nhap ?? 0),
+                    'tong_ban'         => (int) (($tongKet->tong_nhap ?? 0) - $tongCon),
+                    'tong_huy'         => $tongHuy,
+                    'tong_con'         => $tongCon,
+                    'ty_le_ban'        => round((($tongKet->tong_nhap ?? 0) - $tongCon) / $tongNhap * 100, 2),
+                    'ty_le_huy'        => round($tongHuy / $tongNhap * 100, 2),
+                    'gia_tri_huy'      => round($tongKet->gia_tri_huy ?? 0, 2),
+                    'so_lo'            => (int) ($tongKet->so_lo ?? 0),
+                    'so_lo_het_han'    => (int) ($tongKet->so_lo_het_han ?? 0),
+                    'so_lo_ban_het'    => (int) ($tongKet->so_lo_ban_het ?? 0),
+                    'so_lo_bi_huy'     => (int) ($tongKet->so_lo_huy ?? 0),
+                    'hao_hut_theo_sp'  => $haoHutTheoSP,
+                ]
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Lỗi thongKeHaoHut: ' . $e->getMessage());
+            return response()->json([
+                'status' => true,
+                'data' => [
+                    'thang' => (int) $request->input('thang', now()->month),
+                    'nam' => (int) $request->input('nam', now()->year),
+                    'tong_nhap' => 0,
+                    'tong_ban' => 0,
+                    'tong_huy' => 0,
+                    'tong_con' => 0,
+                    'ty_le_ban' => 0,
+                    'ty_le_huy' => 0,
+                    'gia_tri_huy' => 0,
+                    'so_lo' => 0,
+                    'so_lo_het_han' => 0,
+                    'so_lo_ban_het' => 0,
+                    'so_lo_bi_huy' => 0,
+                    'hao_hut_theo_sp' => []
+                ]
+            ]);
         }
-
-        $thang = (int) $request->input('thang', now()->month);
-        $nam   = (int) $request->input('nam', now()->year);
-
-        $query = DB::table('lohang')
-            ->join('sanpham', 'lohang.sanPhamId', '=', 'sanpham.id')
-            ->whereMonth('lohang.createdAt', $thang)
-            ->whereYear('lohang.createdAt', $nam)
-            ->when($macuahang, fn($q) => $q->where('lohang.cuaHangId', $macuahang));
-
-        // Tổng quan
-        $tongKet = (clone $query)
-            ->selectRaw("
-                SUM(lohang.soLuongNhap) as tong_nhap,
-                SUM(lohang.soLuongCon) as tong_con,
-                COUNT(*) as so_lo,
-                SUM(CASE WHEN lohang.trangThai = 2 THEN 1 ELSE 0 END) as so_lo_het_han,
-                SUM(CASE WHEN lohang.trangThai = 1 THEN 1 ELSE 0 END) as so_lo_ban_het,
-                SUM(CASE WHEN lohang.trangThai = 3 THEN 1 ELSE 0 END) as so_lo_huy,
-                SUM(CASE WHEN lohang.trangThai = 3 THEN lohang.soLuongCon * lohang.giaNhap ELSE 0 END) as gia_tri_huy
-            ")
-            ->first();
-
-        // Hao hụt theo sản phẩm
-        $haoHutTheoSP = (clone $query)
-            ->selectRaw("
-                sanpham.id as MASP, sanpham.tenSanPham as TENSP,
-                SUM(lohang.soLuongNhap) as tong_nhap,
-                SUM(lohang.soLuongCon) as tong_con,
-                SUM(CASE WHEN lohang.trangThai = 3 THEN lohang.soLuongCon ELSE 0 END) as tong_huy,
-                SUM(CASE WHEN lohang.trangThai = 3 THEN lohang.soLuongCon * lohang.giaNhap ELSE 0 END) as gia_tri_huy,
-                ROUND(SUM(CASE WHEN lohang.trangThai = 3 THEN lohang.soLuongCon ELSE 0 END) / NULLIF(SUM(lohang.soLuongNhap), 0) * 100, 2) as ty_le_huy
-            ")
-            ->groupBy('sanpham.id', 'sanpham.tenSanPham')
-            ->orderByDesc('ty_le_huy')
-            ->get();
-
-        $tongNhap = ($tongKet->tong_nhap ?? 0) ?: 1;
-        $tongHuy = (int) ($tongKet->so_lo_huy ?? 0);
-        $tongCon = (int) ($tongKet->tong_con ?? 0);
-
-        return response()->json([
-            'status'           => true,
-            'data'             => [
-                'thang'            => $thang,
-                'nam'              => $nam,
-                'tong_nhap'        => (int) ($tongKet->tong_nhap ?? 0),
-                'tong_ban'         => (int) (($tongKet->tong_nhap ?? 0) - $tongCon),
-                'tong_huy'         => $tongHuy,
-                'tong_con'         => $tongCon,
-                'ty_le_ban'        => round((($tongKet->tong_nhap ?? 0) - $tongCon) / $tongNhap * 100, 2),
-                'ty_le_huy'        => round($tongHuy / $tongNhap * 100, 2),
-                'gia_tri_huy'      => round($tongKet->gia_tri_huy ?? 0, 2),
-                'so_lo'            => (int) ($tongKet->so_lo ?? 0),
-                'so_lo_het_han'    => (int) ($tongKet->so_lo_het_han ?? 0),
-                'so_lo_ban_het'    => (int) ($tongKet->so_lo_ban_het ?? 0),
-                'so_lo_bi_huy'     => (int) ($tongKet->so_lo_huy ?? 0),
-                'hao_hut_theo_sp'  => $haoHutTheoSP,
-            ]
-        ]);
     }
 
     /**

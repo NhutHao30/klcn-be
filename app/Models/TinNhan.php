@@ -122,8 +122,8 @@ class TinNhan extends Model
         } elseif ($val === 'nhanvien' || $val === 1 || $val === '1') {
             $code = 1;
         }
-        $this->attributes['nguoiGuiType'] = $code;
-        $this->attributes['nguoi_gui_type'] = $code;
+        $col = static::getNguoiGuiTypeCol();
+        $this->attributes[$col] = $code;
     }
 
     public function getMATINNHANAttribute()

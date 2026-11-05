@@ -480,6 +480,8 @@ Route::middleware(['resilient.admin'])->group(function () {
     // Giám sát Kỹ thuật & Bảo mật
     Route::get('/admin/system/performance', [\App\Http\Controllers\Api\SystemMonitorController::class, 'getPerformance']);
     Route::get('/admin/system/errors', [\App\Http\Controllers\Api\SystemMonitorController::class, 'getErrors']);
+    Route::post('/admin/system/errors/clear-all', [\App\Http\Controllers\Api\SystemMonitorController::class, 'clearAllErrors']);
+    Route::delete('/admin/system/errors/clear-all', [\App\Http\Controllers\Api\SystemMonitorController::class, 'clearAllErrors']);
     Route::put('/admin/system/errors/{id}', [\App\Http\Controllers\Api\SystemMonitorController::class, 'updateErrorStatus']);
     Route::get('/admin/system/alerts', [\App\Http\Controllers\Api\SystemMonitorController::class, 'getAlertSettings']);
     Route::put('/admin/system/alerts', [\App\Http\Controllers\Api\SystemMonitorController::class, 'updateAlertSettings']);

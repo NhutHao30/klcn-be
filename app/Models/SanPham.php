@@ -49,22 +49,22 @@ class SanPham extends Model
 
     public function getTENSPAttribute()
     {
-        return $this->attributes['tenSanPham'] ?? null;
+        return $this->attributes['tenSanPham'] ?? $this->attributes['ten_san_pham'] ?? $this->attributes['TENSP'] ?? $this->attributes['name'] ?? null;
     }
 
     public function getGIABANAttribute()
     {
-        return $this->attributes['giaBan'] ?? null;
+        return $this->attributes['giaBan'] ?? $this->attributes['gia_ban'] ?? $this->attributes['GIABAN'] ?? 0;
     }
 
     public function getHINHANHAttribute()
     {
-        return $this->attributes['hinhAnh'] ?? null;
+        return $this->attributes['hinhAnh'] ?? $this->attributes['hinh_anh'] ?? $this->attributes['HINHANH'] ?? null;
     }
 
     public function getMOTAAttribute()
     {
-        return $this->attributes['moTa'] ?? '';
+        return $this->attributes['moTa'] ?? $this->attributes['mo_ta'] ?? $this->attributes['MOTA'] ?? '';
     }
 
     public function getSoLuongTonAttribute()
