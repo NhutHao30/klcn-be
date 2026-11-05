@@ -18,7 +18,7 @@ class GeminiChatService
     public function __construct()
     {
         $this->apiKey = config('services.gemini.api_key', env('GEMINI_API_KEY', ''));
-        $this->model = config('services.gemini.model', env('GEMINI_MODEL', 'gemini-3.8-flash'));
+        $this->model = config('services.gemini.model', env('GEMINI_MODEL', 'gemini-3.5-flash'));
         $this->mode = config('services.gemini.mode', env('CHATBOT_MODE', 'always'));
         $this->enabled = (bool) config('services.gemini.auto_reply', env('CHATBOT_AUTO_REPLY', true));
     }
@@ -28,18 +28,12 @@ class GeminiChatService
      */
     public function shouldReply(int $conversationId): bool
     {
-        if (!$this->enabled || empty($this->apiKey)) {
-            return false;
-        }
-
-        // Nếu có nhân viên/CSKH đang trực tuyến trên web -> Bot nhường cho nhân viên hỗ trợ trực tiếp
-        if ($this->mode !== 'force_always' && \App\Services\StaffPresenceService::isStaffOnline()) {
+        if (!$this->enabled) {
             return false;
         }
 
         if ($this->mode === 'night_only') {
             $hour = (int) now()->timezone('Asia/Ho_Chi_Minh')->format('H');
-            // Ngoài giờ làm việc: trước 8h sáng hoặc từ 21h tối trở đi
             return ($hour >= 21 || $hour < 8);
         }
 
@@ -51,13 +45,9 @@ class GeminiChatService
      */
     public function generateReply(int $conversationId, string $customerMessage): ?string
     {
-        if (empty($this->apiKey)) {
-            Log::warning('GeminiChatService: GEMINI_API_KEY is not configured.');
-            return null;
-        }
-
-        // 0. CHẶN NGAY CÁC CÂU HỎI VỀ DỮ LIỆU NỘI BỘ, TÀI CHÍNH, DOANH THU (Fast-Security Interceptor)
         $lowerMsg = mb_strtolower(trim($customerMessage));
+
+        // 0. BẢO MẬT: CHẶN DOANH THU & TÀI CHÍNH NỘI BỘ
         if (
             str_contains($lowerMsg, 'doanh thu') || 
             str_contains($lowerMsg, 'doanh so') || 
@@ -73,16 +63,14 @@ class GeminiChatService
             str_contains($lowerMsg, 'chi phí') ||
             str_contains($lowerMsg, 'chi phi')
         ) {
-            return "Dạ xin lỗi bạn, đây là thông tin kinh doanh nội bộ của công ty nên em không được phép chia sẻ ạ. Em chỉ có thể hỗ trợ tư vấn các thông tin về thực đơn bánh, giá bán, khuyến mãi và địa chỉ chi nhánh thôi bạn nhé! 😊";
+            return "Dạ xin lỗi bạn, đây là thông tin kinh doanh nội bộ của công ty nên em không được phép chia sẻ ạ. Em chỉ có thể hỗ trợ tư vấn các thông tin về thực đơn bánh tươi, giá bán, khuyến mãi và địa chỉ chi nhánh thôi bạn nhé! 😊";
         }
 
-        // 1. Dữ liệu cửa hàng thực tế từ database
+        // 1. Dữ liệu cửa hàng & sản phẩm thực tế
         $storesContext = $this->buildStoresContext();
-
-        // 2. Dữ liệu sản phẩm thực tế từ database
         $productsContext = $this->buildProductsContext();
 
-        // 3. Lấy 6 tin nhắn gần nhất để giữ ngữ cảnh hội thoại
+        // 2. Lấy 6 tin nhắn gần nhất
         $history = TinNhan::where('cuocTroChuyenId', $conversationId)
             ->orderBy('id', 'desc')
             ->take(6)
@@ -91,151 +79,152 @@ class GeminiChatService
 
         $conversationText = "";
         foreach ($history as $msg) {
-            $sender = ($msg->nguoiGuiType == 0) ? 'Khách hàng' : (($msg->nguoiGuiType == 2) ? 'Trợ lý Givral AI' : 'Nhân viên CSKH');
+            $sender = ($msg->nguoiGuiType == 0 || $msg->nguoiGuiType === 'khachhang') ? 'Khách hàng' : (($msg->nguoiGuiType == 2 || $msg->nguoiGuiType === 'bot') ? 'Trợ lý Givral AI' : 'Nhân viên CSKH');
             $conversationText .= "{$sender}: {$msg->noiDung}\n";
         }
 
         $systemInstruction = <<<TEXT
-Bạn là "Trợ lý ảo Givral AI" - trợ lý tư vấn khách hàng của chuỗi cửa hàng bánh ngọt Givral Bakery.
-Giờ mở cửa phục vụ: 07:00 - 22:00 hàng ngày.
+Bạn là "Trợ lý ảo Givral AI" - trợ lý tư vấn khách hàng của chuỗi cửa hàng bánh ngọt Givral Bakery (phục vụ 07:00 - 22:00 hàng ngày).
 
-QUY TẮC BẢO MẬT & PHẠM VI TRẢ LỜI BẮT BUỘC (TUÂN THỦ 100%):
-1. PHẠM VI HỖ TRỢ:
-   - Bạn CHỈ ĐƯỢC PHÉP trả lời các câu hỏi dịch vụ đơn giản dành cho khách hàng:
-     + Danh mục thực đơn bánh, tên các loại bánh, mô tả hương vị, giá bán niêm yết.
-     + Địa chỉ, hotline, giờ mở cửa các chi nhánh của Givral Bakery.
-     + Gợi ý bánh theo dịp (sinh nhật, thôi nôi, kỷ niệm, tặng người yêu, sự kiện...).
-     + Cách bảo quản bánh và thông tin khuyến mãi công khai.
-   - Trả lời ngắn gọn, lịch sự, ấm áp (khoảng 2-4 câu).
+QUY TẮC BẢO MẬT & PHẠM VI TRẢ LỜI:
+1. Bạn CHỈ trả lời thông tin cho khách hàng:
+   - Danh mục thực đơn bánh, tên loại bánh, mô tả hương vị, giá bán niêm yết.
+   - Địa chỉ chi nhánh, hotline, giờ mở cửa.
+   - Gợi ý bánh sinh nhật, kỷ niệm, quà tặng, sự kiện...
+   - Cách bảo quản bánh và ưu đãi công khai.
+   - Trả lời ngắn gọn, thân thiện, lịch sự (khoảng 2-4 câu).
+2. TUYỆT ĐỐI KHÔNG tiết lộ doanh thu, chi phí, lợi nhuận, lương nhân viên hay tài chính nội bộ.
+3. Về tồn kho: Chỉ nói "Hiện đang Còn hàng" hoặc "Tạm hết hàng", KHÔNG nói số lượng tồn cụ thể.
+4. Nếu khách hỏi ngoài lề (chính trị, code, giải toán...): Lịch sự từ chối và hướng về bánh Givral.
 
-2. BẢO MẬT TUYỆT ĐỐI - KHÔNG TIẾT LỘ DOANH THU & TÀI CHÍNH NỘI BỘ:
-   - BẠN TUYỆT ĐỐI KHÔNG ĐƯỢC trả lời, ước tính hay chia sẻ bất kỳ thông tin nào về DOANH THU, DOANH SỐ, LỢI NHUẬN, CHI PHÍ, TIỀN BÁN HÀNG, LƯƠNG NHÂN VIÊN của cửa hàng hay chuỗi chi nhánh. Đây là DỮ LIỆU TUYỆT MẬT NỘI BỘ.
-   - Nếu khách hàng hỏi về doanh thu hoặc tài chính:
-     => BẮT BUỘC TỪ CHỐI LỊCH SỰ:
-     "Dạ xin lỗi bạn, đây là thông tin kinh doanh nội bộ của công ty nên em không thể chia sẻ được ạ. Em chỉ có thể hỗ trợ bạn các thông tin về thực đơn bánh, giá bán, khuyến mãi và địa chỉ chi nhánh thôi bạn nhé!"
-
-3. BẢO MẬT TỒN KHO - KHÔNG NÊU CON SỐ TỒN KHO CỤ THỂ:
-   - Khi khách hỏi còn bao nhiêu cái (ví dụ: "bánh su kem còn bao nhiêu cái", "tồn kho còn mấy cái"):
-     + CHỈ ĐƯỢC trả lời trạng thái chung là "Sản phẩm hiện đang Còn hàng" hoặc "Sản phẩm hiện đang Tạm hết hàng".
-     + TUYỆT ĐỐI KHÔNG nói con số tồn kho cụ thể (không được nói còn 10 cái, 50 cái...).
-     + Nếu khách cần đặt số lượng lớn cho sự kiện, hướng dẫn khách liên hệ trực tiếp hotline chi nhánh để được tiệm làm bánh tươi mới và chuẩn bị chu đáo nhất.
-
-4. CÂU HỎI NGOÀI LỀ & KHIẾU NẠI:
-   - Không trả lời các câu hỏi không liên quan đến tiệm bánh Givral (chính trị, giải toán, code, đời tư...).
-   - Nếu khách có khiếu nại, yêu cầu đổi trả, hoàn tiền: "Dạ nhân viên CSKH của Givral Bakery sẽ liên hệ trực tiếp để hỗ trợ bạn chu đáo nhất ạ!"
-
---- DANH SÁCH CHI NHÁNH ĐANG HOẠT ĐỘNG ---
+--- DANH SÁCH CHI NHÁNH ---
 {$storesContext}
 
---- DANH MỤC & SẢN PHẨM HIỆN CÓ TẠI CỬA HÀNG ---
+--- SẢN PHẨM HIỆN CÓ ---
 {$productsContext}
 TEXT;
 
         $prompt = <<<TEXT
-LỊCH SỬ TIN NHẮN GẦN ĐÂY:
+LỊCH SỬ TIN NHẮN:
 {$conversationText}
 Khách hàng vừa hỏi: "{$customerMessage}"
 
-Hãy đóng vai Trợ lý ảo Givral AI và phản hồi ngắn gọn, tự nhiên, tuân thủ đúng quy tắc bảo mật trên:
+Hãy đóng vai Trợ lý ảo Givral AI và trả lời ngắn gọn, thân thiện:
 TEXT;
 
-        // Danh sách model ưu tiên (tự động chuyển sang model dự phòng nếu model chính bị 503 quá tải)
-        $modelsToTry = array_values(array_unique([
-            $this->model,
+        // Model ưu tiên
+        $modelsToTry = [
             'gemini-3.5-flash',
-            'gemini-3.8-flash',
-            'gemini-3-flash-preview',
-        ]));
+            'gemini-3.5-flash-lite',
+            'gemini-flash-lite-latest',
+            'gemini-flash-latest',
+        ];
 
         $client = new Client([
-            'timeout' => 12.0,
-            'verify' => false, // Bỏ qua SSL cURL local trên Windows dev
-            'curl' => [
-                CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4, // Tăng tốc phân giải DNS IPv4 trên Windows
-            ],
+            'timeout' => 8.0,
+            'verify' => false,
         ]);
 
         foreach ($modelsToTry as $targetModel) {
             try {
                 $url = "https://generativelanguage.googleapis.com/v1beta/models/{$targetModel}:generateContent?key={$this->apiKey}";
-
                 $response = $client->post($url, [
-                    'headers' => [
-                        'Content-Type' => 'application/json',
-                    ],
                     'json' => [
                         'systemInstruction' => [
-                            'parts' => [
-                                ['text' => $systemInstruction]
-                            ]
+                            'parts' => [['text' => $systemInstruction]]
                         ],
                         'contents' => [
                             [
-                                'parts' => [
-                                    ['text' => $prompt]
-                                ]
+                                'role' => 'user',
+                                'parts' => [['text' => $prompt]]
                             ]
                         ],
                         'generationConfig' => [
-                            'temperature' => 0.7,
-                            'maxOutputTokens' => 2048,
+                            'temperature' => 0.6,
+                            'maxOutputTokens' => 450,
                         ]
                     ]
                 ]);
 
-                $result = json_decode($response->getBody()->getContents(), true);
-                $botReply = $result['candidates'][0]['content']['parts'][0]['text'] ?? null;
-
-                if ($botReply) {
-                    return trim($botReply);
+                if ($response->getStatusCode() === 200) {
+                    $data = json_decode($response->getBody()->getContents(), true);
+                    $reply = $data['candidates'][0]['content']['parts'][0]['text'] ?? null;
+                    if (!empty($reply)) {
+                        return trim($reply);
+                    }
                 }
-            } catch (\Exception $e) {
-                Log::warning("GeminiChatService model {$targetModel} failed: " . $e->getMessage() . ". Trying next fallback if available.");
+            } catch (\Throwable $e) {
+                Log::warning("Gemini model {$targetModel} attempt failed: " . $e->getMessage());
+                continue;
             }
         }
 
-        return null;
+        // 3. THÔNG MINH FALLBACK (Smart Rule-Based) khi API Gemini bận hoặc quá tải
+        return $this->smartRuleFallback($lowerMsg, $customerMessage);
     }
 
     /**
-     * Tạo chuỗi thông tin các cửa hàng đang hoạt động
+     * Phản hồi thông minh dự phòng khi Gemini API bị 503 Spike
+     */
+    private function smartRuleFallback(string $lowerMsg, string $originalMsg): string
+    {
+        if (str_contains($lowerMsg, 'chào') || str_contains($lowerMsg, 'alo') || str_contains($lowerMsg, 'lô') || str_contains($lowerMsg, 'hu') || str_contains($lowerMsg, 'hi') || str_contains($lowerMsg, 'hello')) {
+            return "Dạ Givral Bakery xin chào bạn ạ! 😊 Em là Trợ lý ảo Givral AI. Em có thể hỗ trợ tư vấn các loại bánh kem sinh nhật, bánh tươi trong ngày hoặc địa chỉ chi nhánh gần bạn nhất không ạ?";
+        }
+
+        if (str_contains($lowerMsg, 'địa chỉ') || str_contains($lowerMsg, 'cửa hàng') || str_contains($lowerMsg, 'chi nhánh') || str_contains($lowerMsg, 'ở đâu')) {
+            return "Dạ Givral Bakery hiện có chuỗi chi nhánh tại TP.HCM (Trụ sở chính: 140 Lê Trọng Tấn, Q.Tân Phú) mở cửa từ 07:00 đến 22:00 hàng ngày. Bạn có thể bấm vào mục 'Hệ thống cửa hàng' trên menu để xem chi nhánh gần bạn nhất nhé!";
+        }
+
+        if (str_contains($lowerMsg, 'giá') || str_contains($lowerMsg, 'bao nhiêu') || str_contains($lowerMsg, 'menu') || str_contains($lowerMsg, 'thực đơn') || str_contains($lowerMsg, 'bánh')) {
+            return "Dạ tiệm có đa dạng các dòng bánh kem bắp, bánh Donut socola (từ 19.920đ), bánh Mousse, bánh Tiramisu tươi ngon mỗi ngày. Bạn có thể xem toàn bộ thực đơn chi tiết kèm giá ưu đãi tại mục 'Sản phẩm' hoặc cho em biết loại bánh bạn yêu thích để em gợi ý nhé! 🎂";
+        }
+
+        if (str_contains($lowerMsg, 'ship') || str_contains($lowerMsg, 'giao hàng') || str_contains($lowerMsg, 'phí giao')) {
+            return "Dạ Givral Bakery hỗ trợ giao bánh tận nơi nhanh chóng qua Giao Hàng Nhanh (GHN) và đội ngũ giao bánh chuyên dụng. Khi đặt hàng trên web/app bạn chỉ cần chọn địa chỉ là hệ thống sẽ tính phí vận chuyển chính xác đến tận nhà bạn ạ!";
+        }
+
+        return "Dạ em đã nhận được tin nhắn của bạn ạ. Nếu cần tư vấn đặt bánh nhanh hoặc yêu cầu gấp, bạn có thể gọi hotline CSKH 028 3844 4544 hoặc để lại số điện thoại để nhân viên hỗ trợ ngay cho bạn nhé! 💖";
+    }
+
+    /**
+     * Xây dựng ngữ cảnh chi nhánh từ DB
      */
     protected function buildStoresContext(): string
     {
-        $stores = CuaHang::where('trangThai', 1)->get();
-        if ($stores->isEmpty()) {
-            return "Hiện tại hệ thống đang cập nhật danh sách chi nhánh.";
+        try {
+            $stores = CuaHang::where('trangThai', 1)->take(5)->get();
+            if ($stores->isEmpty()) {
+                return "- Trụ sở Givral Bakery: 140 Lê Trọng Tấn, Tây Thạnh, Tân Phú, TP.HCM (Hotline: 028 3844 4544)";
+            }
+            $lines = [];
+            foreach ($stores as $s) {
+                $lines[] = "- {$s->tenCuaHang}: {$s->diaChi} (Hotline: {$s->soDienThoai})";
+            }
+            return implode("\n", $lines);
+        } catch (\Throwable $e) {
+            return "- Hệ thống chi nhánh Givral Bakery tại TP.HCM (Giờ mở cửa: 07:00 - 22:00)";
         }
-
-        $lines = [];
-        foreach ($stores as $store) {
-            $lines[] = "- {$store->tenCuaHang}: {$store->diaChiChiTiet} (SĐT: {$store->soDienThoai})";
-        }
-        return implode("\n", $lines);
     }
 
     /**
-     * Tạo chuỗi thông tin sản phẩm và giá bán thời gian thực
+     * Xây dựng ngữ cảnh sản phẩm từ DB
      */
     protected function buildProductsContext(): string
     {
-        $products = SanPham::with('loaiSanPham')
-            ->where('trangThai', 1)
-            ->get();
-
-        if ($products->isEmpty()) {
-            return "Hiện tại hệ thống đang cập nhật danh sách sản phẩm.";
+        try {
+            $products = SanPham::where('trangThai', 1)->take(12)->get();
+            if ($products->isEmpty()) {
+                return "- Bánh Kem Bắp Givral (320.000đ), Bánh Donut Socola (19.920đ), Bánh Tiramisu (65.000đ)";
+            }
+            $lines = [];
+            foreach ($products as $p) {
+                $price = number_format($p->giaGiam ?: $p->giaBan, 0, ',', '.');
+                $lines[] = "- {$p->tenSanPham}: {$price} đ";
+            }
+            return implode("\n", $lines);
+        } catch (\Throwable $e) {
+            return "- Bánh Kem Givral, Bánh Mousse, Bánh Donut, Bánh Choux kem tươi.";
         }
-
-        $lines = [];
-        foreach ($products as $sp) {
-            $loai = $sp->loaiSanPham?->tenLoai ?? 'Bánh ngọt';
-            $gia = number_format($sp->giaBan) . 'đ';
-            $ton = $sp->soLuongTon;
-            $statusTon = $ton > 0 ? "Còn hàng ({$ton} cái)" : "Tạm hết";
-            $moTa = $sp->moTa ? " - " . mb_substr(strip_tags($sp->moTa), 0, 80) : "";
-            $lines[] = "- [{$loai}] {$sp->tenSanPham}: Giá {$gia} ({$statusTon}){$moTa}";
-        }
-        return implode("\n", $lines);
     }
 }

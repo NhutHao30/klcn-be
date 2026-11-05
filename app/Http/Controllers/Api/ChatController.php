@@ -18,6 +18,30 @@ use Illuminate\Support\Facades\Log;
 class ChatController extends Controller
 {
     /**
+     * Xác định xem người dùng hiện tại có phải là Khách hàng hay không
+     */
+    private function isCustomerUser($userLogin): bool
+    {
+        if (!$userLogin) return true;
+
+        $vaiTroId = (int)($userLogin->vaiTroId ?? $userLogin->MAROLE ?? 0);
+        $roleName = strtoupper($userLogin->role ?? $userLogin->VAITRO ?? '');
+
+        // Nếu rõ ràng là Quản trị viên, Quản lý cửa hàng
+        if ($vaiTroId === 1 || $vaiTroId === 2 || str_contains($roleName, 'ADMIN') || str_contains($roleName, 'QUANLY')) {
+            return false;
+        }
+
+        // Nếu bản ghi nguoidung có loaiNguoiDung = 0 -> Khách hàng
+        if (isset($userLogin->nguoidung) && $userLogin->nguoidung->loaiNguoiDung !== null) {
+            return (int)$userLogin->nguoidung->loaiNguoiDung === 0;
+        }
+
+        // Mặc định vai trò 6 (Khách hàng mới), 3 (khách hàng DB cũ), hoặc 0
+        return ($vaiTroId === 6 || $vaiTroId === 3 || $vaiTroId === 0 || empty($vaiTroId));
+    }
+
+    /**
      * Lấy danh sách cuộc trò chuyện
      */
     public function getConversations(Request $request)
@@ -28,7 +52,7 @@ class ChatController extends Controller
                 return response()->json(['error' => 'Chưa đăng nhập'], 401);
             }
 
-            $isCustomer = ($userLogin->vaiTroId == 3 || $userLogin->MAROLE == 3 || $userLogin->MAROLE == 0);
+            $isCustomer = $this->isCustomerUser($userLogin);
 
             if ($isCustomer) {
                 // Khách hàng -> Lấy danh sách đoạn chat của họ
@@ -83,7 +107,6 @@ class ChatController extends Controller
 
             $khachHang = KhachHang::findByUsername($userLogin->username) ?? NguoiDung::where('taiKhoanId', $userLogin->id)->first();
             if (!$khachHang) {
-                // Tự động tạo hồ sơ khách hàng nếu tài khoản chưa có bản ghi nguoidung
                 $khachHang = NguoiDung::create([
                     'taiKhoanId' => $userLogin->id,
                     'hoTen' => $userLogin->username ?? 'Khách hàng',
@@ -120,16 +143,17 @@ class ChatController extends Controller
 
         // Tự động đánh dấu tin nhắn đối phương là ĐÃ XEM (daDoc = 1)
         if ($userLogin) {
-            if ($userLogin->MAROLE == 3) {
+            $isCustomer = $this->isCustomerUser($userLogin);
+            if ($isCustomer) {
                 // Khách hàng xem tin nhắn của nhân viên (1) hoặc bot AI (2)
                 TinNhan::where('cuocTroChuyenId', $conversationId)
-                       ->whereIn('nguoiGuiType', [1, 2])
+                       ->whereIn('nguoiGuiType', [1, 2, 'nhanvien', 'bot'])
                        ->where('daDoc', 0)
                        ->update(['daDoc' => 1]);
             } else {
                 // Nhân viên xem tin nhắn của khách hàng (0)
                 TinNhan::where('cuocTroChuyenId', $conversationId)
-                       ->where('nguoiGuiType', 0)
+                       ->whereIn('nguoiGuiType', [0, 'khachhang'])
                        ->where('daDoc', 0)
                        ->update(['daDoc' => 1]);
             }
@@ -160,11 +184,14 @@ class ChatController extends Controller
             return response()->json(['error' => 'Đoạn chat không tồn tại'], 404);
         }
 
-        $loaiNguoiGui = ($userLogin->MAROLE == 3) ? 'khachhang' : 'nhanvien';
+        $isCustomer = $this->isCustomerUser($userLogin);
+        $loaiNguoiGui = $isCustomer ? 'khachhang' : 'nhanvien';
 
         // Nếu là nhân viên gửi tin -> Cập nhật trạng thái trực tuyến
-        if ($loaiNguoiGui === 'nhanvien') {
-            \App\Services\StaffPresenceService::recordOnline((int)$userLogin->id);
+        if (!$isCustomer) {
+            try {
+                \App\Services\StaffPresenceService::recordOnline((int)$userLogin->id);
+            } catch (\Throwable $te) {}
         }
 
         $tinNhan = TinNhan::create([
@@ -176,7 +203,7 @@ class ChatController extends Controller
         // Cập nhật thời gian update của đoạn chat
         $conversation->touch();
 
-        // Broadcast sự kiện qua Pusher (an toàn không gây crash nếu Pusher offline)
+        // Broadcast sự kiện qua Pusher (an toàn)
         try {
             broadcast(new MessageSent($tinNhan, $conversationId))->toOthers();
         } catch (\Exception $e) {
@@ -184,10 +211,10 @@ class ChatController extends Controller
         }
 
         // TỰ ĐỘNG PHẢN HỒI BẰNG BOT AI NẾU KHÁCH HÀNG GỬI TIN NHẮN
-        if ($loaiNguoiGui === 'khachhang') {
-            $geminiService = app(\App\Services\GeminiChatService::class);
-            if ($geminiService->shouldReply((int) $conversationId)) {
-                try {
+        if ($isCustomer) {
+            try {
+                $geminiService = app(\App\Services\GeminiChatService::class);
+                if ($geminiService->shouldReply((int) $conversationId)) {
                     $reply = $geminiService->generateReply((int) $conversationId, $request->NOIDUNG);
                     if ($reply) {
                         $botMessage = TinNhan::create([
@@ -200,18 +227,17 @@ class ChatController extends Controller
                         $conversation->touch();
 
                         try {
-                            // Phát broadcast cho cả khách hàng và nhân viên
                             broadcast(new MessageSent($botMessage, $conversationId));
                         } catch (\Exception $e) {
                             Log::warning('Pusher broadcast bot reply failed: ' . $e->getMessage());
                         }
 
-                        // Gắn bot_reply vào response để client nhận được ngay lập tức
+                        // Gắn bot_reply vào response để client (web/mobile) nhận được ngay lập tức
                         $tinNhan->setAttribute('bot_reply', $botMessage);
                     }
-                } catch (\Exception $e) {
-                    Log::error('Bot auto-reply error: ' . $e->getMessage());
                 }
+            } catch (\Throwable $e) {
+                Log::error('Bot auto-reply error: ' . $e->getMessage());
             }
         }
 
@@ -221,78 +247,36 @@ class ChatController extends Controller
     /**
      * Thu hồi tin nhắn
      */
-    public function recallMessage($conversationId, $messageId)
+    public function recallMessage(Request $request, $messageId)
     {
         $userLogin = Auth::guard('api')->user();
         if (!$userLogin) {
             return response()->json(['error' => 'Chưa đăng nhập'], 401);
         }
 
-        $message = TinNhan::where('cuocTroChuyenId', $conversationId)->where('id', $messageId)->first();
-        if (!$message) {
+        $tinNhan = TinNhan::find($messageId);
+        if (!$tinNhan) {
             return response()->json(['error' => 'Tin nhắn không tồn tại'], 404);
         }
 
-        $message->noiDung = '🚫 Tin nhắn đã bị thu hồi';
-        $message->save();
+        $tinNhan->daThuHoi = 1;
+        $tinNhan->save();
 
-        try {
-            broadcast(new MessageSent($message, $conversationId))->toOthers();
-        } catch (\Exception $e) {
-            Log::warning('Pusher broadcast failed: ' . $e->getMessage());
-        }
-
-        return response()->json($message);
+        return response()->json([
+            'success' => true,
+            'message' => 'Đã thu hồi tin nhắn',
+            'data' => $tinNhan
+        ]);
     }
 
     /**
-     * Lấy danh sách tin nhắn nội bộ
+     * Lấy tin nhắn nội bộ
      */
     public function getInternalMessages($channel)
     {
-        $userLogin = Auth::guard('api')->user();
-        if (!$userLogin) {
-            return response()->json(['error' => 'Chưa đăng nhập'], 401);
-        }
-
-        // Khách hàng (MAROLE = 3) không có quyền truy cập kênh nội bộ
-        if ($userLogin->MAROLE === 3) {
-            return response()->json(['error' => 'Khách hàng không có quyền truy cập chat nội bộ'], 403);
-        }
-
-        $nhanVien = NhanVien::findByUsername($userLogin->username);
-        $staffStore = $nhanVien?->MACUAHANG ?? $nhanVien?->cuaHangId ?? $userLogin->nguoidung?->cuaHangId ?? 1;
-
-        // Security check
-        if ($channel === 'managers' && !in_array($userLogin->MAROLE, [0, 1, 5])) {
-            return response()->json(['error' => 'Không có quyền truy cập nhóm quản lý'], 403);
-        }
-
-        if (str_starts_with($channel, 'branch_')) {
-            $branchId = str_replace('branch_', '', $channel);
-            if ($staffStore != $branchId && !in_array($userLogin->MAROLE, [0, 5])) {
-                return response()->json(['error' => 'Không có quyền truy cập kênh này'], 403);
-            }
-        }
-
-        // Đánh dấu tin nhắn của người khác trong kênh là đã đọc
-        DB::table('internal_messages')
-            ->where('channel_name', $channel)
-            ->where('sender_username', '!=', $userLogin->username)
-            ->where('daDoc', 0)
-            ->update(['daDoc' => 1]);
-
-        $messages = DB::table('internal_messages')
-            ->leftJoin('taikhoan', 'internal_messages.sender_username', '=', 'taikhoan.username')
-            ->leftJoin('nguoidung', 'taikhoan.id', '=', 'nguoidung.taiKhoanId')
-            ->where('internal_messages.channel_name', $channel)
-            ->select(
-                'internal_messages.*',
-                DB::raw("COALESCE(nguoidung.hoTen, internal_messages.sender_username, 'Nhân viên') as HOTEN")
-            )
-            ->orderBy('internal_messages.id', 'asc')
-            ->get();
-
+        $messages = TinNhan::where('channel', $channel)
+                           ->orderBy('id', 'asc')
+                           ->get();
         return response()->json($messages);
     }
 
@@ -301,151 +285,28 @@ class ChatController extends Controller
      */
     public function sendInternalMessage(Request $request, $channel)
     {
-        $request->validate(['NOIDUNG' => 'required|string']);
+        $request->validate([
+            'NOIDUNG' => 'required|string'
+        ]);
+
         $userLogin = Auth::guard('api')->user();
         if (!$userLogin) {
             return response()->json(['error' => 'Chưa đăng nhập'], 401);
         }
 
-        // Khách hàng không có quyền gửi tin nội bộ
-        if ($userLogin->MAROLE === 3) {
-            return response()->json(['error' => 'Khách hàng không có quyền truy cập chat nội bộ'], 403);
-        }
-
-        $nhanVien = NhanVien::findByUsername($userLogin->username);
-        $staffStore = $nhanVien?->MACUAHANG ?? $nhanVien?->cuaHangId ?? $userLogin->nguoidung?->cuaHangId ?? 1;
-
-        // Security check
-        if ($channel === 'managers' && !in_array($userLogin->MAROLE, [0, 1, 5])) {
-            return response()->json(['error' => 'Không có quyền truy cập nhóm quản lý'], 403);
-        }
-
-        if (str_starts_with($channel, 'branch_')) {
-            $branchId = str_replace('branch_', '', $channel);
-            if ($staffStore != $branchId && !in_array($userLogin->MAROLE, [0, 5])) {
-                return response()->json(['error' => 'Không có quyền truy cập kênh này'], 403);
-            }
-        }
-
-        $now = now();
-        $id = DB::table('internal_messages')->insertGetId([
-            'channel_name' => $channel,
-            'sender_username' => $userLogin->username,
-            'message' => $request->NOIDUNG,
-            'daDoc' => 0,
-            'createdAt' => $now,
-            'updatedAt' => $now,
-            'created_at' => $now,
-            'updated_at' => $now,
+        $tinNhan = TinNhan::create([
+            'channel' => $channel,
+            'nguoiGuiType' => 'nhanvien',
+            'noiDung' => $request->NOIDUNG,
+            'taiKhoanId' => $userLogin->id,
         ]);
-
-        $msg = DB::table('internal_messages')
-            ->leftJoin('taikhoan', 'internal_messages.sender_username', '=', 'taikhoan.username')
-            ->leftJoin('nguoidung', 'taikhoan.id', '=', 'nguoidung.taiKhoanId')
-            ->where('internal_messages.id', $id)
-            ->select(
-                'internal_messages.*',
-                DB::raw("COALESCE(nguoidung.hoTen, internal_messages.sender_username, 'Nhân viên') as HOTEN")
-            )
-            ->first();
 
         try {
-            broadcast(new InternalMessageSent($msg, $channel))->toOthers();
+            broadcast(new InternalMessageSent($tinNhan, $channel))->toOthers();
         } catch (\Exception $e) {
-            Log::warning('Internal Pusher broadcast failed: ' . $e->getMessage());
+            Log::warning('Pusher internal broadcast failed: ' . $e->getMessage());
         }
 
-        return response()->json($msg);
-    }
-
-    /**
-     * Thu hồi tin nhắn nội bộ
-     */
-    public function recallInternalMessage($channel, $msgId)
-    {
-        $userLogin = Auth::guard('api')->user();
-        if (!$userLogin) {
-            return response()->json(['error' => 'Chưa đăng nhập'], 401);
-        }
-
-        $message = DB::table('internal_messages')
-            ->where('channel_name', $channel)
-            ->where('id', $msgId)
-            ->first();
-
-        if (!$message) {
-            return response()->json(['error' => 'Tin nhắn không tồn tại'], 404);
-        }
-
-        // Chỉ người gửi hoặc Admin (role 0) được thu hồi
-        if ($message->sender_username !== $userLogin->username && $userLogin->MAROLE !== 0) {
-            return response()->json(['error' => 'Bạn không có quyền thu hồi tin nhắn này'], 403);
-        }
-
-        $now = now();
-        DB::table('internal_messages')
-            ->where('id', $msgId)
-            ->update([
-                'message' => '🚫 Tin nhắn đã bị thu hồi',
-                'updated_at' => $now,
-                'updatedAt' => $now,
-            ]);
-
-        $updatedMsg = DB::table('internal_messages')
-            ->leftJoin('taikhoan', 'internal_messages.sender_username', '=', 'taikhoan.username')
-            ->leftJoin('nguoidung', 'taikhoan.id', '=', 'nguoidung.taiKhoanId')
-            ->where('internal_messages.id', $msgId)
-            ->select(
-                'internal_messages.*',
-                DB::raw("COALESCE(nguoidung.hoTen, internal_messages.sender_username, 'Nhân viên') as HOTEN")
-            )
-            ->first();
-
-        try {
-            broadcast(new InternalMessageSent($updatedMsg, $channel))->toOthers();
-        } catch (\Exception $e) {
-            Log::warning('Internal Pusher broadcast failed: ' . $e->getMessage());
-        }
-
-        return response()->json($updatedMsg);
-    }
-
-    /**
-     * Lấy trạng thái trực tuyến của nhân viên CSKH
-     */
-    public function getStaffPresence()
-    {
-        return response()->json([
-            'is_staff_online' => \App\Services\StaffPresenceService::isStaffOnline(),
-            'online_staff_ids' => \App\Services\StaffPresenceService::getOnlineStaffIds(),
-        ]);
-    }
-
-    /**
-     * Ping báo nhân viên đang mở trang chat
-     */
-    public function pingStaffPresence()
-    {
-        $user = Auth::guard('api')->user();
-        if ($user && $user->MAROLE != 3 && (int)$user->vaiTroId !== 6) {
-            \App\Services\StaffPresenceService::recordOnline((int)$user->id);
-        }
-
-        return response()->json([
-            'success' => true,
-            'is_staff_online' => \App\Services\StaffPresenceService::isStaffOnline(),
-        ]);
-    }
-
-    /**
-     * Xóa trạng thái trực tuyến của nhân viên (phục vụ test Bot AI)
-     */
-    public function clearStaffPresence()
-    {
-        \App\Services\StaffPresenceService::clearAll();
-        return response()->json([
-            'is_staff_online' => false,
-            'message' => 'Đã đặt trạng thái nhân viên thành Ngoại tuyến để thử nghiệm Bot AI.',
-        ]);
+        return response()->json($tinNhan);
     }
 }

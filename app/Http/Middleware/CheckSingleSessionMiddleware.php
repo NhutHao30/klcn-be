@@ -44,3 +44,4 @@ class CheckSingleSessionMiddleware
         return $next($request);
     }
 }
+
