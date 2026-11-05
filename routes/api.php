@@ -21,6 +21,7 @@ Route::get('/proxy-image', [\App\Http\Controllers\Api\ImageProxyController::clas
 Route::post('/track-page-view', [PageViewController::class, 'store']);
 
 // GHN Webhook & Simulation Routes
+Route::any('/shipping/ghn/webhook', [GhnController::class, 'webhook']);
 Route::any('/ghn/webhook', [GhnController::class, 'webhook']);
 Route::any('/ghn/simulate-webhook', [GhnController::class, 'webhook']);
 Route::post('/hoa-don/{id}/xac-nhan-hoan-hang', [\App\Http\Controllers\Api\OrderController::class, 'confirmReturnInspection']);
@@ -121,6 +122,7 @@ Route::get('/ghn/wards', [\App\Http\Controllers\Api\GhnController::class, 'getWa
 Route::get('/ghn/wards-by-province', [\App\Http\Controllers\Api\GhnController::class, 'getWardsByProvince']);
 Route::post('/ghn/fee', [\App\Http\Controllers\Api\GhnController::class, 'calculateFee']);
 Route::post('/ghn/create-order/{orderId}', [\App\Http\Controllers\Api\GhnController::class, 'createOrderManual']);
+Route::post('/shipping/ghn/webhook', [\App\Http\Controllers\Api\GhnController::class, 'webhook']);
 Route::post('/ghn/webhook', [\App\Http\Controllers\Api\GhnController::class, 'webhook']);
 Route::get('/ghn/tracking/{orderCode}', [\App\Http\Controllers\Api\GhnController::class, 'getTrackingDetail']);
 

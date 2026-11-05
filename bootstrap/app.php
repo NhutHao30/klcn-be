@@ -19,6 +19,8 @@ return Application::configure(basePath: dirname(__DIR__))
             '/',
             'payment/*',
             'api/*',
+            'shipping/*',
+            'ghn/*',
         ]);
         
         $middleware->api(append: [

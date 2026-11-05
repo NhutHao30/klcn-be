@@ -12,39 +12,91 @@ class GhnController extends Controller
 
     public function __construct()
     {
-        $this->apiUrl = env('GHN_API_URL', 'https://online-gateway.ghn.vn/shiip/public-api');
+        $creds = self::getGhnCredentials();
+        $this->apiUrl = $creds['apiUrl'];
+    }
+
+    /**
+     * Tự động nhận diện cấu hình GHN (Dev Sandbox hoặc Production)
+     * Kèm cơ chế dự phòng tự động chuyển token nếu token .env gặp lỗi xác thực 401
+     */
+    public static function getGhnCredentials(): array
+    {
+        $apiUrl = env('GHN_API_URL', 'https://dev-online-gateway.ghn.vn/shiip/public-api');
+        $isDev = str_contains($apiUrl, 'dev-online-gateway');
+
+        $envToken = env('GHN_API_TOKEN');
+        $envShopId = env('GHN_SHOP_ID');
+
+        // Sandbox Dev Token chuẩn: 5c3ecd5a-bd67-11f1-b944-42faa0331861 (Shop: 226234)
+        // Production Token: 27a3c9ca-82a2-11f1-84b1-62196476b988 (Shop: 6556036)
+        $token = $envToken ?: ($isDev ? '5c3ecd5a-bd67-11f1-b944-42faa0331861' : '27a3c9ca-82a2-11f1-84b1-62196476b988');
+        $shopId = !empty($envShopId) ? (int)$envShopId : ($isDev ? 226234 : 6556036);
+
+        return [
+            'apiUrl' => rtrim($apiUrl, '/'),
+            'isDev' => $isDev,
+            'token' => $token,
+            'shopId' => $shopId,
+            'devToken' => '5c3ecd5a-bd67-11f1-b944-42faa0331861',
+            'devShopId' => 226234,
+            'prodToken' => '27a3c9ca-82a2-11f1-84b1-62196476b988',
+            'prodShopId' => 6556036,
+        ];
     }
 
     public function getProvinces()
     {
-        $token = env('GHN_API_TOKEN') ?: '27a3c9ca-82a2-11f1-84b1-62196476b988';
+        $creds = self::getGhnCredentials();
         $response = Http::withoutVerifying()->withHeaders([
-            'Token' => $token,
+            'Token' => $creds['token'],
         ])->get($this->apiUrl . '/master-data/province');
+
+        if ($response->status() === 401 && $creds['isDev'] && $creds['token'] !== $creds['devToken']) {
+            $response = Http::withoutVerifying()->withHeaders([
+                'Token' => $creds['devToken'],
+            ])->get($this->apiUrl . '/master-data/province');
+        }
 
         return $response->json();
     }
 
     public function getDistricts(Request $request)
     {
-        $token = env('GHN_API_TOKEN') ?: '27a3c9ca-82a2-11f1-84b1-62196476b988';
+        $creds = self::getGhnCredentials();
         $response = Http::withoutVerifying()->withHeaders([
-            'Token' => $token,
+            'Token' => $creds['token'],
         ])->get($this->apiUrl . '/master-data/district', [
             'province_id' => $request->province_id
         ]);
+
+        if ($response->status() === 401 && $creds['isDev'] && $creds['token'] !== $creds['devToken']) {
+            $response = Http::withoutVerifying()->withHeaders([
+                'Token' => $creds['devToken'],
+            ])->get($this->apiUrl . '/master-data/district', [
+                'province_id' => $request->province_id
+            ]);
+        }
 
         return $response->json();
     }
 
     public function getWards(Request $request)
     {
-        $token = env('GHN_API_TOKEN') ?: '27a3c9ca-82a2-11f1-84b1-62196476b988';
+        $creds = self::getGhnCredentials();
         $response = Http::withoutVerifying()->withHeaders([
-            'Token' => $token,
+            'Token' => $creds['token'],
         ])->get($this->apiUrl . '/master-data/ward', [
             'district_id' => $request->district_id
         ]);
+
+        if ($response->status() === 401 && $creds['isDev'] && $creds['token'] !== $creds['devToken']) {
+            $response = Http::withoutVerifying()->withHeaders([
+                'Token' => $creds['devToken'],
+            ])->get($this->apiUrl . '/master-data/ward', [
+                'district_id' => $request->district_id
+            ]);
+        }
 
         return $response->json();
     }
@@ -140,8 +192,9 @@ class GhnController extends Controller
             'weight' => 'required|integer',
         ]);
 
-        $token = env('GHN_API_TOKEN') ?: '27a3c9ca-82a2-11f1-84b1-62196476b988';
-        $shopId = env('GHN_SHOP_ID') ?: 6556036;
+        $creds = self::getGhnCredentials();
+        $token = $creds['token'];
+        $shopId = $creds['shopId'];
 
         $response = Http::withoutVerifying()->withHeaders([
             'Token' => $token,
@@ -157,6 +210,25 @@ class GhnController extends Controller
             'width' => 20,
             'height' => 10
         ]);
+
+        if ($response->status() === 401 && $creds['isDev'] && $token !== $creds['devToken']) {
+            $token = $creds['devToken'];
+            $shopId = $creds['devShopId'];
+            $response = Http::withoutVerifying()->withHeaders([
+                'Token' => $token,
+                'ShopId' => (string)$shopId
+            ])->post($this->apiUrl . '/v2/shipping-order/fee', [
+                'service_type_id' => 2,
+                'insurance_value' => $request->insurance_value ?? 0,
+                'coupon' => null,
+                'to_ward_code' => (string)$request->to_ward_code,
+                'to_district_id' => (int)$request->to_district_id,
+                'weight' => (int)$request->weight,
+                'length' => 20,
+                'width' => 20,
+                'height' => 10
+            ]);
+        }
 
         $data = $response->json();
         if (!$response->successful() || empty($data['data']['total'])) {
@@ -187,18 +259,15 @@ class GhnController extends Controller
             ];
         }
 
-        $token = env('GHN_API_TOKEN') ?: '27a3c9ca-82a2-11f1-84b1-62196476b988';
-        $envShopId = env('GHN_SHOP_ID');
-        $shopId = !empty($envShopId) ? (int)$envShopId : 0;
+        $creds = self::getGhnCredentials();
+        $token = $creds['token'];
+        $shopId = $creds['shopId'];
 
-        if (empty($shopId) && $order->cuahang) {
+        if ($order->cuahang) {
             $stShopId = $order->cuahang->ghn_shop_id ?? $order->cuahang->GHN_SHOP_ID ?? $order->cuahang->ghnShopId;
             if (!empty($stShopId) && is_numeric($stShopId) && (int)$stShopId > 0) {
                 $shopId = (int)$stShopId;
             }
-        }
-        if (empty($shopId)) {
-            $shopId = 6556036; // Default production shop ID (DLBakery Tân Phú)
         }
 
         $customer = $order->nguoidung;
@@ -247,6 +316,7 @@ class GhnController extends Controller
             'payment_type_id' => $paymentTypeId,
             'note' => 'Đơn hàng Dola Bakery #' . $order->maDonHang,
             'required_note' => 'CHOXEMHANGKHONGTHU',
+            'client_order_code' => $order->maDonHang,
             'from_name' => $order->cuahang->tenCuaHang ?? 'DolaBakery Shop',
             'from_phone' => $order->cuahang->soDienThoai ?? '0353144481',
             'from_address' => $order->cuahang->diaChi ?? '140 Lê Trọng Tấn, Tây Thạnh, Tân Phú',
@@ -268,14 +338,25 @@ class GhnController extends Controller
             'items' => $items
         ];
 
-        \Illuminate\Support\Facades\Log::info("GHN Create Order - ShopId: {$shopId}, Payload: " . json_encode($payload, JSON_UNESCAPED_UNICODE));
+        \Illuminate\Support\Facades\Log::info("GHN Create Order - ApiUrl: {$creds['apiUrl']}, ShopId: {$shopId}, Payload: " . json_encode($payload, JSON_UNESCAPED_UNICODE));
 
         try {
-            $ghnApiUrl = env('GHN_API_URL', 'https://online-gateway.ghn.vn/shiip/public-api');
+            $ghnApiUrl = $creds['apiUrl'];
             $response = Http::withoutVerifying()->withHeaders([
                 'Token' => $token,
                 'ShopId' => (int) $shopId
             ])->post($ghnApiUrl . '/v2/shipping-order/create', $payload);
+
+            // Tự động thử lại bằng Sandbox Dev Token nếu token trong .env bị lỗi 401 trên Dev
+            if ($response->status() === 401 && $creds['isDev'] && $token !== $creds['devToken']) {
+                \Illuminate\Support\Facades\Log::warning("Token GHN trả về 401 trên Dev Sandbox, chuyển sang Dev Sandbox Token 5c3ecd5a...");
+                $token = $creds['devToken'];
+                $shopId = $creds['devShopId'];
+                $response = Http::withoutVerifying()->withHeaders([
+                    'Token' => $token,
+                    'ShopId' => (int) $shopId
+                ])->post($ghnApiUrl . '/v2/shipping-order/create', $payload);
+            }
 
             $data = $response->json();
 
@@ -381,22 +462,30 @@ class GhnController extends Controller
         if ($request->isMethod('get')) {
             return response()->json([
                 'success' => true,
-                'message' => 'GHN Webhook Endpoint đang hoạt động sẵn sàng nhận dữ liệu POST từ GHN.'
+                'message' => 'GHN Webhook Endpoint (http://104.46.218.250:8000/api/shipping/ghn/webhook) đang hoạt động sẵn sàng nhận dữ liệu POST từ GHN.'
             ]);
         }
 
         // Nhận dữ liệu từ GHN Webhook (GHN gọi POST tới endpoint này)
-        $orderCode = $request->input('OrderCode') ?? $request->input('order_code');
-        $status = $request->input('Status') ?? $request->input('status'); // 'ready_to_pick', 'picking', 'storing', 'delivering', 'delivered', 'cancel', 'return'...
+        $orderCode = $request->input('OrderCode') ?? $request->input('order_code') ?? $request->input('orderCode');
+        $clientOrderCode = $request->input('ClientOrderCode') ?? $request->input('client_order_code') ?? $request->input('clientOrderCode');
+        $status = strtolower(trim((string)($request->input('Status') ?? $request->input('status'))));
 
-        if (!$orderCode || !$status) {
-            return response()->json(['message' => 'Thiếu dữ liệu OrderCode hoặc Status'], 400);
+        \Illuminate\Support\Facades\Log::info("GHN Webhook Payload: " . json_encode($request->all(), JSON_UNESCAPED_UNICODE));
+
+        if (!$orderCode && !$clientOrderCode) {
+            return response()->json(['message' => 'Thiếu dữ liệu OrderCode hoặc ClientOrderCode'], 400);
         }
 
         // Tìm đơn hàng tương ứng với maVanDonGhn hoặc maDonHang
-        $order = \App\Models\DonHang::where('maVanDonGhn', $orderCode)
-            ->orWhere('maDonHang', $orderCode)
-            ->first();
+        $order = \App\Models\DonHang::where(function($q) use ($orderCode, $clientOrderCode) {
+            if ($orderCode) {
+                $q->where('maVanDonGhn', $orderCode)->orWhere('maDonHang', $orderCode);
+            }
+            if ($clientOrderCode) {
+                $q->orWhere('maDonHang', $clientOrderCode);
+            }
+        })->first();
 
         if ($order) {
             $oldStatus = (int) $order->trangThaiDonHang;
@@ -429,6 +518,8 @@ class GhnController extends Controller
                 case 'transporting':
                 case 'picking':
                 case 'picked':
+                case 'sorting':
+                case 'money_collect_delivering':
                     // Chỉ cập nhật nếu đơn chưa giao hoặc chưa hoàn thành
                     if (!in_array($oldStatus, [3, 4, 5, 0, 6])) {
                         $newStatus = 3; // DANG_GIAO
@@ -469,6 +560,7 @@ class GhnController extends Controller
                 case 'returned_to_sender':
                 case 'damage':
                 case 'lost':
+                case 'waiting_to_return':
                     $newStatus = 6; // HOAN_HANG (Chờ nhân viên kiểm định chất lượng bánh)
                     $description = "GHN Webhook: Đơn hàng bị hoàn/trả về shop ({$status}). Chờ nhân viên kiểm định chất lượng bánh.";
                     // KHÔNG tự động cộng lại kho ở đây. Cần nhân viên bấm xác nhận kiểm định ở trang Admin.
@@ -506,11 +598,22 @@ class GhnController extends Controller
      */
     public function getTrackingDetail($orderCode)
     {
+        $creds = self::getGhnCredentials();
+        $token = $creds['token'];
         $response = Http::withoutVerifying()->withHeaders([
-            'Token' => env('GHN_API_TOKEN'),
+            'Token' => $token,
         ])->post($this->apiUrl . '/v2/shipping-order/detail', [
             'order_code' => $orderCode
         ]);
+
+        if ($response->status() === 401 && $creds['isDev'] && $token !== $creds['devToken']) {
+            $token = $creds['devToken'];
+            $response = Http::withoutVerifying()->withHeaders([
+                'Token' => $token,
+            ])->post($this->apiUrl . '/v2/shipping-order/detail', [
+                'order_code' => $orderCode
+            ]);
+        }
 
         $ghnData = $response->json();
 

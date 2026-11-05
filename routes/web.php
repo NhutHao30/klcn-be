@@ -17,3 +17,9 @@ Route::post('/', function (\Illuminate\Http\Request $request) {
 
 Route::any('/payment/webhook', [PaymentWebhookController::class, 'webhook']);
 
+// GHN Webhook Fallbacks (Direct & Proxy Support)
+Route::any('/shipping/ghn/webhook', [\App\Http\Controllers\Api\GhnController::class, 'webhook']);
+Route::any('/api/shipping/ghn/webhook', [\App\Http\Controllers\Api\GhnController::class, 'webhook']);
+Route::any('/ghn/webhook', [\App\Http\Controllers\Api\GhnController::class, 'webhook']);
+Route::any('/api/ghn/webhook', [\App\Http\Controllers\Api\GhnController::class, 'webhook']);
+
