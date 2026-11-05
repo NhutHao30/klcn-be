@@ -23,6 +23,7 @@ class TaiKhoan extends Authenticatable implements JWTSubject
         'googleId',
         'trangThai',
         'avatar',
+        'chuKySo',
     ];
 
     protected $hidden = [
@@ -34,7 +35,7 @@ class TaiKhoan extends Authenticatable implements JWTSubject
         'MAROLE',
         'tenVaiTro',
         'avatar',
-        'AVATAR',
+        'chuKySo',
     ];
 
     protected function casts(): array
@@ -72,7 +73,24 @@ class TaiKhoan extends Authenticatable implements JWTSubject
 
     public function getAvatarAttribute()
     {
-        return $this->attributes['avatar'] ?? $this->nguoidung?->avatar ?? null;
+        if (!empty($this->attributes['avatar'])) {
+            return $this->attributes['avatar'];
+        }
+        if ($this->relationLoaded('nguoidung') && !empty($this->nguoidung?->attributes['avatar'])) {
+            return $this->nguoidung->attributes['avatar'];
+        }
+        return null;
+    }
+
+    public function getChuKySoAttribute()
+    {
+        if (!empty($this->attributes['chuKySo'])) {
+            return $this->attributes['chuKySo'];
+        }
+        if ($this->relationLoaded('nguoidung') && !empty($this->nguoidung?->attributes['chuKySo'])) {
+            return $this->nguoidung->attributes['chuKySo'];
+        }
+        return null;
     }
 
     /**

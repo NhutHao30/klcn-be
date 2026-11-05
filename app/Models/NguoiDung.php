@@ -28,6 +28,7 @@ class NguoiDung extends Model
         'tongChiTieu',
         'hangThanhVien',
         'avatar',
+        'chuKySo',
     ];
 
     protected $casts = [
@@ -52,7 +53,8 @@ class NguoiDung extends Model
         'TONGCHITIEU',
         'MACUAHANG',
         'avatar',
-        'AVATAR',
+        'chuKySo',
+        'chuKy',
     ];
 
     public static function resolveRankByPoints(int $points): string
@@ -110,7 +112,29 @@ class NguoiDung extends Model
 
     public function getAvatarAttribute()
     {
-        return $this->attributes['avatar'] ?? $this->taikhoan?->avatar ?? null;
+        if (!empty($this->attributes['avatar'])) {
+            return $this->attributes['avatar'];
+        }
+        if ($this->relationLoaded('taikhoan') && !empty($this->taikhoan?->attributes['avatar'])) {
+            return $this->taikhoan->attributes['avatar'];
+        }
+        return null;
+    }
+
+    public function getChuKySoAttribute()
+    {
+        if (!empty($this->attributes['chuKySo'])) {
+            return $this->attributes['chuKySo'];
+        }
+        if ($this->relationLoaded('taikhoan') && !empty($this->taikhoan?->attributes['chuKySo'])) {
+            return $this->taikhoan->attributes['chuKySo'];
+        }
+        return null;
+    }
+
+    public function getChuKyAttribute()
+    {
+        return $this->getChuKySoAttribute();
     }
 
     public function getSDTAttribute()

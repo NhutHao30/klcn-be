@@ -439,6 +439,11 @@ class AuthController extends Controller
             $user->update(['avatar' => $avatarUrl]);
         }
 
+        $sigInput = $request->input('chuKySo') ?? $request->input('chu_ky') ?? $request->input('signature');
+        if (!empty($sigInput)) {
+            $user->update(['chuKySo' => $sigInput]);
+        }
+
         if ($email && $email !== $user->email) {
             $existingEmail = TaiKhoan::where('email', $email)->where('id', '!=', $user->id)->first();
             if (!$existingEmail) {
@@ -454,6 +459,7 @@ class AuthController extends Controller
             if (!is_null($gioiTinh)) $updateData['gioiTinh'] = $gioiTinh;
             if (!is_null($ngaySinh)) $updateData['ngaySinh'] = $ngaySinh;
             if ($avatarUrl) $updateData['avatar'] = $avatarUrl;
+            if (!empty($sigInput)) $updateData['chuKySo'] = $sigInput;
 
             if (!empty($updateData)) {
                 $nguoidung->update($updateData);

@@ -469,10 +469,12 @@ class SignatureController extends Controller
 
         $signatureImage = $request->input('signature_data')
             ?? $request->input('chu_ky')
+            ?? $request->input('chuKySo')
             ?? $profile?->chuKySo
+            ?? $user?->chuKySo
             ?? null;
 
-        $rawPayload = ($signatureImage && str_starts_with((string) $signatureImage, 'data:image/'))
+        $rawPayload = ($signatureImage && (str_starts_with((string) $signatureImage, 'data:image/') || str_starts_with((string) $signatureImage, '<svg') || str_starts_with((string) $signatureImage, 'http')))
             ? $signatureImage
             : json_encode([
                 'docType' => $loaiTaiLieu,
@@ -546,15 +548,20 @@ class SignatureController extends Controller
             return response()->json(['status' => false, 'message' => 'Chưa đăng nhập'], 401);
         }
 
-        $validated = $request->validate([
-            'signature_data' => 'nullable|string',
-            'public_key' => 'nullable|string',
-        ]);
+        $sigData = $request->input('signature_data')
+            ?? $request->input('chu_ky')
+            ?? $request->input('chuKySo')
+            ?? $request->input('signature')
+            ?? $request->input('data');
+
+        if (!empty($sigData)) {
+            $user->update(['chuKySo' => $sigData]);
+        }
 
         $profile = NguoiDung::where('taiKhoanId', $user->id)->first();
         if ($profile) {
             $profile->update([
-                'chuKySo' => $validated['signature_data'] ?? null,
+                'chuKySo' => $sigData,
             ]);
         }
 
@@ -562,6 +569,9 @@ class SignatureController extends Controller
             'status' => true,
             'success' => true,
             'message' => 'Cập nhật chữ ký số cá nhân thành công',
+            'signature' => $sigData,
+            'chuKySo' => $sigData,
+            'chu_ky' => $sigData,
         ]);
     }
 
