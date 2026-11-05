@@ -42,6 +42,26 @@ class ChatController extends Controller
     }
 
     /**
+     * Lấy hồ sơ người dùng (nguoidung) tương ứng
+     */
+    private function resolveProfile($userLogin)
+    {
+        if (!$userLogin) return null;
+        $profile = NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+        if (!$profile) {
+            $profile = KhachHang::findByUsername($userLogin->username);
+        }
+        if (!$profile) {
+            $profile = NguoiDung::create([
+                'taiKhoanId' => $userLogin->id,
+                'hoTen' => $userLogin->username ?? 'Khách hàng',
+                'loaiNguoiDung' => 0,
+            ]);
+        }
+        return $profile;
+    }
+
+    /**
      * Lấy danh sách cuộc trò chuyện
      */
     public function getConversations(Request $request)
@@ -55,21 +75,16 @@ class ChatController extends Controller
             $isCustomer = $this->isCustomerUser($userLogin);
 
             if ($isCustomer) {
-                // Khách hàng -> Lấy danh sách đoạn chat của họ
-                $khachHang = KhachHang::findByUsername($userLogin->username) ?? NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-                if (!$khachHang) {
-                    $khachHang = NguoiDung::create([
-                        'taiKhoanId' => $userLogin->id,
-                        'hoTen' => $userLogin->username ?? 'Khách hàng',
-                        'loaiNguoiDung' => 0,
-                    ]);
-                }
+                $khachHang = $this->resolveProfile($userLogin);
 
                 $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
                     $q->orderBy('id', 'desc')->take(1);
                 }, 'khachhang'])
-                ->where('khachHangId', $khachHang->id)
-                ->orderBy('updatedAt', 'desc')
+                ->where(function($q) use ($khachHang) {
+                    $q->where('khachHangId', $khachHang->id)
+                      ->orWhere('khachhang_id', $khachHang->id);
+                })
+                ->orderBy('id', 'desc')
                 ->get();
 
                 return response()->json($conversations);
@@ -95,7 +110,7 @@ class ChatController extends Controller
     }
 
     /**
-     * Khách hàng tạo hoặc lấy đoạn chat
+     * Khách hàng tạo hoặc lấy đoạn chat DUY NHẤT của mình
      */
     public function startConversation(Request $request)
     {
@@ -105,26 +120,26 @@ class ChatController extends Controller
                 return response()->json(['error' => 'Vui lòng đăng nhập để bắt đầu trò chuyện'], 401);
             }
 
-            $khachHang = KhachHang::findByUsername($userLogin->username) ?? NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-            if (!$khachHang) {
-                $khachHang = NguoiDung::create([
-                    'taiKhoanId' => $userLogin->id,
-                    'hoTen' => $userLogin->username ?? 'Khách hàng',
-                    'loaiNguoiDung' => 0,
-                ]);
-            }
+            $khachHang = $this->resolveProfile($userLogin);
 
-            // Tìm đoạn chat đang hoạt động
-            $conversation = CuocTroChuyen::where('khachHangId', $khachHang->id)
-                                         ->where('trangThaiChat', 'DANG_HOAT_DONG')
-                                         ->first();
+            // Tìm đoạn chat gần nhất của khách hàng (bảo toàn lịch sử tin nhắn)
+            $conversation = CuocTroChuyen::where(function($q) use ($khachHang) {
+                $q->where('khachHangId', $khachHang->id)
+                  ->orWhere('khachhang_id', $khachHang->id);
+            })->latest('id')->first();
 
             if (!$conversation) {
-                // Tạo đoạn chat mới
+                // Tạo đoạn chat mới nếu khách hàng chưa từng chat
                 $conversation = CuocTroChuyen::create([
                     'khachHangId' => $khachHang->id,
-                    'trangThaiChat' => 'DANG_HOAT_DONG'
+                    'trangThaiChat' => 0
                 ]);
+            } else {
+                // Kích hoạt lại đoạn chat nếu trước đó bị đóng
+                if (($conversation->trangThaiChat ?? 0) != 0) {
+                    $conversation->trangThaiChat = 0;
+                    $conversation->save();
+                }
             }
 
             return response()->json($conversation);
@@ -145,13 +160,11 @@ class ChatController extends Controller
         if ($userLogin) {
             $isCustomer = $this->isCustomerUser($userLogin);
             if ($isCustomer) {
-                // Khách hàng xem tin nhắn của nhân viên (1) hoặc bot AI (2)
                 TinNhan::where('cuocTroChuyenId', $conversationId)
                        ->whereIn('nguoiGuiType', [1, 2, 'nhanvien', 'bot'])
                        ->where('daDoc', 0)
                        ->update(['daDoc' => 1]);
             } else {
-                // Nhân viên xem tin nhắn của khách hàng (0)
                 TinNhan::where('cuocTroChuyenId', $conversationId)
                        ->whereIn('nguoiGuiType', [0, 'khachhang'])
                        ->where('daDoc', 0)
