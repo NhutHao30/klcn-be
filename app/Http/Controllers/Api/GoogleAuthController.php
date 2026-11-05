@@ -112,6 +112,8 @@ class GoogleAuthController extends Controller
                 return $respondRedirect('/dang-nhap', ['error' => 'google_no_email']);
             }
 
+            $googleAvatar = $googleUser->getAvatar();
+
             // Tìm tài khoản theo googleId hoặc email
             $existingUser = TaiKhoan::where('googleId', $googleUser->getId())
                 ->orWhere('email', $googleUser->getEmail())
@@ -125,6 +127,16 @@ class GoogleAuthController extends Controller
                     ]);
                 }
 
+                // Cập nhật avatar nếu tài khoản hoặc người dùng chưa có
+                if ($googleAvatar) {
+                    if (empty($existingUser->avatar)) {
+                        $existingUser->update(['avatar' => $googleAvatar]);
+                    }
+                    if ($existingUser->nguoidung && empty($existingUser->nguoidung->avatar)) {
+                        $existingUser->nguoidung->update(['avatar' => $googleAvatar]);
+                    }
+                }
+
                 // Nếu tài khoản chưa có thông tin NguoiDung profile
                 if (!$existingUser->nguoidung) {
                     NguoiDung::create([
@@ -133,6 +145,7 @@ class GoogleAuthController extends Controller
                         'soDienThoai' => null,
                         'gioiTinh'     => 1,
                         'loaiNguoiDung'=> 0, // Khách hàng
+                        'avatar'       => $googleAvatar,
                     ]);
                 }
             } else {
@@ -151,6 +164,7 @@ class GoogleAuthController extends Controller
                         'vaiTroId' => 6, // Khách hàng (CUSTOMER)
                         'googleId' => $googleUser->getId(),
                         'trangThai'=> 1,
+                        'avatar'   => $googleAvatar,
                     ]);
 
                     NguoiDung::create([
@@ -159,6 +173,7 @@ class GoogleAuthController extends Controller
                         'soDienThoai' => null,
                         'gioiTinh'     => 1,
                         'loaiNguoiDung'=> 0, // Khách hàng
+                        'avatar'       => $googleAvatar,
                     ]);
 
                     DB::commit();
@@ -239,6 +254,7 @@ class GoogleAuthController extends Controller
                 'vaiTroId' => 6, // CUSTOMER
                 'googleId' => $googleUser['id'],
                 'trangThai'=> 1,
+                'avatar'   => $googleUser['avatar'] ?? null,
             ]);
 
             $gioiTinhInt = ($request->gioiTinh === 'Nam' || $request->gioiTinh === '1' || $request->gioiTinh === 1) ? 1 : 0;
@@ -249,6 +265,7 @@ class GoogleAuthController extends Controller
                 'soDienThoai' => $request->sdt,
                 'gioiTinh'     => $gioiTinhInt,
                 'loaiNguoiDung'=> 0, // Khách hàng
+                'avatar'       => $googleUser['avatar'] ?? null,
             ]);
 
             DB::commit();

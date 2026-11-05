@@ -402,6 +402,7 @@ class AuthController extends Controller
         $gioiTinhRaw = $request->input('gioiTinh') ?? $request->input('GioiTinh');
         $ngaySinh = $request->input('ngaySinh') ?? $request->input('NGAYSINH');
         $diaChi = $request->input('dia_chi') ?? $request->input('DIACHI');
+        $email = $request->input('email') ?? $request->input('EMAIL');
 
         $gioiTinh = null;
         if (!is_null($gioiTinhRaw)) {
@@ -415,6 +416,36 @@ class AuthController extends Controller
             }
         }
 
+        // Xử lý upload avatar (file hoặc chuỗi URL)
+        $avatarUrl = null;
+        $avatarFile = $request->file('avatar') ?? $request->file('AVATAR') ?? $request->file('HINHANH') ?? $request->file('hinhAnh');
+        if ($avatarFile && $avatarFile->isValid()) {
+            $extension = $avatarFile->getClientOriginalExtension() ?: 'png';
+            $filename = 'avatar_' . $user->id . '_' . time() . '_' . \Illuminate\Support\Str::random(6) . '.' . $extension;
+            $destDir = public_path('assets/avatars');
+            if (!file_exists($destDir)) {
+                mkdir($destDir, 0755, true);
+            }
+            $avatarFile->move($destDir, $filename);
+            $avatarUrl = '/assets/avatars/' . $filename;
+        } elseif ($request->filled('avatar') || $request->filled('AVATAR') || $request->filled('hinhAnh') || $request->filled('HINHANH')) {
+            $rawUrl = $request->input('avatar') ?? $request->input('AVATAR') ?? $request->input('hinhAnh') ?? $request->input('HINHANH');
+            if (is_string($rawUrl) && trim($rawUrl) !== '') {
+                $avatarUrl = trim($rawUrl);
+            }
+        }
+
+        if ($avatarUrl) {
+            $user->update(['avatar' => $avatarUrl]);
+        }
+
+        if ($email && $email !== $user->email) {
+            $existingEmail = TaiKhoan::where('email', $email)->where('id', '!=', $user->id)->first();
+            if (!$existingEmail) {
+                $user->update(['email' => $email]);
+            }
+        }
+
         $nguoidung = $user->nguoidung;
         if ($nguoidung) {
             $updateData = [];
@@ -422,6 +453,7 @@ class AuthController extends Controller
             if (!is_null($sdt)) $updateData['soDienThoai'] = $sdt;
             if (!is_null($gioiTinh)) $updateData['gioiTinh'] = $gioiTinh;
             if (!is_null($ngaySinh)) $updateData['ngaySinh'] = $ngaySinh;
+            if ($avatarUrl) $updateData['avatar'] = $avatarUrl;
 
             if (!empty($updateData)) {
                 $nguoidung->update($updateData);
@@ -435,7 +467,20 @@ class AuthController extends Controller
             }
         }
 
-        return response()->json(['message' => 'Cập nhật thông tin thành công', 'user' => $nguoidung]);
+        $user->load(['vaitro', 'nguoidung.cuahang']);
+        if ($user->nguoidung && method_exists($user->nguoidung, 'syncLoyaltyPoints')) {
+            $user->nguoidung->syncLoyaltyPoints();
+        }
+        $user->setRelation('khachhang', $user->nguoidung);
+        $user->setRelation('nhanvien', $user->nguoidung);
+
+        return response()->json([
+            'message' => 'Cập nhật thông tin thành công', 
+            'user' => $user,
+            'nguoidung' => $user->nguoidung,
+            'avatar' => $avatarUrl ?? $user->avatar,
+            'AVATAR' => $avatarUrl ?? $user->avatar,
+        ]);
     }
 
     /**

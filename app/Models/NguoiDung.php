@@ -27,6 +27,7 @@ class NguoiDung extends Model
         'diemTichLuy',
         'tongChiTieu',
         'hangThanhVien',
+        'avatar',
     ];
 
     protected $casts = [
@@ -50,6 +51,8 @@ class NguoiDung extends Model
         'HANGTHANHVIEN',
         'TONGCHITIEU',
         'MACUAHANG',
+        'avatar',
+        'AVATAR',
     ];
 
     public static function resolveRankByPoints(int $points): string
@@ -103,6 +106,11 @@ class NguoiDung extends Model
     public function getHOTENAttribute()
     {
         return $this->attributes['hoTen'] ?? null;
+    }
+
+    public function getAvatarAttribute()
+    {
+        return $this->attributes['avatar'] ?? $this->taikhoan?->avatar ?? null;
     }
 
     public function getSDTAttribute()
