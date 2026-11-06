@@ -88,21 +88,126 @@ class BienBanHuyController extends Controller
         }
 
         try {
-            DB::statement('CALL sp_create_bien_ban_huy(?, ?, ?, ?, ?, @bienban_id, @ma_bien_ban, @error)', [
-                (int)$cuaHangId,
-                (int)$nguoiLapId,
-                $lyDo,
-                $autoSign,
-                json_encode($parsedItems),
-            ]);
+            $disposal = null;
+            try {
+                DB::statement('CALL sp_create_bien_ban_huy(?, ?, ?, ?, ?, @bienban_id, @ma_bien_ban, @error)', [
+                    (int)$cuaHangId,
+                    (int)$nguoiLapId,
+                    $lyDo,
+                    $autoSign,
+                    json_encode($parsedItems),
+                ]);
 
-            $res = DB::select('SELECT @bienban_id AS bienban_id, @ma_bien_ban AS ma_bien_ban, @error AS error')[0];
+                $res = DB::select('SELECT @bienban_id AS bienban_id, @ma_bien_ban AS ma_bien_ban, @error AS error')[0];
 
-            if ($res->error) {
-                return response()->json(['success' => false, 'message' => $res->error], 500);
+                if ($res->error) {
+                    throw new \Exception($res->error);
+                }
+
+                $disposal = BienBanHuy::find($res->bienban_id);
+            } catch (\Throwable $spEx) {
+                \Illuminate\Support\Facades\Log::warning('sp_create_bien_ban_huy failed, falling back to Eloquent: ' . $spEx->getMessage());
+
+                $disposal = DB::transaction(function () use ($cuaHangId, $nguoiLapId, $lyDo, $autoSign, $parsedItems) {
+                    $maBB = 'BBH-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 10));
+
+                    $bb = BienBanHuy::create([
+                        'maBienBan' => $maBB,
+                        'cuaHangId' => (int)$cuaHangId,
+                        'nguoiLapId' => (int)$nguoiLapId,
+                        'ngayLap' => now(),
+                        'lyDo' => $lyDo,
+                        'tongGiaTriHuy' => 0,
+                        'trangThai' => $autoSign ? 1 : 0,
+                    ]);
+
+                    $user = \App\Models\NguoiDung::find($nguoiLapId);
+                    $userName = $user?->hoTen ?? 'Quản lý chi nhánh';
+
+                    \App\Models\ChuKySo::create([
+                        'maChuKy' => 'SIG-HUY-' . $bb->id . '-R1-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 6)),
+                        'loaiTaiLieu' => 2,
+                        'taiLieuId' => $bb->id,
+                        'vaiTroKy' => 1,
+                        'nguoiKyId' => null,
+                        'tenNguoiKy' => 'Nhân viên kế toán',
+                        'trangThai' => 0,
+                    ]);
+
+                    \App\Models\ChuKySo::create([
+                        'maChuKy' => 'SIG-HUY-' . $bb->id . '-R2-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 6)),
+                        'loaiTaiLieu' => 2,
+                        'taiLieuId' => $bb->id,
+                        'vaiTroKy' => 2,
+                        'nguoiKyId' => null,
+                        'tenNguoiKy' => 'Nhân viên kho',
+                        'trangThai' => 0,
+                    ]);
+
+                    \App\Models\ChuKySo::create([
+                        'maChuKy' => 'SIG-HUY-' . $bb->id . '-R3-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 6)),
+                        'loaiTaiLieu' => 2,
+                        'taiLieuId' => $bb->id,
+                        'vaiTroKy' => 3,
+                        'nguoiKyId' => $autoSign ? $nguoiLapId : null,
+                        'tenNguoiKy' => $autoSign ? $userName : 'Quản lý chi nhánh',
+                        'digitalSignatureHash' => $autoSign ? hash('sha256', "BBH_{$bb->id}_R3_" . time()) : null,
+                        'publicKey' => $autoSign ? 'BRANCH_MANAGER_SIGNATURE' : null,
+                        'trangThai' => $autoSign ? 1 : 0,
+                        'ngayKy' => $autoSign ? now() : null,
+                        'ghiChu' => $autoSign ? 'Quản lý chi nhánh đã ký duyệt biên bản hủy' : null,
+                    ]);
+
+                    $tongGiaTri = 0;
+                    foreach ($parsedItems as $it) {
+                        $lo = \App\Models\LoHang::find($it['lohang_id']);
+                        if (!$lo) continue;
+                        $qtyDestroy = min((int)$it['so_luong_huy'], (int)$lo->soLuongCon);
+                        if ($qtyDestroy <= 0) $qtyDestroy = (int)$it['so_luong_huy'];
+
+                        $donGia = (float)($lo->giaNhap ?? 0);
+                        $thanhTien = $qtyDestroy * $donGia;
+                        $tongGiaTri += $thanhTien;
+
+                        \App\Models\ChiTietBienBanHuy::create([
+                            'bienBanHuyId' => $bb->id,
+                            'loHangId' => $lo->id,
+                            'sanPhamId' => $lo->sanPhamId,
+                            'soLuongHuy' => $qtyDestroy,
+                            'donGia' => $donGia,
+                            'thanhTien' => $thanhTien,
+                        ]);
+
+                        if ($autoSign) {
+                            $newBatchQty = max(0, (int)$lo->soLuongCon - $qtyDestroy);
+                            $lo->update([
+                                'soLuongCon' => $newBatchQty,
+                                'trangThai' => $newBatchQty === 0 ? 3 : 2,
+                            ]);
+
+                            $st = \App\Models\TonKhoChiNhanh::where('cuaHangId', $cuaHangId)
+                                ->where('sanPhamId', $lo->sanPhamId)
+                                ->first();
+                            if ($st) {
+                                $st->update([
+                                    'soLuongTon' => max(0, (int)$st->soLuongTon - $qtyDestroy),
+                                ]);
+                            }
+
+                            \App\Services\InventoryLedgerService::record(
+                                (int)$cuaHangId,
+                                (int)$lo->sanPhamId,
+                                5,
+                                -$qtyDestroy,
+                                $maBB
+                            );
+                        }
+                    }
+
+                    $bb->update(['tongGiaTriHuy' => $tongGiaTri]);
+                    return $bb;
+                });
             }
-
-            $disposal = BienBanHuy::find($res->bienban_id);
 
             if ($autoSign && $disposal) {
                 try {

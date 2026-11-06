@@ -195,19 +195,112 @@ class LoHangController extends Controller
             );
             $autoSign = $isBranchManager ? 1 : 0;
 
-            \Illuminate\Support\Facades\DB::statement('CALL sp_create_bien_ban_huy(?, ?, ?, ?, ?, @bienban_id, @ma_bien_ban, @error)', [
-                $batch->cuaHangId,
-                $nguoiLapId,
-                $lydo,
-                $autoSign,
-                json_encode($items)
-            ]);
+            $maBB = 'BBH-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 10));
+            try {
+                \Illuminate\Support\Facades\DB::statement('CALL sp_create_bien_ban_huy(?, ?, ?, ?, ?, @bienban_id, @ma_bien_ban, @error)', [
+                    $batch->cuaHangId,
+                    $nguoiLapId,
+                    $lydo,
+                    $autoSign,
+                    json_encode($items)
+                ]);
 
-            $res = \Illuminate\Support\Facades\DB::select('SELECT @bienban_id AS bienban_id, @ma_bien_ban AS ma_bien_ban, @error AS error')[0];
+                $res = \Illuminate\Support\Facades\DB::select('SELECT @bienban_id AS bienban_id, @ma_bien_ban AS ma_bien_ban, @error AS error')[0];
+                if (!empty($res->ma_bien_ban)) {
+                    $maBB = $res->ma_bien_ban;
+                }
+            } catch (\Throwable $spEx) {
+                \Illuminate\Support\Facades\Log::warning('sp_create_bien_ban_huy failed in LoHangController, falling back to Eloquent: ' . $spEx->getMessage());
+
+                \Illuminate\Support\Facades\DB::transaction(function () use ($batch, $nguoiLapId, $lydo, $autoSign, $maBB) {
+                    $qtyDestroy = (int)$batch->soLuongCon;
+                    $donGia = (float)($batch->giaNhap ?? 0);
+
+                    $bb = \App\Models\BienBanHuy::create([
+                        'maBienBan' => $maBB,
+                        'cuaHangId' => (int)$batch->cuaHangId,
+                        'nguoiLapId' => (int)$nguoiLapId,
+                        'ngayLap' => now(),
+                        'lyDo' => $lydo,
+                        'tongGiaTriHuy' => $donGia * $qtyDestroy,
+                        'trangThai' => $autoSign ? 1 : 0,
+                    ]);
+
+                    \App\Models\ChiTietBienBanHuy::create([
+                        'bienBanHuyId' => $bb->id,
+                        'loHangId' => $batch->id,
+                        'sanPhamId' => $batch->sanPhamId,
+                        'soLuongHuy' => $qtyDestroy,
+                        'donGia' => $donGia,
+                        'thanhTien' => $qtyDestroy * $donGia,
+                    ]);
+
+                    $user = \App\Models\NguoiDung::find($nguoiLapId);
+                    $userName = $user?->hoTen ?? 'Quản lý chi nhánh';
+
+                    \App\Models\ChuKySo::create([
+                        'maChuKy' => 'SIG-HUY-' . $bb->id . '-R1-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 6)),
+                        'loaiTaiLieu' => 2,
+                        'taiLieuId' => $bb->id,
+                        'vaiTroKy' => 1,
+                        'nguoiKyId' => null,
+                        'tenNguoiKy' => 'Nhân viên kế toán',
+                        'trangThai' => 0,
+                    ]);
+
+                    \App\Models\ChuKySo::create([
+                        'maChuKy' => 'SIG-HUY-' . $bb->id . '-R2-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 6)),
+                        'loaiTaiLieu' => 2,
+                        'taiLieuId' => $bb->id,
+                        'vaiTroKy' => 2,
+                        'nguoiKyId' => null,
+                        'tenNguoiKy' => 'Nhân viên kho',
+                        'trangThai' => 0,
+                    ]);
+
+                    \App\Models\ChuKySo::create([
+                        'maChuKy' => 'SIG-HUY-' . $bb->id . '-R3-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 6)),
+                        'loaiTaiLieu' => 2,
+                        'taiLieuId' => $bb->id,
+                        'vaiTroKy' => 3,
+                        'nguoiKyId' => $autoSign ? $nguoiLapId : null,
+                        'tenNguoiKy' => $autoSign ? $userName : 'Quản lý chi nhánh',
+                        'digitalSignatureHash' => $autoSign ? hash('sha256', "BBH_{$bb->id}_R3_" . time()) : null,
+                        'publicKey' => $autoSign ? 'BRANCH_MANAGER_SIGNATURE' : null,
+                        'trangThai' => $autoSign ? 1 : 0,
+                        'ngayKy' => $autoSign ? now() : null,
+                        'ghiChu' => $autoSign ? 'Quản lý chi nhánh đã ký duyệt biên bản hủy' : null,
+                    ]);
+
+                    if ($autoSign) {
+                        $batch->update([
+                            'soLuongCon' => 0,
+                            'trangThai' => 3,
+                        ]);
+
+                        $st = \App\Models\TonKhoChiNhanh::where('cuaHangId', $batch->cuaHangId)
+                            ->where('sanPhamId', $batch->sanPhamId)
+                            ->first();
+                        if ($st) {
+                            $st->update([
+                                'soLuongTon' => max(0, (int)$st->soLuongTon - $qtyDestroy),
+                            ]);
+                        }
+
+                        \App\Services\InventoryLedgerService::record(
+                            (int)$batch->cuaHangId,
+                            (int)$batch->sanPhamId,
+                            5, // 5: Xuất hủy hàng
+                            -$qtyDestroy,
+                            $maBB
+                        );
+                    }
+                });
+            }
 
             $message = $isBranchManager
-                ? "Quản lý chi nhánh đã duyệt lập Biên bản hủy ({$res->ma_bien_ban}) cho lô {$batch->maLoHang}! Số lượng tồn kho đã được trừ ngay lập tức."
-                : "Đã lập Biên bản hủy ({$res->ma_bien_ban}) cho lô {$batch->maLoHang}! Chứng từ đang chờ Quản lý chi nhánh phê duyệt tại mục Duyệt & Ký số.";
+                ? "Quản lý chi nhánh đã duyệt lập Biên bản hủy ({$maBB}) cho lô {$batch->maLoHang}! Số lượng tồn kho đã được trừ ngay lập tức."
+                : "Đã lập Biên bản hủy ({$maBB}) cho lô {$batch->maLoHang}! Chứng từ đang chờ Quản lý chi nhánh phê duyệt tại mục Duyệt & Ký số.";
 
             return response()->json([
                 'success' => true,
