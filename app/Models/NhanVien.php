@@ -24,6 +24,8 @@ class NhanVien extends Model
         'cccdNumber',
         'cccdImageUrl',
         'loaiNguoiDung',
+        'caLamViec',
+        'luong',
     ];
 
     protected $appends = [
@@ -125,7 +127,7 @@ class NhanVien extends Model
 
     public function getLUONGAttribute()
     {
-        return 0;
+        return (float) ($this->attributes['luong'] ?? 0);
     }
 
     public function getTRANGTHAIAttribute()
@@ -135,7 +137,7 @@ class NhanVien extends Model
 
     public function getCALAMVIECAttribute()
     {
-        return 'Ca Sáng';
+        return $this->attributes['caLamViec'] ?? 'Ca Sáng';
     }
 
     public function getCCCDAttribute()

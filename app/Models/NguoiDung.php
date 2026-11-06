@@ -29,6 +29,8 @@ class NguoiDung extends Model
         'hangThanhVien',
         'avatar',
         'chuKySo',
+        'caLamViec',
+        'luong',
     ];
 
     protected $casts = [
@@ -55,6 +57,10 @@ class NguoiDung extends Model
         'avatar',
         'chuKySo',
         'chuKy',
+        'caLamViec',
+        'CALAMVIEC',
+        'luong',
+        'LUONG',
     ];
 
     public static function resolveRankByPoints(int $points): string
@@ -220,6 +226,16 @@ class NguoiDung extends Model
     public function getMACUAHANGAttribute()
     {
         return $this->attributes['cuaHangId'] ?? 1;
+    }
+
+    public function getCALAMVIECAttribute()
+    {
+        return $this->attributes['caLamViec'] ?? 'Ca Sáng';
+    }
+
+    public function getLUONGAttribute()
+    {
+        return (float) ($this->attributes['luong'] ?? 0);
     }
 
     public function taikhoan()

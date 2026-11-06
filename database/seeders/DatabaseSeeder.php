@@ -28,6 +28,8 @@ class DatabaseSeeder extends Seeder
             ['id' => 4, $tenCol => 'WAREHOUSE', $moTaCol => 'Nhân viên kho', $createdCol => $now, $updatedCol => $now],
             ['id' => 5, $tenCol => 'CSKH', $moTaCol => 'Nhân viên tư vấn CSKH', $createdCol => $now, $updatedCol => $now],
             ['id' => 6, $tenCol => 'CUSTOMER', $moTaCol => 'Khách hàng mua sắm', $createdCol => $now, $updatedCol => $now],
+            ['id' => 7, $tenCol => 'ACCOUNTANT', $moTaCol => 'Nhân viên kế toán', $createdCol => $now, $updatedCol => $now],
+            ['id' => 8, $tenCol => 'DIRECTOR', $moTaCol => 'Ban Giám đốc', $createdCol => $now, $updatedCol => $now],
         ];
         foreach ($roles as $r) {
             $exists = DB::table($roleTable)->where('id', $r['id'])->first();

@@ -12,10 +12,70 @@ use App\Models\ChiTietDonHang;
 class AdminController extends Controller
 {
     /**
+     * Đảm bảo các vai trò hệ thống (7: Kế toán, 8: Giám đốc) và cột ca làm việc, lương tồn tại
+     */
+    public static function ensureRolesAndColumnsExist()
+    {
+        try {
+            $vaitroTable = \Illuminate\Support\Facades\Schema::hasTable('vaiTro') ? 'vaiTro' : 'vaitro';
+            if (\Illuminate\Support\Facades\Schema::hasTable($vaitroTable)) {
+                $tenCol = \Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, 'tenVaiTro') ? 'tenVaiTro' : 'ten_vaitro';
+                $moTaCol = \Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, 'moTa') ? 'moTa' : 'mo_ta';
+                $createdCol = \Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, 'createdAt') ? 'createdAt' : 'created_at';
+                $updatedCol = \Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, 'updatedAt') ? 'updatedAt' : 'updated_at';
+
+                $rolesToEnsure = [
+                    1 => ['name' => 'ADMIN', 'desc' => 'Quản trị hệ thống'],
+                    2 => ['name' => 'MANAGER', 'desc' => 'Quản lý chi nhánh'],
+                    3 => ['name' => 'CASHIER', 'desc' => 'Nhân viên bán hàng POS'],
+                    4 => ['name' => 'WAREHOUSE', 'desc' => 'Nhân viên kho'],
+                    5 => ['name' => 'CSKH', 'desc' => 'Nhân viên tư vấn CSKH'],
+                    6 => ['name' => 'CUSTOMER', 'desc' => 'Khách hàng mua sắm'],
+                    7 => ['name' => 'ACCOUNTANT', 'desc' => 'Nhân viên kế toán chi nhánh'],
+                    8 => ['name' => 'DIRECTOR', 'desc' => 'Ban Giám đốc'],
+                ];
+
+                foreach ($rolesToEnsure as $id => $info) {
+                    $exists = DB::table($vaitroTable)->where('id', $id)->first();
+                    if (!$exists) {
+                        $insertData = [
+                            'id' => $id,
+                            $tenCol => $info['name'],
+                            $moTaCol => $info['desc'],
+                        ];
+                        if (\Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, $createdCol)) {
+                            $insertData[$createdCol] = now();
+                        }
+                        if (\Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, $updatedCol)) {
+                            $insertData[$updatedCol] = now();
+                        }
+                        DB::table($vaitroTable)->insert($insertData);
+                    }
+                }
+            }
+
+            if (\Illuminate\Support\Facades\Schema::hasTable('nguoidung')) {
+                \Illuminate\Support\Facades\Schema::table('nguoidung', function (\Illuminate\Database\Schema\Blueprint $table) {
+                    if (!\Illuminate\Support\Facades\Schema::hasColumn('nguoidung', 'caLamViec')) {
+                        $table->string('caLamViec', 50)->default('Ca Sáng')->nullable();
+                    }
+                    if (!\Illuminate\Support\Facades\Schema::hasColumn('nguoidung', 'luong')) {
+                        $table->decimal('luong', 15, 2)->default(0)->nullable();
+                    }
+                });
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("ensureRolesAndColumnsExist warning: " . $e->getMessage());
+        }
+    }
+
+    /**
      * View a list of all accounts
      */
     public function listUsers()
     {
+        self::ensureRolesAndColumnsExist();
+
         $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
         $query = TaiKhoan::with(['nguoidung.cuahang', 'vaitro']);
 
@@ -25,7 +85,7 @@ class AdminController extends Controller
 
             $query->where(function ($q) use ($macuahang, $user) {
                 $q->where(function ($q2) use ($macuahang) {
-                    $q2->whereIn('vaiTroId', [3, 4, 5, 7])
+                    $q2->whereIn('vaiTroId', [3, 4, 5, 7, 8])
                        ->whereHas('nguoidung', function ($q3) use ($macuahang) {
                            $q3->where('cuaHangId', $macuahang);
                        });
@@ -61,6 +121,8 @@ class AdminController extends Controller
 
     public function createStaff(Request $request)
     {
+        self::ensureRolesAndColumnsExist();
+
         $request->validate([
             'USERNAME' => 'nullable|string',
             'PASSWORD' => 'nullable|string',
@@ -102,6 +164,9 @@ class AdminController extends Controller
                 }
             }
 
+            $caLamViec = $request->input('CALAMVIEC', $request->input('caLamViec', 'Ca Sáng'));
+            $luong = (float)$request->input('LUONG', $request->input('luong', 0));
+
             \App\Models\NguoiDung::create([
                 'taiKhoanId' => $tk->id,
                 'cuaHangId'  => $macuahang,
@@ -111,6 +176,8 @@ class AdminController extends Controller
                 'ngaySinh'   => $request->NGAYSINH ?: null,
                 'cccdNumber' => $cccd ?: null,
                 'loaiNguoiDung' => 1, // Staff
+                'caLamViec'  => $caLamViec,
+                'luong'      => $luong,
             ]);
 
             DB::commit();
@@ -124,6 +191,8 @@ class AdminController extends Controller
 
     public function importStaff(Request $request)
     {
+        self::ensureRolesAndColumnsExist();
+
         $request->validate([
             'file' => 'required|file'
         ]);
@@ -162,6 +231,7 @@ class AdminController extends Controller
             $sdt = trim($row[4] ?? '');
             $email = trim($row[5] ?? '');
             $macuahang = intval($row[6] ?? $macuahangDefault);
+            $caLamViec = trim($row[7] ?? '') ?: 'Ca Sáng';
 
             if (!$username || !$hoTen || strtolower($username) === 'cccd' || strtolower($username) === 'username') {
                 continue; // Skip header or invalid empty row
@@ -176,9 +246,9 @@ class AdminController extends Controller
                 $roleId = 4;
             } else if (str_contains($lowerChucVu, 'chăm sóc') || str_contains($lowerChucVu, 'cskh')) {
                 $roleId = 5;
-            } else if (str_contains($lowerChucVu, 'kế toán')) {
+            } else if (str_contains($lowerChucVu, 'kế toán') || str_contains($lowerChucVu, 'ketoan') || str_contains($lowerChucVu, 'accountant')) {
                 $roleId = 7;
-            } else if (str_contains($lowerChucVu, 'giám đốc')) {
+            } else if (str_contains($lowerChucVu, 'giám đốc') || str_contains($lowerChucVu, 'giam doc') || str_contains($lowerChucVu, 'director')) {
                 $roleId = 8;
             } else if (str_contains($lowerChucVu, 'quản trị') || str_contains($lowerChucVu, 'admin')) {
                 $roleId = 1;
@@ -212,6 +282,8 @@ class AdminController extends Controller
                         'soDienThoai' => $sdt ?: null,
                         'cccdNumber' => preg_match('/^\d{9,12}$/', $username) ? $username : null,
                         'loaiNguoiDung' => 1,
+                        'caLamViec'  => $caLamViec,
+                        'luong'      => $luong,
                     ]
                 );
 
@@ -231,6 +303,8 @@ class AdminController extends Controller
 
     public function updateStaff(Request $request, $username)
     {
+        self::ensureRolesAndColumnsExist();
+
         $nhanVien = \App\Models\NhanVien::findByUsername($username);
         if (!$nhanVien) {
             return response()->json(['error' => 'Không tìm thấy nhân viên'], 404);
@@ -261,6 +335,9 @@ class AdminController extends Controller
             $gioiTinh = 1;
         }
 
+        $caLamViec = $request->input('CALAMVIEC', $request->input('caLamViec', $nhanVien->caLamViec ?? 'Ca Sáng'));
+        $luong = $request->input('LUONG', $request->input('luong', $nhanVien->luong ?? 0));
+
         $nhanVien->update([
             'hoTen'       => $hoTen,
             'soDienThoai' => $sdt,
@@ -268,6 +345,8 @@ class AdminController extends Controller
             'cccdNumber'  => $cccd,
             'gioiTinh'    => $gioiTinh,
             'cuaHangId'   => $macuahangToUpdate ?: 1,
+            'caLamViec'   => $caLamViec,
+            'luong'       => (float)$luong,
         ]);
 
         $maroleToUpdate = $request->input('MAROLE', $request->input('maRole', $request->input('vaiTroId')));
