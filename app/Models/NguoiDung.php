@@ -34,7 +34,7 @@ class NguoiDung extends Model
     protected $casts = [
         'gioiTinh' => 'integer',
         'loaiNguoiDung' => 'integer',
-        'ngaySinh' => 'date',
+        'ngaySinh' => 'date:Y-m-d',
         'diemTichLuy' => 'integer',
         'tongChiTieu' => 'double',
     ];
@@ -150,11 +150,37 @@ class NguoiDung extends Model
         return 'Khác';
     }
 
-    public function getNGAYSINHAttribute()
+    public function getNgaySinhAttribute($val)
     {
-        $val = $this->attributes['ngaySinh'] ?? null;
-        if (!$val) return null;
-        return is_string($val) ? substr($val, 0, 10) : (method_exists($val, 'format') ? $val->format('Y-m-d') : (string)$val);
+        $v = $val ?? ($this->attributes['ngaySinh'] ?? null);
+        if (!$v) return null;
+        if (is_string($v)) {
+            return substr($v, 0, 10);
+        }
+        if ($v instanceof \DateTimeInterface) {
+            return $v->format('Y-m-d');
+        }
+        return (string) $v;
+    }
+
+    public function setNgaySinhAttribute($val)
+    {
+        if (empty($val)) {
+            $this->attributes['ngaySinh'] = null;
+            return;
+        }
+        if (is_string($val)) {
+            $val = trim($val);
+            if (preg_match('/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/', $val, $m)) {
+                $this->attributes['ngaySinh'] = sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]);
+                return;
+            }
+            if (preg_match('/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/', $val, $m)) {
+                $this->attributes['ngaySinh'] = sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]);
+                return;
+            }
+        }
+        $this->attributes['ngaySinh'] = $val;
     }
 
     public function getDIACHIAttribute()
