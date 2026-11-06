@@ -45,6 +45,21 @@ class GhnController extends Controller
         ];
     }
 
+    /**
+     * Bỏ dấu tiếng Việt để phục vụ sắp xếp danh sách A-Z
+     */
+    private static function removeVietnameseAccents(string $str): string
+    {
+        $str = preg_replace('/[áàảãạăắằẳẵặâấầẩẫậ]/ui', 'a', $str);
+        $str = preg_replace('/[éèẻẽẹêếềểễệ]/ui', 'e', $str);
+        $str = preg_replace('/[íìỉĩị]/ui', 'i', $str);
+        $str = preg_replace('/[óòỏõọôốồổỗộơớờởỡợ]/ui', 'o', $str);
+        $str = preg_replace('/[úùủũụưứừửữự]/ui', 'u', $str);
+        $str = preg_replace('/[ýỳỷỹỵ]/ui', 'y', $str);
+        $str = preg_replace('/[đ]/ui', 'd', $str);
+        return strtolower(trim($str));
+    }
+
     public function getProvinces()
     {
         $creds = self::getGhnCredentials();
@@ -58,7 +73,33 @@ class GhnController extends Controller
             ])->get($this->apiUrl . '/master-data/province');
         }
 
-        return $response->json();
+        $resData = $response->json();
+        if (!empty($resData['data']) && is_array($resData['data'])) {
+            $filtered = array_values(array_filter($resData['data'], function ($p) {
+                $id = (int)($p['ProvinceID'] ?? 0);
+                $name = (string)($p['ProvinceName'] ?? '');
+
+                // Loại bỏ các tỉnh ảo / test do GHN Sandbox hoặc tester tạo ra (ví dụ: Hà Nội 02, Test - Alert - Tỉnh - 001)
+                if ($id === 298 || $id === 2002) {
+                    return false;
+                }
+                if (preg_match('/test|alert|demo|fake|hà\s*nội\s*02/iu', $name)) {
+                    return false;
+                }
+                return true;
+            }));
+
+            // Sắp xếp danh sách tỉnh thành theo thứ tự A -> Z chuẩn tiếng Việt
+            usort($filtered, function ($a, $b) {
+                $nameA = self::removeVietnameseAccents((string)($a['ProvinceName'] ?? ''));
+                $nameB = self::removeVietnameseAccents((string)($b['ProvinceName'] ?? ''));
+                return strcmp($nameA, $nameB);
+            });
+
+            $resData['data'] = $filtered;
+        }
+
+        return response()->json($resData);
     }
 
     public function getDistricts(Request $request)
@@ -78,7 +119,16 @@ class GhnController extends Controller
             ]);
         }
 
-        return $response->json();
+        $resData = $response->json();
+        if (!empty($resData['data']) && is_array($resData['data'])) {
+            $districts = array_values(array_filter($resData['data'], function ($d) {
+                $name = (string)($d['DistrictName'] ?? '');
+                return !preg_match('/test|alert|demo|fake/iu', $name);
+            }));
+            $resData['data'] = $districts;
+        }
+
+        return response()->json($resData);
     }
 
     public function getWards(Request $request)
@@ -98,7 +148,16 @@ class GhnController extends Controller
             ]);
         }
 
-        return $response->json();
+        $resData = $response->json();
+        if (!empty($resData['data']) && is_array($resData['data'])) {
+            $wards = array_values(array_filter($resData['data'], function ($w) {
+                $name = (string)($w['WardName'] ?? '');
+                return !preg_match('/test|alert|demo|fake/iu', $name);
+            }));
+            $resData['data'] = $wards;
+        }
+
+        return response()->json($resData);
     }
 
     /**
@@ -115,22 +174,40 @@ class GhnController extends Controller
         $cacheKey = "ghn_province_wards_v3_{$provinceId}";
         $wards = \Illuminate\Support\Facades\Cache::remember($cacheKey, 86400, function () use ($provinceId) {
             try {
+                $creds = self::getGhnCredentials();
+                $token = $creds['token'];
+
                 $districtsRes = Http::withoutVerifying()->withHeaders([
-                    'Token' => env('GHN_API_TOKEN'),
+                    'Token' => $token,
                 ])->get($this->apiUrl . '/master-data/district', [
                     'province_id' => $provinceId
                 ]);
+
+                if ($districtsRes->status() === 401 && $creds['isDev'] && $token !== $creds['devToken']) {
+                    $token = $creds['devToken'];
+                    $districtsRes = Http::withoutVerifying()->withHeaders([
+                        'Token' => $token,
+                    ])->get($this->apiUrl . '/master-data/district', [
+                        'province_id' => $provinceId
+                    ]);
+                }
 
                 $districts = $districtsRes->json('data') ?? [];
                 if (empty($districts)) {
                     return [];
                 }
 
-                $responses = Http::pool(function (\Illuminate\Http\Client\Pool $pool) use ($districts) {
+                // Loại bỏ quận/huyện test nếu có
+                $districts = array_values(array_filter($districts, function ($d) {
+                    $name = (string)($d['DistrictName'] ?? '');
+                    return !preg_match('/test|alert|demo|fake/iu', $name);
+                }));
+
+                $responses = Http::pool(function (\Illuminate\Http\Client\Pool $pool) use ($districts, $token) {
                     foreach ($districts as $d) {
                         $dId = $d['DistrictID'];
                         $pool->as($dId)->withoutVerifying()->withHeaders([
-                            'Token' => env('GHN_API_TOKEN'),
+                            'Token' => $token,
                         ])->get($this->apiUrl . '/master-data/ward', [
                             'district_id' => $dId
                         ]);
@@ -147,8 +224,11 @@ class GhnController extends Controller
                     if ($response && method_exists($response, 'successful') && $response->successful()) {
                         $wardList = $response->json('data') ?? [];
                         foreach ($wardList as $w) {
+                            $wardName = (string)($w['WardName'] ?? '');
+                            if (preg_match('/test|alert|demo|fake/iu', $wardName)) {
+                                continue;
+                            }
                             $distName = $districtMap[$districtId] ?? '';
-                            $wardName = $w['WardName'] ?? '';
                             $fullName = !empty($distName) ? "{$wardName} ({$distName})" : $wardName;
                             $allWards[] = [
                                 'WardCode' => (string)($w['WardCode'] ?? ''),
@@ -163,9 +243,11 @@ class GhnController extends Controller
 
                 // Sort alphabetically by WardName, then DistrictName
                 usort($allWards, function ($a, $b) {
-                    $cmp = strcmp($a['WardName'], $b['WardName']);
+                    $nameA = self::removeVietnameseAccents((string)($a['WardName'] ?? ''));
+                    $nameB = self::removeVietnameseAccents((string)($b['WardName'] ?? ''));
+                    $cmp = strcmp($nameA, $nameB);
                     if ($cmp === 0) {
-                        return strcmp($a['DistrictName'] ?? '', $b['DistrictName'] ?? '');
+                        return strcmp((string)($a['DistrictName'] ?? ''), (string)($b['DistrictName'] ?? ''));
                     }
                     return $cmp;
                 });
