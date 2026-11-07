@@ -258,8 +258,12 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         // Audit Logs (Nâng cao)
         Route::get('/admin/audit-logs', [\App\Http\Controllers\Api\AuditLogController::class, 'index']);
 
-        // Quản lý Nhân sự & Phân quyền Admin
+        // Quản lý Nhân sự, Tài khoản User & Phân quyền Admin
         Route::get('/admin/users', [AdminController::class, 'listUsers']);
+        Route::post('/admin/users', [AdminController::class, 'createUserAccount'])->middleware(['feature.lock:STAFF_MGMT']);
+        Route::put('/admin/users/{id}', [AdminController::class, 'updateUserAccount'])->middleware(['feature.lock:STAFF_MGMT']);
+        Route::match(['put', 'post'], '/admin/users/{id}/password', [AdminController::class, 'resetUserPassword'])->middleware(['feature.lock:STAFF_MGMT']);
+        Route::post('/admin/users/{id}/reset-password', [AdminController::class, 'resetUserPassword'])->middleware(['feature.lock:STAFF_MGMT']);
         Route::post('/admin/staff', [AdminController::class, 'createStaff'])->middleware(['feature.lock:STAFF_MGMT']);
         Route::post('/admin/staff/import', [AdminController::class, 'importStaff'])->middleware(['feature.lock:STAFF_MGMT']);
         Route::put('/admin/staff/{username}', [AdminController::class, 'updateStaff'])->middleware(['feature.lock:STAFF_MGMT']);

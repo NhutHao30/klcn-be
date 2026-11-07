@@ -93,9 +93,9 @@ class AdminController extends Controller
             });
         }
 
-        $users = $query->get()->map(function ($u) {
+        $users = $query->orderBy('id', 'desc')->get()->map(function ($u) {
             $nd = $u->nguoidung;
-            $isCustomer = (int)$u->vaiTroId === 6 || ($nd && (int)$nd->loaiNguoiDung === 0);
+            $isCustomer = (int)$u->vaiTroId === 6 || ($nd && (int)$nd->loaiNguoiDung === 0 && (int)$u->vaiTroId === 6);
             $isAdminSuper = strtolower($u->username) === 'admin';
 
             return [
@@ -106,13 +106,24 @@ class AdminController extends Controller
                 'EMAIL' => $u->email,
                 'trangThai' => (int)$u->trangThai,
                 'TRANGTHAI' => (int)$u->trangThai === 1 ? 'Đang làm việc' : 'Nghỉ việc',
-                'vaiTroId' => $u->vaiTroId,
+                'vaiTroId' => (int)$u->vaiTroId,
                 'MAROLE' => $u->MAROLE,
+                'tenVaiTro' => $u->vaitro?->tenVaiTro ?? $u->tenVaiTro,
                 'vaitro' => $u->vaitro,
+                'loaiTaiKhoan' => $isCustomer ? 'CUSTOMER' : 'STAFF',
+                'hoTen' => $nd?->hoTen ?? $u->username,
+                'soDienThoai' => $nd?->soDienThoai ?? '',
+                'cuaHangId' => $nd?->cuaHangId ?? null,
+                'tenCuaHang' => $nd?->cuahang?->tenCuaHang ?? null,
+                'diemTichLuy' => (int)($nd?->diemTichLuy ?? 0),
+                'cccdNumber' => $nd?->cccdNumber ?? '',
+                'ngaySinh' => $nd?->ngaySinh ?? null,
+                'gioiTinh' => $nd?->gioiTinh ?? null,
                 'nguoidung' => $nd,
                 'khachhang' => $isCustomer ? $nd : null,
                 'nhanvien' => (!$isCustomer && !$isAdminSuper) ? $nd : null,
                 'createdAt' => $u->createdAt,
+                'updatedAt' => $u->updatedAt,
             ];
         });
 
@@ -415,15 +426,20 @@ class AdminController extends Controller
 
             $trangThaiInput = $request->input('TRANGTHAI', $request->input('trangThai'));
             if ($trangThaiInput !== null) {
-                $tkUpdate['trangThai'] = ($trangThaiInput === 'Đang làm việc' || (int)$trangThaiInput === 1) ? 1 : 0;
+                $tkUpdate['trangThai'] = ($trangThaiInput === 'Đang làm việc' || $trangThaiInput === 'Đang hoạt động' || (int)$trangThaiInput === 1) ? 1 : 0;
+            }
+
+            $newPassword = trim((string)($request->input('PASSWORD') ?? $request->input('password') ?? ''));
+            if ($newPassword !== '') {
+                $tkUpdate['password'] = $newPassword;
             }
 
             if (!empty($tkUpdate)) {
                 $tk->update($tkUpdate);
             }
 
-            // Nếu nhân viên được khôi phục từ trạng thái "Nghỉ việc", đặt lại mật khẩu mặc định là Username
-            if ($oldTrangThai === 'Nghỉ việc' && ($trangThaiInput === 'Đang làm việc' || (int)$trangThaiInput === 1)) {
+            // Nếu nhân viên được khôi phục từ trạng thái "Nghỉ việc" mà không truyền mật khẩu mới, đặt lại mật khẩu mặc định là Username
+            if ($newPassword === '' && $oldTrangThai === 'Nghỉ việc' && ($trangThaiInput === 'Đang làm việc' || (int)$trangThaiInput === 1)) {
                 $tk->password = \Illuminate\Support\Facades\Hash::make($tk->username);
                 $tk->save();
             }
@@ -458,44 +474,275 @@ class AdminController extends Controller
     public function toggleUserStatus(Request $request, $id)
     {
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if (!$userLogin || ($userLogin->MAROLE !== 0 && (int)$userLogin->vaiTroId !== 1)) {
-            return response()->json(['error' => 'Chỉ Admin mới có quyền khóa/mở khóa tài khoản'], 403);
+        if (!$userLogin || !in_array((int)$userLogin->vaiTroId, [1, 8], true) && $userLogin->MAROLE !== 0) {
+            return response()->json(['error' => 'Chỉ Quản trị hệ thống mới có quyền khóa/mở khóa tài khoản'], 403);
         }
 
-        $tk = \App\Models\TaiKhoan::find($id);
+        $tk = \App\Models\TaiKhoan::where('id', $id)->orWhere('username', $id)->first();
         if (!$tk) return response()->json(['error' => 'Tài khoản không tồn tại'], 404);
 
         if ($tk->id === $userLogin->id) {
             return response()->json(['error' => 'Không thể tự khóa tài khoản của chính mình'], 400);
         }
 
-        $newStatus = $tk->trangThai == 1 ? 0 : 1;
+        $explicitStatus = $request->input('trangThai');
+        if ($explicitStatus !== null && $explicitStatus !== '') {
+            $newStatus = ((int)$explicitStatus === 1 || $explicitStatus === true) ? 1 : 0;
+        } else {
+            $newStatus = (int)$tk->trangThai === 1 ? 0 : 1;
+        }
         $tk->update(['trangThai' => $newStatus]);
 
         return response()->json([
-            'message' => ($newStatus == 1 ? 'Đã kích hoạt' : 'Đã khóa') . ' tài khoản thành công',
-            'data' => $tk
+            'message' => ($newStatus == 1 ? 'Đã mở khóa & kích hoạt' : 'Đã khóa') . " tài khoản [{$tk->username}] thành công!",
+            'data' => $tk->fresh(['nguoidung.cuahang', 'vaitro'])
         ]);
     }
 
     public function updateUserRole(Request $request, $id)
     {
         $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if (!$userLogin || ($userLogin->MAROLE !== 0 && (int)$userLogin->vaiTroId !== 1)) {
-            return response()->json(['error' => 'Chỉ Admin mới có quyền thay đổi vai trò (Role)'], 403);
+        if (!$userLogin || !in_array((int)$userLogin->vaiTroId, [1, 8], true) && $userLogin->MAROLE !== 0) {
+            return response()->json(['error' => 'Chỉ Quản trị hệ thống mới có quyền thay đổi vai trò (Role)'], 403);
         }
 
-        $tk = \App\Models\TaiKhoan::find($id);
+        $tk = \App\Models\TaiKhoan::where('id', $id)->orWhere('username', $id)->first();
         if (!$tk) return response()->json(['error' => 'Tài khoản không tồn tại'], 404);
 
         $roleId = $request->input('vaiTroId') ?? $request->input('role_id') ?? $request->input('MAROLE');
         if ($roleId !== null) {
-            $tk->update(['vaiTroId' => (int)$roleId]);
+            $newRoleId = (int)$roleId;
+            $tk->update(['vaiTroId' => $newRoleId]);
+            if ($tk->nguoidung) {
+                $tk->nguoidung->update([
+                    'loaiNguoiDung' => $newRoleId === 6 ? 0 : 1
+                ]);
+            }
         }
 
         return response()->json([
-            'message' => 'Cập nhật vai trò tài khoản thành công',
-            'data' => $tk->load('vaitro')
+            'message' => "Cập nhật vai trò tài khoản [{$tk->username}] thành công!",
+            'data' => $tk->fresh(['nguoidung.cuahang', 'vaitro'])
+        ]);
+    }
+
+    /**
+     * Admin: Tạo mới tài khoản User (Nhân viên hoặc Khách hàng)
+     */
+    public function createUserAccount(Request $request)
+    {
+        self::ensureRolesAndColumnsExist();
+
+        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+        if (!$userLogin || !in_array((int)$userLogin->vaiTroId, [1, 2, 8], true) && $userLogin->MAROLE !== 0) {
+            return response()->json(['error' => 'Bạn không có quyền tạo tài khoản người dùng'], 403);
+        }
+
+        $username = trim((string)($request->input('username') ?? $request->input('USERNAME') ?? ''));
+        $email = trim((string)($request->input('email') ?? $request->input('EMAIL') ?? ''));
+        $password = trim((string)($request->input('password') ?? $request->input('PASSWORD') ?? ''));
+        $hoTen = trim((string)($request->input('hoTen') ?? $request->input('HOTEN') ?? ''));
+        $soDienThoai = trim((string)($request->input('soDienThoai') ?? $request->input('sdt') ?? $request->input('SDT') ?? ''));
+        $vaiTroId = (int)($request->input('vaiTroId') ?? $request->input('MAROLE') ?? 6);
+        $cuaHangId = (int)($request->input('cuaHangId') ?? $request->input('macuahang') ?? 1);
+        $trangThai = $request->has('trangThai') ? ((int)$request->input('trangThai') ? 1 : 0) : 1;
+
+        if ($username === '') {
+            return response()->json(['error' => 'Vui lòng nhập Tên đăng nhập (Username)!'], 422);
+        }
+        if (TaiKhoan::where('username', $username)->exists()) {
+            return response()->json(['error' => "Tên đăng nhập '{$username}' đã tồn tại trên hệ thống!"], 422);
+        }
+        if ($email === '') {
+            $email = $username . '@dolabakery.com';
+        }
+        if (TaiKhoan::where('email', $email)->exists()) {
+            return response()->json(['error' => "Email '{$email}' đã được sử dụng bởi tài khoản khác!"], 422);
+        }
+        if ($password === '') {
+            $password = $username;
+        }
+        if ($hoTen === '') {
+            $hoTen = $username;
+        }
+
+        DB::beginTransaction();
+        try {
+            $tk = TaiKhoan::create([
+                'username' => $username,
+                'email' => $email,
+                'password' => $password,
+                'vaiTroId' => $vaiTroId,
+                'trangThai' => $trangThai,
+            ]);
+
+            $isCustomer = $vaiTroId === 6;
+            \App\Models\NguoiDung::create([
+                'taiKhoanId' => $tk->id,
+                'cuaHangId' => $isCustomer ? null : ($cuaHangId ?: 1),
+                'hoTen' => $hoTen,
+                'soDienThoai' => $soDienThoai ?: null,
+                'loaiNguoiDung' => $isCustomer ? 0 : 1,
+                'diemTichLuy' => (int)($request->input('diemTichLuy') ?? 0),
+                'caLamViec' => $isCustomer ? null : ($request->input('caLamViec') ?? 'Ca Sáng'),
+                'luong' => $isCustomer ? 0 : (float)($request->input('luong') ?? 0),
+            ]);
+
+            DB::commit();
+            return response()->json([
+                'message' => "Đã tạo tài khoản [{$tk->username}] thành công!",
+                'data' => $tk->fresh(['nguoidung.cuahang', 'vaitro'])
+            ], 201);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Lỗi tạo tài khoản: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Admin: Chỉnh sửa thông tin tài khoản User (Username, Email, Họ tên, SĐT, Vai trò, Chi nhánh, Trạng thái, Mật khẩu)
+     */
+    public function updateUserAccount(Request $request, $id)
+    {
+        self::ensureRolesAndColumnsExist();
+
+        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+        if (!$userLogin || !in_array((int)$userLogin->vaiTroId, [1, 2, 8], true) && $userLogin->MAROLE !== 0) {
+            return response()->json(['error' => 'Bạn không có quyền chỉnh sửa tài khoản người dùng'], 403);
+        }
+
+        $tk = TaiKhoan::where('id', $id)->orWhere('username', $id)->first();
+        if (!$tk) {
+            return response()->json(['error' => 'Không tìm thấy tài khoản người dùng'], 404);
+        }
+
+        $newUsername = trim((string)($request->input('username') ?? $request->input('USERNAME') ?? $tk->username));
+        $newEmail = trim((string)($request->input('email') ?? $request->input('EMAIL') ?? $tk->email));
+
+        if ($newUsername !== '' && $newUsername !== $tk->username) {
+            if (TaiKhoan::where('username', $newUsername)->where('id', '!=', $tk->id)->exists()) {
+                return response()->json(['error' => "Tên đăng nhập '{$newUsername}' đã tồn tại!"], 422);
+            }
+            $tk->username = $newUsername;
+        }
+
+        if ($newEmail !== '' && $newEmail !== $tk->email) {
+            if (TaiKhoan::where('email', $newEmail)->where('id', '!=', $tk->id)->exists()) {
+                return response()->json(['error' => "Email '{$newEmail}' đã được sử dụng bởi tài khoản khác!"], 422);
+            }
+            $tk->email = $newEmail;
+        }
+
+        if ($request->has('vaiTroId') || $request->has('MAROLE')) {
+            $newRoleId = (int)($request->input('vaiTroId') ?? $request->input('MAROLE') ?? $tk->vaiTroId);
+            if ($newRoleId > 0) {
+                $tk->vaiTroId = $newRoleId;
+            }
+        }
+
+        if ($request->has('trangThai') || $request->has('TRANGTHAI')) {
+            $rawStatus = $request->input('trangThai') ?? $request->input('TRANGTHAI');
+            $newStatus = ($rawStatus === 1 || $rawStatus === '1' || $rawStatus === true || $rawStatus === 'Đang làm việc' || $rawStatus === 'Đang hoạt động') ? 1 : 0;
+            if ($tk->id === $userLogin->id && $newStatus === 0) {
+                return response()->json(['error' => 'Không thể tự khóa tài khoản đang đăng nhập của chính mình!'], 400);
+            }
+            $tk->trangThai = $newStatus;
+        }
+
+        $newPassword = trim((string)($request->input('password') ?? $request->input('PASSWORD') ?? ''));
+        if ($newPassword !== '') {
+            if (strlen($newPassword) < 3) {
+                return response()->json(['error' => 'Mật khẩu mới phải có ít nhất 3 ký tự!'], 422);
+            }
+            $tk->password = $newPassword;
+        }
+
+        DB::beginTransaction();
+        try {
+            $tk->save();
+
+            $nd = $tk->nguoidung;
+            $isCustomer = (int)$tk->vaiTroId === 6;
+
+            $hoTen = $request->input('hoTen') ?? $request->input('HOTEN') ?? ($nd ? $nd->hoTen : $tk->username);
+            $soDienThoai = $request->input('soDienThoai') ?? $request->input('sdt') ?? $request->input('SDT') ?? ($nd ? $nd->soDienThoai : null);
+            $cuaHangId = $request->input('cuaHangId') ?? $request->input('macuahang') ?? ($nd ? $nd->cuaHangId : 1);
+
+            if ($nd) {
+                $ndUpdates = [
+                    'hoTen' => $hoTen ?: $tk->username,
+                    'soDienThoai' => $soDienThoai,
+                    'loaiNguoiDung' => $isCustomer ? 0 : 1,
+                ];
+                if (!$isCustomer && $cuaHangId) {
+                    $ndUpdates['cuaHangId'] = (int)$cuaHangId;
+                }
+                if ($request->has('diemTichLuy')) {
+                    $ndUpdates['diemTichLuy'] = max(0, (int)$request->input('diemTichLuy'));
+                }
+                if ($request->has('cccdNumber') || $request->has('cccd')) {
+                    $ndUpdates['cccdNumber'] = $request->input('cccdNumber') ?? $request->input('cccd');
+                }
+                if ($request->has('caLamViec')) {
+                    $ndUpdates['caLamViec'] = $request->input('caLamViec');
+                }
+                if ($request->has('luong')) {
+                    $ndUpdates['luong'] = (float)$request->input('luong');
+                }
+                $nd->update($ndUpdates);
+            } else {
+                \App\Models\NguoiDung::create([
+                    'taiKhoanId' => $tk->id,
+                    'cuaHangId' => $isCustomer ? null : ((int)$cuaHangId ?: 1),
+                    'hoTen' => $hoTen ?: $tk->username,
+                    'soDienThoai' => $soDienThoai,
+                    'loaiNguoiDung' => $isCustomer ? 0 : 1,
+                    'diemTichLuy' => (int)($request->input('diemTichLuy') ?? 0),
+                ]);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => "Cập nhật thông tin tài khoản [{$tk->username}] thành công!",
+                'data' => $tk->fresh(['nguoidung.cuahang', 'vaitro'])
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Lỗi cập nhật tài khoản: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Admin: Đổi mật khẩu / Đặt lại mật khẩu cho tài khoản User
+     */
+    public function resetUserPassword(Request $request, $id)
+    {
+        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+        if (!$userLogin || !in_array((int)$userLogin->vaiTroId, [1, 2, 8], true) && $userLogin->MAROLE !== 0) {
+            return response()->json(['error' => 'Chỉ Quản trị viên mới có quyền đổi/đặt lại mật khẩu tài khoản!'], 403);
+        }
+
+        $tk = TaiKhoan::where('id', $id)->orWhere('username', $id)->first();
+        if (!$tk) {
+            return response()->json(['error' => 'Không tìm thấy tài khoản người dùng'], 404);
+        }
+
+        $resetToDefault = $request->boolean('reset_to_default');
+        $newPassword = $resetToDefault
+            ? $tk->username
+            : trim((string)($request->input('password') ?? $request->input('new_password') ?? $request->input('PASSWORD') ?? ''));
+
+        if ($newPassword === '' || strlen($newPassword) < 3) {
+            return response()->json(['error' => 'Mật khẩu mới phải có ít nhất 3 ký tự!'], 422);
+        }
+
+        $tk->password = $newPassword;
+        $tk->save();
+
+        return response()->json([
+            'message' => "Đã cập nhật mật khẩu mới cho tài khoản [{$tk->username}] thành công!",
+            'username' => $tk->username,
         ]);
     }
     /**
