@@ -1151,19 +1151,74 @@ class AdminController extends Controller
                 ")
                 ->first();
 
-            // Hao hụt theo sản phẩm
+            // Hao hụt theo sản phẩm (kết hợp cả lô hủy/hết hạn và biên bản hủy)
             $haoHutTheoSP = (clone $query)
                 ->selectRaw("
-                    {$sanPhamTable}.id as MASP, {$sanPhamTable}.tenSanPham as TENSP,
+                    {$sanPhamTable}.id as MASP, {$sanPhamTable}.tenSanPham as TENSP, {$sanPhamTable}.giaBan as GIABAN, {$sanPhamTable}.donViTinh as DVT,
                     SUM({$loHangTable}.soLuongNhap) as tong_nhap,
                     SUM({$loHangTable}.soLuongCon) as tong_con,
-                    SUM(CASE WHEN {$loHangTable}.trangThai = 3 THEN {$loHangTable}.soLuongCon ELSE 0 END) as tong_huy,
-                    SUM(CASE WHEN {$loHangTable}.trangThai = 3 THEN {$loHangTable}.soLuongCon * {$loHangTable}.giaNhap ELSE 0 END) as gia_tri_huy,
-                    ROUND(SUM(CASE WHEN {$loHangTable}.trangThai = 3 THEN {$loHangTable}.soLuongCon ELSE 0 END) / NULLIF(SUM({$loHangTable}.soLuongNhap), 0) * 100, 2) as ty_le_huy
+                    SUM(CASE WHEN {$loHangTable}.trangThai IN (2, 3) THEN GREATEST({$loHangTable}.soLuongCon, 0) ELSE 0 END) as tong_huy,
+                    SUM(CASE WHEN {$loHangTable}.trangThai IN (2, 3) THEN GREATEST({$loHangTable}.soLuongCon, 0) * COALESCE({$loHangTable}.giaNhap, {$sanPhamTable}.giaBan, 15000) ELSE 0 END) as gia_tri_huy,
+                    ROUND(SUM(CASE WHEN {$loHangTable}.trangThai IN (2, 3) THEN GREATEST({$loHangTable}.soLuongCon, 0) ELSE 0 END) / NULLIF(SUM({$loHangTable}.soLuongNhap), 0) * 100, 2) as ty_le_huy
                 ")
-                ->groupBy("{$sanPhamTable}.id", "{$sanPhamTable}.tenSanPham")
+                ->groupBy("{$sanPhamTable}.id", "{$sanPhamTable}.tenSanPham", "{$sanPhamTable}.giaBan", "{$sanPhamTable}.donViTinh")
                 ->orderByDesc('ty_le_huy')
                 ->get();
+
+            // Bổ sung số lượng đã xuất hủy trong chiTietBienBanHuy (vì khi duyệt biên bản hủy, soLuongCon trên loHang đã về 0)
+            $bienBanTable = \Illuminate\Support\Facades\Schema::hasTable('bienBanHuy') ? 'bienBanHuy' : (\Illuminate\Support\Facades\Schema::hasTable('bienbanhuy') ? 'bienbanhuy' : null);
+            $huyByProduct = [];
+            if ($bienBanTable) {
+                $chiTietTable = \Illuminate\Support\Facades\Schema::hasTable('chiTietBienBanHuy') ? 'chiTietBienBanHuy' : 'chitietbienbanhuy';
+                $bbRows = DB::table($chiTietTable)
+                    ->join($bienBanTable, "{$chiTietTable}.bienBanHuyId", '=', "{$bienBanTable}.id")
+                    ->leftJoin($loHangTable, "{$chiTietTable}.loHangId", '=', "{$loHangTable}.id")
+                    ->whereMonth("{$bienBanTable}.createdAt", $thang)
+                    ->whereYear("{$bienBanTable}.createdAt", $nam)
+                    ->when($macuahang, fn($q) => $q->where("{$bienBanTable}.cuaHangId", $macuahang))
+                    ->selectRaw("
+                        COALESCE({$loHangTable}.sanPhamId, 0) as sanPhamId,
+                        SUM(COALESCE({$chiTietTable}.soLuongHuy, 0)) as sl_huy,
+                        SUM(COALESCE({$chiTietTable}.soLuongHuy, 0) * COALESCE({$loHangTable}.giaNhap, 15000)) as gt_huy
+                    ")
+                    ->groupBy('sanPhamId')
+                    ->get();
+                foreach ($bbRows as $r) {
+                    if ($r->sanPhamId) {
+                        $huyByProduct[(int)$r->sanPhamId] = [
+                            'sl_huy' => (int)$r->sl_huy,
+                            'gt_huy' => (float)$r->gt_huy,
+                        ];
+                    }
+                }
+            }
+
+            $formattedHaoHut = $haoHutTheoSP->map(function ($item) use ($huyByProduct) {
+                $spId = (int)$item->MASP;
+                $extraSl = $huyByProduct[$spId]['sl_huy'] ?? 0;
+                $extraGt = $huyByProduct[$spId]['gt_huy'] ?? 0;
+                $tongHuySp = max((int)$item->tong_huy, $extraSl);
+                $giaTriHuySp = max((float)$item->gia_tri_huy, $extraGt);
+                $tongNhapSp = max(1, (int)$item->tong_nhap);
+                return [
+                    'MASP' => $item->MASP,
+                    'TENSP' => $item->TENSP,
+                    'GIABAN' => (float)($item->GIABAN ?? 15000),
+                    'DVT' => $item->DVT ?? 'Cái',
+                    'tong_nhap' => (int)$item->tong_nhap,
+                    'tong_con' => (int)$item->tong_con,
+                    'tong_huy' => $tongHuySp,
+                    'tong_so_luong_huy' => $tongHuySp,
+                    'gia_tri_huy' => round($giaTriHuySp, 2),
+                    'ty_le_huy' => round($tongHuySp / $tongNhapSp * 100, 2),
+                    'san_pham' => [
+                        'MASP' => $item->MASP,
+                        'TENSP' => $item->TENSP,
+                        'GIABAN' => (float)($item->GIABAN ?? 15000),
+                        'DVT' => $item->DVT ?? 'Cái',
+                    ]
+                ];
+            })->sortByDesc('tong_so_luong_huy')->values();
 
             $tongNhap = ($tongKet->tong_nhap ?? 0) ?: 1;
             $tongHuy = (int) ($tongKet->so_lo_huy ?? 0);
@@ -1172,20 +1227,21 @@ class AdminController extends Controller
             return response()->json([
                 'status'           => true,
                 'data'             => [
-                    'thang'            => $thang,
-                    'nam'              => $nam,
-                    'tong_nhap'        => (int) ($tongKet->tong_nhap ?? 0),
-                    'tong_ban'         => (int) (($tongKet->tong_nhap ?? 0) - $tongCon),
-                    'tong_huy'         => $tongHuy,
-                    'tong_con'         => $tongCon,
-                    'ty_le_ban'        => round((($tongKet->tong_nhap ?? 0) - $tongCon) / $tongNhap * 100, 2),
-                    'ty_le_huy'        => round($tongHuy / $tongNhap * 100, 2),
-                    'gia_tri_huy'      => round($tongKet->gia_tri_huy ?? 0, 2),
-                    'so_lo'            => (int) ($tongKet->so_lo ?? 0),
-                    'so_lo_het_han'    => (int) ($tongKet->so_lo_het_han ?? 0),
-                    'so_lo_ban_het'    => (int) ($tongKet->so_lo_ban_het ?? 0),
-                    'so_lo_bi_huy'     => (int) ($tongKet->so_lo_huy ?? 0),
-                    'hao_hut_theo_sp'  => $haoHutTheoSP,
+                    'thang'                 => $thang,
+                    'nam'                   => $nam,
+                    'tong_nhap'             => (int) ($tongKet->tong_nhap ?? 0),
+                    'tong_ban'              => (int) (($tongKet->tong_nhap ?? 0) - $tongCon),
+                    'tong_huy'              => $tongHuy,
+                    'tong_con'              => $tongCon,
+                    'ty_le_ban'             => round((($tongKet->tong_nhap ?? 0) - $tongCon) / $tongNhap * 100, 2),
+                    'ty_le_huy'             => round($tongHuy / $tongNhap * 100, 2),
+                    'gia_tri_huy'           => round($tongKet->gia_tri_huy ?? 0, 2),
+                    'so_lo'                 => (int) ($tongKet->so_lo ?? 0),
+                    'so_lo_het_han'         => (int) ($tongKet->so_lo_het_han ?? 0),
+                    'so_lo_ban_het'         => (int) ($tongKet->so_lo_ban_het ?? 0),
+                    'so_lo_bi_huy'          => (int) ($tongKet->so_lo_huy ?? 0),
+                    'hao_hut_theo_sp'       => $formattedHaoHut,
+                    'hao_hut_theo_san_pham' => $formattedHaoHut,
                 ]
             ]);
         } catch (\Throwable $e) {
