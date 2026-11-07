@@ -41,4 +41,11 @@ return [
         'redirect' => env('GOOGLE_REDIRECT_URI'),
     ],
 
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+        'model' => env('GEMINI_MODEL', 'gemini-3.8-flash'),
+        'auto_reply' => env('CHATBOT_AUTO_REPLY', true),
+        'mode' => env('CHATBOT_MODE', 'always'),
+    ],
+
 ];

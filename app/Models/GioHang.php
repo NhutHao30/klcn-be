@@ -2,28 +2,29 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class GioHang extends Model
 {
-    protected $table = 'giohang';
-    protected $primaryKey = 'MAGIOHANG';
-    public $incrementing = false;
-    protected $keyType = 'string';
+    use HasFactory;
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
+
+    protected $table = 'gioHang';
 
     protected $fillable = [
-        'MAGIOHANG',
-        'MAKH',
-        'NGAYTAO',
+        'nguoidungId',
     ];
 
-    public function khachhang()
+    public function nguoiDung()
     {
-        return $this->belongsTo(KhachHang::class, 'MAKH', 'MAKH');
+        return $this->belongsTo(NguoiDung::class, 'nguoidungId');
     }
 
-    public function chitiets()
+    public function chiTiets()
     {
-        return $this->hasMany(ChiTietGioHang::class, 'MAGIOHANG', 'MAGIOHANG');
+        return $this->hasMany(ChiTietGioHang::class, 'gioHangId');
     }
 }

@@ -6,29 +6,22 @@ use Illuminate\Database\Eloquent\Model;
 
 class IdempotencyKey extends Model
 {
-    public $timestamps = false; // Only created_at
+    public $timestamps = true;
 
-    protected $fillable = [
-        'idempotency_key',
-        'USERNAME',
-        'endpoint',
-        'request_hash',
-        'status',
-        'response_code',
-        'response_body',
-        'resource_type',
-        'resource_id',
-        'expires_at',
-        'created_at'
-    ];
+    protected $table = 'idempotencyKeys';
 
-    protected $casts = [
-        'expires_at' => 'datetime',
-        'created_at' => 'datetime',
-    ];
+    protected $guarded = [];
 
-    public function user()
+    public function getTable()
     {
-        return $this->belongsTo(TaiKhoan::class, 'USERNAME', 'USERNAME');
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('idempotencyKeys')) {
+                return 'idempotencyKeys';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('idempotency_keys')) {
+                return 'idempotency_keys';
+            }
+        } catch (\Throwable $e) {}
+        return 'idempotencyKeys';
     }
 }

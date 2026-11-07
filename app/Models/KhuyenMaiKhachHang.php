@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class KhuyenMaiKhachHang extends Model
 {
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
     protected $table = 'khuyenmai_khachhang';
 
     protected $fillable = [

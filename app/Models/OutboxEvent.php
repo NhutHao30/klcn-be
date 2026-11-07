@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class OutboxEvent extends Model
 {
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
     protected $fillable = [
         'event_type',
         'aggregate_type',

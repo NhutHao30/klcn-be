@@ -15,16 +15,27 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->trustProxies(at: '*');
+        $middleware->validateCsrfTokens(except: [
+            '/',
+            'payment/*',
+            'api/*',
+            'shipping/*',
+            'ghn/*',
+        ]);
         
         $middleware->api(append: [
             \App\Http\Middleware\RewriteImageUrls::class,
+            \App\Http\Middleware\UserPresenceMiddleware::class,
+            \App\Http\Middleware\CheckSingleSessionMiddleware::class,
         ]);
         
         $middleware->alias([
+            'resilient.admin' => \App\Http\Middleware\ResilientAdminMiddleware::class,
             'role' => \App\Http\Middleware\CheckRoleMiddleware::class,
             'log.activity' => \App\Http\Middleware\LogActivityMiddleware::class,
             'idempotency' => \App\Http\Middleware\IdempotencyMiddleware::class,
             'request.id' => \App\Http\Middleware\RequestIdMiddleware::class,
+            'feature.lock' => \App\Http\Middleware\CheckFeatureLockMiddleware::class,
         ]);
 
         $middleware->api(prepend: [

@@ -5,209 +5,307 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\SanPham;
-use App\Services\UploadService;
+use App\Models\LichSuGiaSanPham;
+use App\Models\TonKhoChiNhanh;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Redis;
 
 class ProductController extends Controller
 {
-    protected $uploadService;
-
-    public function __construct(?UploadService $uploadService = null)
-    {
-        $this->uploadService = $uploadService;
-    }
-
     /**
-     * Customers & Admins: View product list (Pagination, Filter price, Search name)
+     * View product list
      */
     public function index(Request $request)
     {
-        $query = SanPham::with('loaisanpham');
-
-        // Search by product name (Supports both 'search' and 'keyword')
-        $search = $request->input('search', $request->input('keyword'));
-        if ($search) {
-            $query->where('TENSP', 'like', '%' . $search . '%');
-        }
-
-        // Filter by price range
-        if ($request->has('min_price')) {
-            $query->where('GIABAN', '>=', $request->min_price);
-        }
-
-        if ($request->has('max_price')) {
-            $query->where('GIABAN', '<=', $request->max_price);
-        }
-
-        // Filter by category code (Supports both 'maloai' or 'category')
-        $category = $request->input('maloai', $request->input('category'));
-        if ($category) {
-            $query->where('MALOAI', $category);
-        }
-
-        // Supports sorting by name or price (sortBy and direction)
-        if ($request->has('sortBy')) {
-            $sortBy = $request->input('sortBy');
-            $direction = $request->input('direction', 'asc');
-
-            // Map the correct column names in Laravel.
-            if (strtolower($sortBy) == 'tensp') {
-                $sortBy = 'TENSP';
-            }
-            if (strtolower($sortBy) == 'giaban') {
-                $sortBy = 'GIABAN';
-            }
-
-            $query->orderBy($sortBy, $direction);
-        } else {
-            // Default sorting is latest.
-            $query->orderBy('MASP', 'desc');
-        }
-
-        // Lấy cửa hàng của nhân viên/quản lý đang đăng nhập
-        $maCuaHang = null;
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-
-        // Admin/Nhân viên sẽ được xem cả sản phẩm đã ngừng bán (Soft Deleted)
-        if ($user && in_array($user->MAROLE, [0, 1, 2])) {
-            $query->withTrashed();
-        }
-        if ($user && in_array($user->MAROLE, [0, 1, 2])) {
-            $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-            if ($nhanVien && $nhanVien->MACUAHANG) {
-                $maCuaHang = $nhanVien->MACUAHANG;
+        $user = auth('api')->user();
+        if (!$user) {
+            $token = $request->bearerToken();
+            if ($token) {
+                try {
+                    $user = \Tymon\JWTAuth\Facades\JWTAuth::setToken($token)->toUser();
+                } catch (\Exception $e) {}
             }
         }
 
-        // Caching: Tạo cache key dựa trên tất cả các tham số query và mã cửa hàng
-        $cacheKey = 'products_v2_' . md5(serialize($request->all())) . '_store_' . $maCuaHang;
+        $storeId = $request->input('store_id') ?? $request->input('storeId') ?? $request->input('cuaHangId') ?? $request->input('macuahang');
+        if ($user) {
+            $nd = $user->nguoidung;
+            if ($nd && $nd->cuaHangId && (int)$user->vaiTroId !== 1 && strtolower($user->username) !== 'admin' && (int)$user->vaiTroId !== 8) {
+                // Khóa cứng chi nhánh cho quản lý / nhân viên chi nhánh
+                $storeId = $nd->cuaHangId;
+            }
+        }
 
-        $products = \Illuminate\Support\Facades\Cache::tags(['products'])->remember($cacheKey, 600, function () use ($query, $maCuaHang, $request) {
-            $perPage = (int) $request->input('size', $request->input('limit', $request->input('per_page', 12)));
-            $paginated = $query->paginate($perPage);
+        $targetStoreId = $storeId ? (int)$storeId : null;
 
-            // Bulk fetch stock in ONE single query to avoid N+1 query performance bottleneck
-            $productIds = $paginated->getCollection()->pluck('MASP')->toArray();
-            $allStock = \App\Models\TonKhoCuaHang::with('cuahang')
-                ->whereHas('cuahang', function ($q) {
-                    $q->where('TRANGTHAI', 'Đang hoạt động');
-                })
-                ->whereIn('MASP', $productIds)
-                ->get()
-                ->groupBy('MASP');
+        // Skip cache for authenticated staff/management or when explicit refresh requested
+        $bypassCache = $request->boolean('nocache')
+            || $request->has('_t')
+            || ($user && in_array((int)($user->vaiTroId ?? 0), [1, 2, 3, 4, 7, 8]));
 
-            $paginated->getCollection()->transform(function ($product) use ($maCuaHang, $allStock) {
-                $stockList = $allStock->get($product->MASP, collect());
-                if ($maCuaHang) {
-                    $storeStock = $stockList->firstWhere('MACUAHANG', $maCuaHang);
-                    $stockVal = $storeStock ? (int)$storeStock->SOLUONG_TON : 0;
+        $fetchProducts = function () use ($request, $targetStoreId) {
+            $query = SanPham::with(['loaiSanPham', 'tonKhoChiNhanhs', 'lichSuGias']);
+
+            // Keyword search
+            $keyword = $request->input('keyword') ?? $request->input('search');
+            if (!empty($keyword)) {
+                $trimmed = trim($keyword);
+                $cleanNumeric = preg_replace('/^(SP|#)/i', '', $trimmed);
+                $query->where(function($q) use ($trimmed, $cleanNumeric) {
+                    $q->where('tenSanPham', 'like', '%' . $trimmed . '%')
+                      ->orWhere('id', 'like', '%' . $trimmed . '%')
+                      ->orWhere('slug', 'like', '%' . $trimmed . '%');
+                    if (is_numeric($cleanNumeric)) {
+                        $q->orWhere('id', (int)$cleanNumeric);
+                    }
+                });
+            }
+
+            // Category filter
+            $category = $request->input('category') ?? $request->input('loaiId') ?? $request->input('MALOAI');
+            if (!empty($category)) {
+                if (is_numeric($category)) {
+                    $query->where('loaiId', (int)$category);
                 } else {
-                    $stockVal = (int)$stockList->sum('SOLUONG_TON');
+                    $map = [
+                        'LSP001' => 1, // Bánh Kem
+                        'LSP002' => 2, // Bánh Ngọt
+                        'LSP003' => 3, // Bánh Mì
+                        'LSP004' => 4, // Bánh Khô
+                        'LSP005' => 5, // Bánh Tráng Miệng
+                        'LSP006' => 6, // Bánh Theo Mùa
+                        'LSP007' => 6,
+                    ];
+                    if (isset($map[$category])) {
+                        $query->where('loaiId', $map[$category]);
+                    } else {
+                        $query->whereHas('loaiSanPham', function($q2) use ($category) {
+                            $q2->where('tenLoai', 'like', '%' . $category . '%');
+                        });
+                    }
                 }
+            }
 
-                // Standardize non-negative stock
-                $stockVal = max(0, $stockVal);
-                if ($product->SOLUONG < 0) {
-                    $product->SOLUONG = 0;
+            // Status filter
+            $status = $request->input('status') ?? $request->input('trangThai');
+            if ($status !== null && $status !== '' && $status !== 'all') {
+                if (in_array($status, ['ngung_ban', 'vo_hieu_hoa', 'disabled', '0'], true)) {
+                    $query->where('trangThai', 0);
+                } else if (in_array($status, ['con_hang', 'In Stock', 'in_stock'], true)) {
+                    $query->where('trangThai', 1)->whereHas('tonKhoChiNhanhs', function($q) use ($targetStoreId) {
+                        if ($targetStoreId) {
+                            $q->where('cuaHangId', $targetStoreId)->where('soLuongTon', '>', 0);
+                        } else {
+                            $q->where('soLuongTon', '>', 0);
+                        }
+                    });
+                } else if (in_array($status, ['het_hang', 'Out of Stock', 'out_of_stock'], true)) {
+                    $query->where('trangThai', 1)->where(function($q) use ($targetStoreId) {
+                        if ($targetStoreId) {
+                            $q->whereDoesntHave('tonKhoChiNhanhs', function($q2) use ($targetStoreId) {
+                                q2: $q2->where('cuaHangId', $targetStoreId)->where('soLuongTon', '>', 0);
+                            });
+                        } else {
+                            $q->whereDoesntHave('tonKhoChiNhanhs', function($q2) {
+                                $q2->where('soLuongTon', '>', 0);
+                            });
+                        }
+                    });
+                } else if (in_array($status, ['is_new', 'new', 'IS_NEW'], true)) {
+                    $query->where('trangThai', 1)->where('isNew', 1);
+                } else if (in_array($status, ['giam_gia', 'discount'], true)) {
+                    $latestPriceSub = DB::table('lichSuGiaSanPham as l1')
+                        ->select('l1.sanPhamId')
+                        ->whereIn('l1.id', function($sub) {
+                            $sub->select(DB::raw('MAX(id)'))
+                                ->from('lichSuGiaSanPham')
+                                ->groupBy('sanPhamId');
+                        })
+                        ->where('l1.phanTramGiam', '>', 0);
+
+                    $query->where('trangThai', 1)->whereIn('id', $latestPriceSub);
                 }
+            }
 
-                $product->setAttribute('TONKHO_THUCTE', $stockVal);
+            $perPage = (int) ($request->input('size') ?? $request->input('per_page') ?? 10);
+            $products = $query->orderBy('id', 'desc')->paginate($perPage);
 
-                if (!$maCuaHang) {
-                    $chiTiet = $stockList->map(function ($tk) {
-                        return [
-                            'MACUAHANG' => $tk->MACUAHANG,
-                            'TENCUAHANG' => $tk->cuahang ? $tk->cuahang->TENCUAHANG : 'Chi nhánh ' . $tk->MACUAHANG,
-                            'SOLUONG_TON' => $tk->SOLUONG_TON
-                        ];
-                    })->values()->toArray();
-                    $product->setAttribute('TONKHO_CHITIET', json_encode($chiTiet));
+            $products->getCollection()->transform(function ($p) use ($targetStoreId) {
+                if ($targetStoreId) {
+                    $st = $p->tonKhoChiNhanhs->where('cuaHangId', $targetStoreId)->first();
+                    $qty = $st ? (int)$st->soLuongTon : 0;
+                } else {
+                    $qty = (int)$p->tonKhoChiNhanhs->sum('soLuongTon');
                 }
-                return $product;
+                $p->setAttribute('soLuongTon', $qty);
+                $p->setAttribute('SOLUONG_TON', $qty);
+                $p->setAttribute('TONKHO_THUCTE', $qty);
+                $p->setAttribute('isOutOfStock', $qty <= 0);
+                $p->setAttribute('IS_OUT_OF_STOCK', $qty <= 0);
+                return $p;
             });
 
-            return $paginated->toArray();
-        });
+            $stats = [
+                'total' => SanPham::count(),
+                'active' => SanPham::where('trangThai', 1)->count(),
+                'disabled' => SanPham::where('trangThai', 0)->count(),
+                'outOfStock' => SanPham::where('trangThai', 1)->whereDoesntHave('tonKhoChiNhanhs', function($q) use ($targetStoreId) {
+                    if ($targetStoreId) {
+                        $q->where('cuaHangId', $targetStoreId)->where('soLuongTon', '>', 0);
+                    } else {
+                        $q->where('soLuongTon', '>', 0);
+                    }
+                })->count(),
+            ];
 
-        return response()->json($products);
+            $responseData = $products->toArray();
+            $responseData['stats'] = $stats;
+
+            return $responseData;
+        };
+
+        if ($bypassCache) {
+            $responseData = $fetchProducts();
+        } else {
+            $cacheKey = 'products_list_' . md5(serialize($request->all()) . '_' . ($targetStoreId ?? 'all'));
+            $responseData = Cache::remember($cacheKey, 600, $fetchProducts);
+        }
+
+        return response()->json($responseData);
     }
 
-
     /**
-     * Customer: View product details
+     * View single product
      */
     public function show($id)
     {
-        // Add 'binhluans' if the comment/review table has a link.
-        $product = SanPham::with(['loaisanpham'])->find($id);
+        $cleanId = preg_replace('/^(SP|#)/i', '', trim($id));
+        $cacheKey = 'product_detail_' . $id;
+        $product = Cache::remember($cacheKey, 60, function () use ($id, $cleanId) {
+            $query = SanPham::with(['loaiSanPham', 'tonKhoChiNhanhs.cuahang', 'loai', 'tonkho.cuahang']);
+            if (is_numeric($cleanId)) {
+                $p = $query->find((int)$cleanId);
+                if ($p) return $p->toArray();
+            }
+            $p = $query->where('slug', $id)->first();
+            return $p ? $p->toArray() : null;
+        });
+
         if (!$product) {
             return response()->json(['error' => 'Không tìm thấy sản phẩm'], 404);
         }
 
-        $maCuaHang = null;
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if ($user && in_array($user->MAROLE, [0, 1, 2])) {
-            $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-            if ($nhanVien && $nhanVien->MACUAHANG) {
-                $maCuaHang = $nhanVien->MACUAHANG;
+        // Tình trạng còn hàng tại các chi nhánh (chỉ cho biết trạng thái còn hàng/hết hàng, không hiển thị số lượng tồn kho)
+        try {
+            $stores = \App\Models\CuaHang::where('trangThai', 1)->get();
+            $existingStocks = $product['tonKhoChiNhanhs'] ?? $product['tonkho'] ?? [];
+            $stockMap = [];
+            foreach ($existingStocks as $st) {
+                $cId = $st['cuaHangId'] ?? $st['cuahang_id'] ?? ($st['cuahang']['id'] ?? 0);
+                if ($cId) {
+                    $stockMap[$cId] = (int)($st['soLuongTon'] ?? $st['so_luong_ton'] ?? 0);
+                }
             }
-        }
 
-        $product->setAttribute('TONKHO_THUCTE', $this->calculateStock($product->MASP, $maCuaHang));
-        if (!$maCuaHang) {
-            $chiTiet = \App\Models\TonKhoCuaHang::with('cuahang')
-                ->whereHas('cuahang', function ($q) {
-                    $q->where('TRANGTHAI', 'Đang hoạt động');
-                })
-                ->where('MASP', $product->MASP)
-                ->get()
-                ->map(function ($tk) {
-                    return [
-                        'MACUAHANG' => $tk->MACUAHANG,
-                        'TENCUAHANG' => $tk->cuahang ? $tk->cuahang->TENCUAHANG : 'Chi nhánh ' . $tk->MACUAHANG,
-                        'SOLUONG_TON' => $tk->SOLUONG_TON
-                    ];
-                })->toArray();
-            $product->setAttribute('TONKHO_CHITIET', json_encode($chiTiet));
+            $branchAvailability = [];
+            $hasAnyStock = false;
+            foreach ($stores as $store) {
+                $qty = $stockMap[$store->id] ?? 0;
+                $inStock = $qty > 0;
+                if ($inStock) $hasAnyStock = true;
+
+                $branchAvailability[] = [
+                    'cuaHangId' => $store->id,
+                    'tenCuaHang' => $store->tenCuaHang,
+                    'diaChi' => $store->diaChiChiTiet ?? '',
+                    'soDienThoai' => $store->soDienThoai ?? '',
+                    'conHang' => $inStock,
+                    'trangThaiText' => $inStock ? 'Còn hàng' : 'Tạm hết'
+                ];
+            }
+            $product['branchAvailability'] = $branchAvailability;
+            $product['isOutOfStock'] = !$hasAnyStock;
+        } catch (\Throwable $eBr) {
+            $product['branchAvailability'] = [];
         }
 
         return response()->json($product);
     }
 
     /**
-     * Admin: Add new products (Includes image upload feature to MinIO)
+     * Admin: Add new product
      */
     public function store(Request $request)
     {
-        $request->validate([
-            'MASP' => 'required|string|unique:sanpham,MASP',
-            'MALOAI' => 'required|exists:loaisanpham,MALOAI',
-            'TENSP' => 'required|string|unique:sanpham,TENSP',
-            'GIABAN' => 'required|numeric|min:0',
-            'SOLUONG' => 'nullable|numeric|min:0',
-            'DVT' => 'required|string',
-            'GHICHU' => 'nullable|string',
-            'HINHANH' => 'required|image|mimes:jpeg,png,jpg,webp|max:2048',
-            'IS_NEW' => 'nullable|boolean',
-            'PHAN_TRAM_GIAM' => 'nullable|integer|min:0|max:100'
+        $request->merge([
+            'tenSanPham' => $request->input('tenSanPham') ?? $request->input('TENSP') ?? $request->input('TenSP') ?? $request->input('tenSP'),
+            'loaiId' => $request->input('loaiId') ?? $request->input('MALOAI') ?? $request->input('LOAISP') ?? $request->input('loaiSP'),
+            'giaBan' => $request->input('giaBan') ?? $request->input('GIABAN') ?? $request->input('giaBan'),
+            'donViTinh' => $request->input('donViTinh') ?? $request->input('DVT') ?? $request->input('donViTinh') ?? 'Cái',
+            'moTa' => $request->input('moTa') ?? $request->input('GHICHU') ?? $request->input('moTa') ?? $request->input('GhiChu'),
         ]);
 
-        // Upload photos to MinIO via UploadService
-        $imageUrl = $this->uploadService->uploadImage($request->file('HINHANH'), 'products');
-
-        $product = SanPham::create([
-            'MASP' => $request->MASP,
-            'MALOAI' => $request->MALOAI,
-            'TENSP' => $request->TENSP,
-            'GIABAN' => $request->GIABAN,
-            'DVT' => $request->DVT,
-            'GHICHU' => $request->GHICHU,
-            'HINHANH' => $imageUrl,
-            'SOLUONG' => $request->input('SOLUONG', 0), // Get the quantity from the form, the default is 0.
-            'IS_NEW' => $request->boolean('IS_NEW', false),
-            'PHAN_TRAM_GIAM' => $request->input('PHAN_TRAM_GIAM', 0)
+        $validated = $request->validate([
+            'tenSanPham' => 'required|string|max:150',
+            'loaiId' => 'required|exists:loaiSanPham,id',
+            'giaBan' => 'required|numeric|min:0',
+            'donViTinh' => 'required|string',
+            'moTa' => 'nullable|string',
+            'hinhAnh' => 'nullable|string',
         ]);
 
-        \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
+        if ($request->hasFile('HINHANH') || $request->hasFile('hinhAnh') || $request->hasFile('hinh_anh_file')) {
+            $file = $request->file('HINHANH') ?? $request->file('hinhAnh') ?? $request->file('hinh_anh_file');
+            try {
+                $hinhAnhPath = \Illuminate\Support\Facades\Storage::disk('s3')->putFile('products', $file);
+            } catch (\Exception $e) {
+                $filename = time() . '_' . $file->getClientOriginalName();
+                $file->move(public_path('assets/IMG'), $filename);
+                $hinhAnhPath = '/assets/IMG/' . $filename;
+            }
+        } else {
+            $hinhAnhPath = $request->input('hinhAnh') ?? $request->input('HINHANH') ?? '/assets/IMG/productnew2.webp';
+        }
+
+        $slug = \Illuminate\Support\Str::slug($validated['tenSanPham']) . '-' . time();
+        $isNewInput = $request->input('IS_NEW') ?? $request->input('isNew') ?? $request->input('is_new');
+        $isNewVal = ($isNewInput == '1' || $isNewInput === 'true' || $isNewInput === true) ? 1 : 0;
+
+        $createData = [
+            'tenSanPham' => $validated['tenSanPham'],
+            'slug' => $slug,
+            'loaiId' => $validated['loaiId'],
+            'giaBan' => $validated['giaBan'],
+            'donViTinh' => $validated['donViTinh'],
+            'moTa' => $validated['moTa'] ?? '',
+            'hinhAnh' => $hinhAnhPath,
+            'trangThai' => 1,
+        ];
+
+        if (\Illuminate\Support\Facades\Schema::hasColumn('sanPham', 'isNew') || \Illuminate\Support\Facades\Schema::hasColumn('san_pham', 'isNew')) {
+            $createData['isNew'] = $isNewVal;
+        }
+
+        $product = SanPham::create($createData);
+
+        $phanTramGiam = (float) ($request->input('PHAN_TRAM_GIAM') ?? $request->input('phanTramGiam') ?? $request->input('phan_tram_giam') ?? 0);
+
+        // Ghi nhận lịch sử giá ban đầu
+        try {
+            LichSuGiaSanPham::create([
+                'sanPhamId' => $product->id,
+                'giaCu' => null,
+                'giaMoi' => $validated['giaBan'],
+                'phanTramGiam' => max(0, $phanTramGiam),
+                'lyDo' => $phanTramGiam > 0 ? "Khởi tạo sản phẩm với giảm giá {$phanTramGiam}%" : 'Khởi tạo sản phẩm mới',
+                'ngayApDung' => now(),
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("LichSuGia create error: " . $e->getMessage());
+        }
+
+        self::clearProductCache();
 
         return response()->json(['message' => 'Thêm sản phẩm thành công', 'data' => $product], 201);
     }
@@ -222,91 +320,69 @@ class ProductController extends Controller
             return response()->json(['error' => 'Không tìm thấy sản phẩm'], 404);
         }
 
-        $request->validate([
-            'MALOAI' => 'required|exists:loaisanpham,MALOAI',
-            'TENSP' => 'required|string|unique:sanpham,TENSP,' . $id . ',MASP',
-            'GIABAN' => 'required|numeric|min:0',
-            'SOLUONG' => 'nullable|numeric|min:0',
-            'DVT' => 'required|string',
-            'GHICHU' => 'nullable|string',
-            'HINHANH' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
-            'IS_NEW' => 'nullable|boolean',
-            'PHAN_TRAM_GIAM' => 'nullable|integer|min:0|max:100'
+        $request->merge([
+            'tenSanPham' => $request->input('tenSanPham') ?? $request->input('TENSP') ?? $request->input('TenSP') ?? $product->tenSanPham,
+            'loaiId' => $request->input('loaiId') ?? $request->input('MALOAI') ?? $request->input('LOAISP') ?? $product->loaiId,
+            'giaBan' => $request->input('giaBan') ?? $request->input('GIABAN') ?? $product->giaBan,
+            'donViTinh' => $request->input('donViTinh') ?? $request->input('DVT') ?? $product->donViTinh,
+            'moTa' => $request->input('moTa') ?? $request->input('GHICHU') ?? $product->moTa,
         ]);
 
-        $dataUpdate = $request->except('HINHANH', 'SOLUONG');
+        $validated = $request->validate([
+            'tenSanPham' => 'sometimes|required|string|max:150',
+            'loaiId' => 'sometimes|required|exists:loaiSanPham,id',
+            'giaBan' => 'sometimes|required|numeric|min:0',
+            'donViTinh' => 'sometimes|required|string',
+            'moTa' => 'nullable|string',
+            'hinhAnh' => 'nullable|string',
+        ]);
 
-        // Handle boolean conversion explicitly for IS_NEW
-        if ($request->has('IS_NEW')) {
-            $dataUpdate['IS_NEW'] = $request->boolean('IS_NEW');
-        }
-
-        // If you upload new photos
-        if ($request->hasFile('HINHANH')) {
-            // Delete old photos on MinIO
-            $this->uploadService->deleteImage($product->HINHANH);
-            // Upload new photos
-            $dataUpdate['HINHANH'] = $this->uploadService->uploadImage($request->file('HINHANH'), 'products');
-        }
-
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $auditUsername = $user ? $user->USERNAME : null;
-        if ($auditUsername) {
-            \Illuminate\Support\Facades\DB::statement("SET @audit_username = '{$auditUsername}'");
-        } else {
-            \Illuminate\Support\Facades\DB::statement("SET @audit_username = NULL");
-        }
-
-        $product->update($dataUpdate);
-
-        // Cập nhật tồn kho chi nhánh
-        if ($request->has('SOLUONG')) {
-            $maCuaHang = 1;
-            $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-            if ($user && in_array($user->MAROLE, [0, 1, 2])) {
-                $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-                if ($nhanVien && $nhanVien->MACUAHANG) {
-                    $maCuaHang = $nhanVien->MACUAHANG;
-                }
+        if ($request->hasFile('HINHANH') || $request->hasFile('hinhAnh') || $request->hasFile('hinh_anh_file')) {
+            $file = $request->file('HINHANH') ?? $request->file('hinhAnh') ?? $request->file('hinh_anh_file');
+            try {
+                $validated['hinhAnh'] = \Illuminate\Support\Facades\Storage::disk('s3')->putFile('products', $file);
+            } catch (\Exception $e) {
+                $filename = time() . '_' . $file->getClientOriginalName();
+                $file->move(public_path('assets/IMG'), $filename);
+                $validated['hinhAnh'] = '/assets/IMG/' . $filename;
             }
-            // Do bảng TonKhoCuaHang không có khóa chính đơn (composite key),
-            // nên không thể dùng phương thức update() của Eloquent Model, sẽ làm cập nhật toàn bộ bảng.
-            // Phải dùng Query Builder:
-            $exists = \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                        ->where('MACUAHANG', $maCuaHang)
-                        ->where('MASP', $id)
-                        ->exists();
+        }
 
-            $auditUsername = $user ? $user->USERNAME : null;
-            if ($auditUsername) {
-                \Illuminate\Support\Facades\DB::statement("SET @audit_username = '{$auditUsername}'");
-            } else {
-                \Illuminate\Support\Facades\DB::statement("SET @audit_username = NULL");
-            }
-            \Illuminate\Support\Facades\DB::statement("SET @inv_type = 'ADJUSTMENT'");
-            \Illuminate\Support\Facades\DB::statement("SET @inv_ref_id = '{$id}'");
+        $isNewInput = $request->input('IS_NEW') ?? $request->input('isNew') ?? $request->input('is_new');
+        if ($isNewInput !== null && (\Illuminate\Support\Facades\Schema::hasColumn('sanPham', 'isNew') || \Illuminate\Support\Facades\Schema::hasColumn('san_pham', 'isNew'))) {
+            $validated['isNew'] = ($isNewInput == '1' || $isNewInput === 'true' || $isNewInput === true) ? 1 : 0;
+        }
 
-            if ($exists) {
-                \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                    ->where('MACUAHANG', $maCuaHang)
-                    ->where('MASP', $id)
-                    ->update(['SOLUONG_TON' => $request->SOLUONG]);
-            } else {
-                \Illuminate\Support\Facades\DB::table('tonkho_cuahang')->insert([
-                    'MACUAHANG' => $maCuaHang,
-                    'MASP' => $id,
-                    'SOLUONG_TON' => $request->SOLUONG
+        $oldPrice = $product->giaBan;
+        $product->update($validated);
+
+        $phanTramGiamInput = $request->input('PHAN_TRAM_GIAM') ?? $request->input('phanTramGiam') ?? $request->input('phan_tram_giam');
+
+        if ($phanTramGiamInput !== null || (isset($validated['giaBan']) && $validated['giaBan'] != $oldPrice)) {
+            $newPrice = isset($validated['giaBan']) ? (float)$validated['giaBan'] : (float)$product->giaBan;
+            $discountPct = $phanTramGiamInput !== null ? (float)$phanTramGiamInput : ($oldPrice > 0 && $newPrice < $oldPrice ? round((($oldPrice - $newPrice) / $oldPrice) * 100, 2) : 0);
+
+            try {
+                LichSuGiaSanPham::create([
+                    'sanPhamId' => $product->id,
+                    'giaCu' => $oldPrice,
+                    'giaMoi' => $newPrice,
+                    'phanTramGiam' => max(0, $discountPct),
+                    'lyDo' => $request->ly_do_doi_gia ?? ($discountPct > 0 ? "Điều chỉnh % giảm giá: {$discountPct}%" : 'Điều chỉnh giá bán'),
+                    'ngayApDung' => now(),
                 ]);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("LichSuGia create error: " . $e->getMessage());
             }
         }
 
-        \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
+        self::clearProductCache($id);
 
         return response()->json(['message' => 'Cập nhật sản phẩm thành công', 'data' => $product]);
     }
 
     /**
-     * Admin: delete product
+     * Admin: Disable product
      */
     public function destroy($id)
     {
@@ -315,246 +391,109 @@ class ProductController extends Controller
             return response()->json(['error' => 'Không tìm thấy sản phẩm'], 404);
         }
 
-        try {
-            $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-            $auditUsername = $user ? $user->USERNAME : null;
-            if ($auditUsername) {
-                \Illuminate\Support\Facades\DB::statement("SET @audit_username = '{$auditUsername}'");
-            } else {
-                \Illuminate\Support\Facades\DB::statement("SET @audit_username = NULL");
-            }
-            // Không xóa bảng dữ liệu liên quan để giữ lịch sử, chỉ thực hiện vô hiệu hóa (Soft Delete)
-            $product->delete();
-
-            \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
-
-            return response()->json(['message' => 'Đã vô hiệu hóa (Ngừng bán) sản phẩm']);
-        } catch (\Exception $e) {
-            return response()->json(['message' => 'Lỗi khi vô hiệu hóa: ' . $e->getMessage()], 500);
-        }
+        $product->update(['trangThai' => 0]);
+        self::clearProductCache($id);
+        return response()->json(['message' => 'Đã ngừng kinh doanh sản phẩm']);
     }
 
     /**
-     * Admin: Khôi phục sản phẩm đã bị vô hiệu hóa
+     * Admin: Restore product
      */
     public function restore($id)
     {
-        $product = SanPham::withTrashed()->find($id);
+        $product = SanPham::find($id);
         if (!$product) {
             return response()->json(['error' => 'Không tìm thấy sản phẩm'], 404);
         }
 
-        try {
-            $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-            $auditUsername = $user ? $user->USERNAME : null;
-            if ($auditUsername) {
-                \Illuminate\Support\Facades\DB::statement("SET @audit_username = '{$auditUsername}'");
-            } else {
-                \Illuminate\Support\Facades\DB::statement("SET @audit_username = NULL");
-            }
-            $product->restore();
-            \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
-            return response()->json(['message' => 'Đã kích hoạt lại sản phẩm']);
-        } catch (\Exception $e) {
-            return response()->json(['message' => 'Lỗi khi kích hoạt lại: ' . $e->getMessage()], 500);
-        }
-    }
-
-    public function calculateStock($masp, $maCuaHang = null)
-    {
-        $today = \Carbon\Carbon::today();
-
-        // Tự động quét và loại trừ lô hết hạn nếu có
-        try {
-            (new \App\Services\LoHangService)->autoExpireLo();
-        } catch (\Exception $e) {}
-
-        if ($maCuaHang) {
-            $hasLoHang = \App\Models\LoHang::where('MASP', $masp)->where('MACUAHANG', $maCuaHang)->exists();
-            if ($hasLoHang) {
-                return (int) \App\Models\LoHang::where('MASP', $masp)
-                    ->where('MACUAHANG', $maCuaHang)
-                    ->where('TRANGTHAI', 'con_hang')
-                    ->where('HSD', '>=', $today)
-                    ->where('SOLUONG_CON', '>', 0)
-                    ->sum('SOLUONG_CON');
-            }
-            $tonKho = \App\Models\TonKhoCuaHang::where('MASP', $masp)->where('MACUAHANG', $maCuaHang)->first();
-            return $tonKho ? $tonKho->SOLUONG_TON : 0;
-        }
-
-        $hasLoHang = \App\Models\LoHang::where('MASP', $masp)->exists();
-        if ($hasLoHang) {
-            $activeStores = \App\Models\CuaHang::where('TRANGTHAI', 'Đang hoạt động')->pluck('MACUAHANG');
-            if ($activeStores->isEmpty()) {
-                return 0;
-            }
-
-            $maxStock = \App\Models\LoHang::selectRaw('MACUAHANG, SUM(SOLUONG_CON) as total_con')
-                ->where('MASP', $masp)
-                ->whereIn('MACUAHANG', $activeStores)
-                ->where('TRANGTHAI', 'con_hang')
-                ->where('HSD', '>=', $today)
-                ->where('SOLUONG_CON', '>', 0)
-                ->groupBy('MACUAHANG')
-                ->orderByDesc('total_con')
-                ->value('total_con');
-
-            return (int) ($maxStock ?? 0);
-        }
-
-        $maxStock = \App\Models\TonKhoCuaHang::whereHas('cuahang', function ($q) {
-            $q->where('TRANGTHAI', 'Đang hoạt động');
-        })->where('MASP', $masp)->max('SOLUONG_TON');
-        return $maxStock ? $maxStock : 0;
+        $product->update(['trangThai' => 1]);
+        self::clearProductCache($id);
+        return response()->json(['message' => 'Đã kích hoạt lại sản phẩm']);
     }
 
     /**
-     * Homepage: Top 8 sản phẩm được mua nhiều nhất (dựa trên tổng số lượng bán trong chi tiết hóa đơn)
+     * Get price history
+     */
+    public function getPriceHistory($id)
+    {
+        $history = LichSuGiaSanPham::where('sanPhamId', $id)->orderBy('createdAt', 'desc')->get();
+        return response()->json($history);
+    }
+
+    /**
+     * Get best selling products
      */
     public function getBestSellers()
     {
-        $bestSellers = \Illuminate\Support\Facades\DB::table('chitiethdban')
-            ->select('chitiethdban.MASP', \Illuminate\Support\Facades\DB::raw('SUM(chitiethdban.SOLUONG) as TONG_BAN'))
-            ->join('sanpham', 'sanpham.MASP', '=', 'chitiethdban.MASP')
-            ->whereNull('sanpham.deleted_at')
-            ->groupBy('chitiethdban.MASP')
-            ->orderByDesc('TONG_BAN')
-            ->limit(8)
-            ->pluck('chitiethdban.MASP')
-            ->toArray();
-
-        if (empty($bestSellers)) {
-            // Nếu chưa có đơn hàng nào, trả về 8 sản phẩm mới nhất làm mặc định
-            $products = SanPham::with('loaisanpham')->orderByDesc('created_at')->limit(8)->get();
-        } else {
-            $products = SanPham::with('loaisanpham')
-                ->whereIn('MASP', $bestSellers)
+        $products = Cache::remember('products_bestsellers', 1800, function () {
+            return SanPham::where('trangThai', 1)
+                ->with(['loaiSanPham', 'tonKhoChiNhanhs'])
+                ->orderBy('id', 'desc')
+                ->take(8)
                 ->get()
-                ->sortBy(function ($product) use ($bestSellers) {
-                    return array_search($product->MASP, $bestSellers);
-                })->values();
-        }
-
-        // Thêm thông tin tồn kho cho từng sản phẩm
-        $products->each(function ($product) {
-            $product->setAttribute('TONKHO_THUCTE', $this->calculateStock($product->MASP));
-            $chiTiet = \App\Models\TonKhoCuaHang::with('cuahang')
-                ->whereHas('cuahang', function ($q) {
-                    $q->where('TRANGTHAI', 'Đang hoạt động');
-                })
-                ->where('MASP', $product->MASP)
-                ->get()
-                ->map(function ($tk) {
-                    return [
-                        'MACUAHANG' => $tk->MACUAHANG,
-                        'TENCUAHANG' => $tk->cuahang ? $tk->cuahang->TENCUAHANG : 'Chi nhánh ' . $tk->MACUAHANG,
-                        'SOLUONG_TON' => $tk->SOLUONG_TON
-                    ];
-                })->toArray();
-            $product->setAttribute('TONKHO_CHITIET', json_encode($chiTiet));
+                ->toArray();
         });
-
         return response()->json($products);
     }
 
     /**
-     * Homepage: Lấy sản phẩm theo nhóm cho trang chủ
-     * - discounted: Sản phẩm có giảm giá (PHAN_TRAM_GIAM > 0)
-     * - newest: Sản phẩm có tag mới (IS_NEW = true)
-     * - expensive: Top 8 sản phẩm có giá cao nhất
+     * Get homepage grouped products
      */
     public function getHomepageProducts()
     {
-        // Sản phẩm đang giảm giá
-        $discounted = SanPham::with('loaisanpham')
-            ->where('PHAN_TRAM_GIAM', '>', 0)
-            ->orderByDesc('PHAN_TRAM_GIAM')
-            ->limit(8)
-            ->get();
+        $data = Cache::remember('products_homepage', 1800, function () {
+            $products = SanPham::where('trangThai', 1)
+                ->with(['loaiSanPham', 'tonKhoChiNhanhs'])
+                ->get();
 
-        // Sản phẩm mới (tag IS_NEW)
-        $newest = SanPham::with('loaisanpham')
-            ->where('IS_NEW', true)
-            ->orderByDesc('created_at')
-            ->limit(8)
-            ->get();
+            $discounted = $products->filter(function ($p) {
+                return ($p->phanTramGiam ?? 0) > 0;
+            })->values()->take(8);
 
-        // Top 8 sản phẩm bán chạy nhất dựa trên tổng số lượng bán
-        $bestSellersIds = \Illuminate\Support\Facades\DB::table('chitiethdban')
-            ->select('chitiethdban.MASP', \Illuminate\Support\Facades\DB::raw('SUM(chitiethdban.SOLUONG) as TONG_BAN'))
-            ->join('sanpham', 'sanpham.MASP', '=', 'chitiethdban.MASP')
-            ->whereNull('sanpham.deleted_at')
-            ->groupBy('chitiethdban.MASP')
-            ->orderByDesc('TONG_BAN')
-            ->limit(8)
-            ->pluck('chitiethdban.MASP')
-            ->toArray();
+            if ($discounted->isEmpty()) {
+                $discounted = $products->take(8);
+            }
 
-        if (empty($bestSellersIds)) {
-            $bestSellers = SanPham::with('loaisanpham')->orderByDesc('created_at')->limit(8)->get();
-        } else {
-            $bestSellers = SanPham::with('loaisanpham')
-                ->whereIn('MASP', $bestSellersIds)
-                ->get()
-                ->sortBy(function ($product) use ($bestSellersIds) {
-                    return array_search($product->MASP, $bestSellersIds);
-                })->values();
-        }
+            $newest = $products->sortByDesc('createdAt')->values()->take(8);
+            $expensive = $products->sortByDesc('giaBan')->values()->take(8);
 
-        // Bulk fetch stock for homepage products to avoid N+1 query overhead
-        $allProducts = collect()->merge($discounted)->merge($newest)->merge($bestSellers)->unique('MASP');
-        $productIds = $allProducts->pluck('MASP')->toArray();
-        $allStock = \App\Models\TonKhoCuaHang::with('cuahang')
-            ->whereHas('cuahang', function ($q) {
-                $q->where('TRANGTHAI', 'Đang hoạt động');
-            })
-            ->whereIn('MASP', $productIds)
-            ->get()
-            ->groupBy('MASP');
-
-        $allProducts->each(function ($product) use ($allStock) {
-            $stockList = $allStock->get($product->MASP, collect());
-            $product->setAttribute('TONKHO_THUCTE', (int)$stockList->sum('SOLUONG_TON'));
-            $chiTiet = $stockList->map(function ($tk) {
-                return [
-                    'MACUAHANG' => $tk->MACUAHANG,
-                    'TENCUAHANG' => $tk->cuahang ? $tk->cuahang->TENCUAHANG : 'Chi nhánh ' . $tk->MACUAHANG,
-                    'SOLUONG_TON' => $tk->SOLUONG_TON
-                ];
-            })->values()->toArray();
-            $product->setAttribute('TONKHO_CHITIET', json_encode($chiTiet));
+            return [
+                'discounted' => $discounted->values()->toArray(),
+                'newest' => $newest->values()->toArray(),
+                'expensive' => $expensive->values()->toArray(),
+            ];
         });
 
-        return response()->json([
-            'discounted' => $discounted->values(),
-            'newest' => $newest->values(),
-            'bestSellers' => $bestSellers->values(),
-            'expensive' => $bestSellers->values()
-        ]);
+        return response()->json($data);
     }
 
     /**
-     * Lấy lịch sử biến động giá của sản phẩm
+     * Clear all product-related Redis caches
      */
-    public function getPriceHistory($masp)
+    public static function clearProductCache($productId = null)
     {
-        $product = SanPham::find($masp);
-        if (!$product) {
-            return response()->json(['error' => 'Không tìm thấy sản phẩm'], 404);
+        try {
+            Cache::flush();
+        } catch (\Throwable $e) {}
+
+        try {
+            Cache::forget('products_homepage');
+            Cache::forget('products_bestsellers');
+            if ($productId) {
+                Cache::forget('product_detail_' . $productId);
+            }
+        } catch (\Throwable $e) {}
+
+        try {
+            $redis = Redis::connection('cache');
+            $prefix = config('database.redis.options.prefix', 'laravel-database-');
+            $keys = $redis->keys('*products_list_*');
+            foreach ($keys as $k) {
+                $rawKey = str_starts_with($k, $prefix) ? substr($k, strlen($prefix)) : $k;
+                $redis->del($rawKey);
+            }
+        } catch (\Throwable $e) {
+            // Silently ignore cache clearing errors
         }
-
-        $history = \App\Models\LichSuGiaSanPham::with('nhanvien')
-            ->where('MASP', $masp)
-            ->orderBy('created_at', 'desc')
-            ->get();
-
-        return response()->json([
-            'masp' => $product->MASP,
-            'tensp' => $product->TENSP,
-            'gia_hien_tai' => $product->GIABAN,
-            'phan_tram_giam_hien_tai' => $product->PHAN_TRAM_GIAM ?? 0,
-            'history' => $history
-        ]);
     }
 }

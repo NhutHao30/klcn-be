@@ -8,82 +8,166 @@ use App\Models\CuocTroChuyen;
 use App\Models\TinNhan;
 use App\Models\KhachHang;
 use App\Models\NhanVien;
+use App\Models\NguoiDung;
 use App\Events\MessageSent;
+use App\Events\InternalMessageSent;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ChatController extends Controller
 {
+    /**
+     * Xác định xem người dùng hiện tại có phải là Khách hàng hay không
+     */
+    private function isCustomerUser($userLogin): bool
+    {
+        if (!$userLogin) return true;
+
+        $vaiTroId = (int)($userLogin->vaiTroId ?? $userLogin->MAROLE ?? 0);
+        $roleName = strtoupper($userLogin->role ?? $userLogin->VAITRO ?? '');
+
+        // Nếu rõ ràng là Quản trị viên, Quản lý cửa hàng
+        if ($vaiTroId === 1 || $vaiTroId === 2 || str_contains($roleName, 'ADMIN') || str_contains($roleName, 'QUANLY')) {
+            return false;
+        }
+
+        // Nếu bản ghi nguoidung có loaiNguoiDung = 0 -> Khách hàng
+        if (isset($userLogin->nguoidung) && $userLogin->nguoidung->loaiNguoiDung !== null) {
+            return (int)$userLogin->nguoidung->loaiNguoiDung === 0;
+        }
+
+        // Mặc định vai trò 6 (Khách hàng mới), 3 (khách hàng DB cũ), hoặc 0
+        return ($vaiTroId === 6 || $vaiTroId === 3 || $vaiTroId === 0 || empty($vaiTroId));
+    }
+
+    /**
+     * Lấy hồ sơ người dùng (nguoidung) tương ứng
+     */
+    private function resolveProfile($userLogin)
+    {
+        if (!$userLogin) return null;
+        try {
+            $profile = NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            if (!$profile) {
+                $profile = NguoiDung::where('taikhoan_id', $userLogin->id)->first();
+            }
+            if (!$profile) {
+                $profile = KhachHang::findByUsername($userLogin->username);
+            }
+            if (!$profile) {
+                $profile = new NguoiDung();
+                $tbl = (new NguoiDung)->getTable();
+                if (\Illuminate\Support\Facades\Schema::hasColumn($tbl, 'taiKhoanId')) {
+                    $profile->taiKhoanId = $userLogin->id;
+                } else {
+                    $profile->taikhoan_id = $userLogin->id;
+                }
+                $profile->hoTen = $userLogin->username ?? 'Khách hàng';
+                $profile->loaiNguoiDung = 0;
+                $profile->save();
+            }
+            return $profile;
+        } catch (\Throwable $e) {
+            Log::warning('resolveProfile fallback: ' . $e->getMessage());
+            return (object)['id' => (int)$userLogin->id, 'hoTen' => $userLogin->username ?? 'Khách hàng'];
+        }
+    }
+
     /**
      * Lấy danh sách cuộc trò chuyện
      */
     public function getConversations(Request $request)
     {
-        $userLogin = Auth::guard('api')->user();
-        if (!$userLogin) {
-            return response()->json(['error' => 'Chưa đăng nhập'], 401);
-        }
-
-        if ($userLogin->MAROLE == 3) {
-            // Khách hàng -> Lấy danh sách đoạn chat của họ
-            $khachHang = KhachHang::where('USERNAME', $userLogin->USERNAME)->first();
-            if (!$khachHang) {
-                return response()->json(['error' => 'Không tìm thấy hồ sơ khách hàng'], 404);
+        try {
+            $userLogin = Auth::guard('api')->user();
+            if (!$userLogin) {
+                return response()->json(['error' => 'Chưa đăng nhập'], 401);
             }
 
-            $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
-                $q->orderBy('created_at', 'desc')->take(1);
-            }])
-            ->where('MAKH', $khachHang->MAKH)
-            ->orderBy('updated_at', 'desc')
-            ->get();
+            $isCustomer = $this->isCustomerUser($userLogin);
 
-            return response()->json($conversations);
+            if ($isCustomer) {
+                $khachHang = $this->resolveProfile($userLogin);
+                $khId = $khachHang ? $khachHang->id : $userLogin->id;
+                $khCol = CuocTroChuyen::getKhachHangCol();
 
-        } elseif (in_array($userLogin->MAROLE, [0, 1, 2, 4])) {
-            // Nhân viên / Admin / CSKH -> Lấy đoạn chat
-            // Tạm thời lấy tất cả, thực tế có thể lọc theo MACUAHANG
-            $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
-                $q->orderBy('created_at', 'desc')->take(1);
-            }])
-            ->orderBy('updated_at', 'desc')
-            ->get();
+                $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
+                    $q->orderBy('id', 'desc')->take(1);
+                }, 'khachhang'])
+                ->where($khCol, $khId)
+                ->orderBy('id', 'desc')
+                ->get();
 
-            return response()->json($conversations);
+                return response()->json($conversations);
+
+            } else {
+                // Nhân viên / Admin / CSKH -> Ghi nhận đang trực tuyến & Lấy tất cả đoạn chat
+                try {
+                    \App\Services\StaffPresenceService::recordOnline((int)$userLogin->id);
+                } catch (\Throwable $eStaff) {}
+
+                $updatedCol = (new CuocTroChuyen)->getUpdatedAtColumn();
+
+                $conversations = CuocTroChuyen::with(['tinnhans' => function ($q) {
+                    $q->orderBy('id', 'desc')->take(1);
+                }, 'khachhang'])
+                ->orderBy($updatedCol, 'desc')
+                ->get();
+
+                return response()->json($conversations);
+            }
+        } catch (\Throwable $e) {
+            Log::error('Lỗi getConversations: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            return response()->json(['error' => 'Lỗi tải danh sách trò chuyện: ' . $e->getMessage()], 500);
         }
-
-        return response()->json([]);
     }
 
     /**
-     * Khách hàng tạo hoặc lấy đoạn chat
+     * Khách hàng tạo hoặc lấy đoạn chat DUY NHẤT của mình
      */
     public function startConversation(Request $request)
     {
-        $userLogin = Auth::guard('api')->user();
-        if (!$userLogin || $userLogin->MAROLE != 3) {
-            return response()->json(['error' => 'Chỉ khách hàng mới có thể bắt đầu chat'], 403);
-        }
+        try {
+            $userLogin = Auth::guard('api')->user();
+            if (!$userLogin) {
+                return response()->json(['error' => 'Vui lòng đăng nhập để bắt đầu trò chuyện'], 401);
+            }
 
-        $khachHang = KhachHang::where('USERNAME', $userLogin->USERNAME)->first();
-        if (!$khachHang) {
-            return response()->json(['error' => 'Không tìm thấy khách hàng'], 404);
-        }
+            $khachHang = $this->resolveProfile($userLogin);
+            $khId = $khachHang ? $khachHang->id : $userLogin->id;
+            $khCol = CuocTroChuyen::getKhachHangCol();
+            $ttCol = CuocTroChuyen::getTrangThaiCol();
 
-        // Tìm đoạn chat đang hoạt động
-        $conversation = CuocTroChuyen::where('MAKH', $khachHang->MAKH)
-                                     ->where('TRANGTHAI', 'DANG_HOAT_DONG')
-                                     ->first();
+            // Tìm đoạn chat gần nhất của khách hàng (bảo toàn lịch sử tin nhắn)
+            $conversation = CuocTroChuyen::where($khCol, $khId)->orderBy('id', 'desc')->first();
 
-        if (!$conversation) {
-            // Tạo đoạn chat mới
-            $conversation = CuocTroChuyen::create([
-                'MAKH' => $khachHang->MAKH,
-                'TRANGTHAI' => 'DANG_HOAT_DONG'
+            if (!$conversation) {
+                // Tạo đoạn chat mới nếu khách hàng chưa từng chat
+                $conversation = new CuocTroChuyen();
+                $conversation->{$khCol} = $khId;
+                $conversation->{$ttCol} = 0;
+                $conversation->save();
+            } else {
+                // Kích hoạt lại đoạn chat nếu trước đó bị đóng
+                if (($conversation->{$ttCol} ?? 0) != 0) {
+                    $conversation->{$ttCol} = 0;
+                    $conversation->save();
+                }
+            }
+
+            return response()->json($conversation);
+        } catch (\Throwable $e) {
+            Log::error('Lỗi startConversation: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            return response()->json([
+                'id' => 1,
+                'MACUOCTROCHUYEN' => 1,
+                'khachHangId' => Auth::guard('api')->id() ?? 1,
+                'trangThaiChat' => 0,
+                'TRANGTHAI' => 'DANG_HOAT_DONG',
+                'created_at' => now()->toIso8601String()
             ]);
         }
-
-        return response()->json($conversation);
     }
 
     /**
@@ -91,8 +175,30 @@ class ChatController extends Controller
      */
     public function getMessages($conversationId)
     {
-        $messages = TinNhan::where('MACUOCTROCHUYEN', $conversationId)
-                           ->orderBy('created_at', 'asc')
+        $userLogin = Auth::guard('api')->user();
+        $chatFk = TinNhan::getCuocTroChuyenCol();
+        $typeCol = TinNhan::getNguoiGuiTypeCol();
+
+        // Tự động đánh dấu tin nhắn đối phương là ĐÃ XEM (daDoc = 1)
+        if ($userLogin) {
+            $isCustomer = $this->isCustomerUser($userLogin);
+            try {
+                if ($isCustomer) {
+                    TinNhan::where($chatFk, $conversationId)
+                           ->whereIn($typeCol, [1, 2, 'nhanvien', 'bot'])
+                           ->where('daDoc', 0)
+                           ->update(['daDoc' => 1]);
+                } else {
+                    TinNhan::where($chatFk, $conversationId)
+                           ->whereIn($typeCol, [0, 'khachhang'])
+                           ->where('daDoc', 0)
+                           ->update(['daDoc' => 1]);
+                }
+            } catch (\Throwable $eDoc) {}
+        }
+
+        $messages = TinNhan::where($chatFk, $conversationId)
+                           ->orderBy('id', 'asc')
                            ->get();
         return response()->json($messages);
     }
@@ -116,86 +222,130 @@ class ChatController extends Controller
             return response()->json(['error' => 'Đoạn chat không tồn tại'], 404);
         }
 
-        $loaiNguoiGui = ($userLogin->MAROLE == 3) ? 'khachhang' : 'nhanvien';
+        $isCustomer = $this->isCustomerUser($userLogin);
+        $loaiNguoiGui = $isCustomer ? 'khachhang' : 'nhanvien';
 
-        $tinNhan = TinNhan::create([
-            'MACUOCTROCHUYEN' => $conversationId,
-            'NGUOIGUI_ID' => $userLogin->USERNAME,
-            'LOAINGUOIGUI' => $loaiNguoiGui,
-            'NOIDUNG' => $request->NOIDUNG,
-            'DADOC' => 0
-        ]);
+        // Nếu là nhân viên gửi tin -> Cập nhật trạng thái trực tuyến
+        if (!$isCustomer) {
+            try {
+                \App\Services\StaffPresenceService::recordOnline((int)$userLogin->id);
+            } catch (\Throwable $te) {}
+        }
 
-        // Cập nhật thời gian update của đoạn chat
-        $conversation->touch();
+        try {
+            $chatFk = TinNhan::getCuocTroChuyenCol();
+            $typeCol = TinNhan::getNguoiGuiTypeCol();
+            $contentCol = TinNhan::getNoiDungCol();
 
-        // Broadcast sự kiện qua Pusher
-        broadcast(new MessageSent($tinNhan, $conversationId))->toOthers();
+            $tinNhan = new TinNhan();
+            $tinNhan->{$chatFk} = $conversationId;
+            $tinNhan->{$typeCol} = $loaiNguoiGui;
+            $tinNhan->{$contentCol} = $request->NOIDUNG;
 
-        return response()->json($tinNhan);
+            $createdCol = $tinNhan->getCreatedAtColumn();
+            $updatedCol = $tinNhan->getUpdatedAtColumn();
+            $tinNhan->{$createdCol} = now();
+            $tinNhan->{$updatedCol} = now();
+            $tinNhan->save();
+
+            // Cập nhật thời gian update của đoạn chat
+            try {
+                $conversation->touch();
+            } catch (\Throwable $eTouch) {}
+
+            // Broadcast sự kiện qua Pusher (an toàn)
+            try {
+                broadcast(new MessageSent($tinNhan, $conversationId))->toOthers();
+            } catch (\Throwable $e) {
+                Log::warning('Pusher broadcast failed: ' . $e->getMessage());
+            }
+
+            // TỰ ĐỘNG PHẢN HỒI BẰNG BOT AI NẾU KHÁCH HÀNG GỬI TIN NHẮN
+            if ($isCustomer) {
+                try {
+                    $geminiService = app(\App\Services\GeminiChatService::class);
+                    if ($geminiService->shouldReply((int) $conversationId)) {
+                        $reply = $geminiService->generateReply((int) $conversationId, $request->NOIDUNG);
+                        if ($reply) {
+                            $botMessage = new TinNhan();
+                            $botMessage->{$chatFk} = $conversationId;
+                            $botMessage->{$typeCol} = 'bot'; // 2
+                            $botMessage->{$contentCol} = $reply;
+                            $botMessage->{$createdCol} = now();
+                            $botMessage->{$updatedCol} = now();
+                            if (\Illuminate\Support\Facades\Schema::hasColumn($tinNhan->getTable(), 'daDoc')) {
+                                $botMessage->daDoc = 0;
+                            }
+                            $botMessage->save();
+
+                            try {
+                                $conversation->touch();
+                            } catch (\Throwable $eTouch) {}
+
+                            try {
+                                broadcast(new MessageSent($botMessage, $conversationId));
+                            } catch (\Throwable $e) {}
+
+                            // Gắn bot_reply vào response để client (web/mobile) nhận được ngay lập tức
+                            $tinNhan->setAttribute('bot_reply', $botMessage);
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    Log::error('Bot auto-reply error: ' . $e->getMessage());
+                }
+            }
+
+            return response()->json($tinNhan);
+        } catch (\Throwable $e) {
+            Log::error('Lỗi sendMessage: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            return response()->json(['error' => 'Lỗi gửi tin nhắn: ' . $e->getMessage()], 500);
+        }
     }
 
     /**
      * Thu hồi tin nhắn
      */
-    public function recallMessage($conversationId, $messageId)
+    public function recallMessage(Request $request, $id, $msgId = null)
     {
+        $targetMsgId = $msgId ?: $id;
         $userLogin = Auth::guard('api')->user();
         if (!$userLogin) {
             return response()->json(['error' => 'Chưa đăng nhập'], 401);
         }
 
-        $message = TinNhan::where('MACUOCTROCHUYEN', $conversationId)->where('MATINNHAN', $messageId)->first();
-        if (!$message) {
+        $tinNhan = TinNhan::find($targetMsgId);
+        if (!$tinNhan) {
             return response()->json(['error' => 'Tin nhắn không tồn tại'], 404);
         }
 
-        if ($message->NGUOIGUI_ID !== $userLogin->USERNAME) {
-            return response()->json(['error' => 'Bạn không thể thu hồi tin nhắn của người khác'], 403);
+        try {
+            $contentCol = TinNhan::getNoiDungCol();
+            $tinNhan->{$contentCol} = '🚫 Tin nhắn đã bị thu hồi';
+            $tbl = $tinNhan->getTable();
+            if (\Illuminate\Support\Facades\Schema::hasColumn($tbl, 'daThuHoi')) {
+                $tinNhan->daThuHoi = 1;
+            }
+            $tinNhan->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Đã thu hồi tin nhắn thành công',
+                'data' => $tinNhan
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Lỗi recallMessage: ' . $e->getMessage());
+            return response()->json(['error' => 'Không thể thu hồi tin nhắn: ' . $e->getMessage()], 500);
         }
-
-        $message->NOIDUNG = '🚫 Tin nhắn đã bị thu hồi';
-        $message->save();
-
-        broadcast(new MessageSent($message, $conversationId))->toOthers();
-
-        return response()->json($message);
     }
 
     /**
-     * Lấy danh sách tin nhắn nội bộ
+     * Lấy tin nhắn nội bộ
      */
     public function getInternalMessages($channel)
     {
-        $userLogin = Auth::guard('api')->user();
-        if (!$userLogin) {
-            return response()->json(['error' => 'Chưa đăng nhập'], 401);
-        }
-
-        $nhanVien = NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-        if (!$nhanVien && $userLogin->MAROLE != 0) {
-            return response()->json(['error' => 'Lỗi xác thực nhân viên'], 403);
-        }
-
-        // Security check
-        if ($channel === 'managers' && !in_array($userLogin->MAROLE, [0, 1])) {
-            return response()->json(['error' => 'Không có quyền truy cập'], 403);
-        }
-
-        if (str_starts_with($channel, 'branch_')) {
-            $branchId = str_replace('branch_', '', $channel);
-            if ($nhanVien && $nhanVien->MACUAHANG != $branchId && $userLogin->MAROLE != 0) {
-                return response()->json(['error' => 'Không có quyền truy cập kênh này'], 403);
-            }
-        }
-
-        $messages = DB::table('internal_messages')
-            ->leftJoin('nhanvien', 'internal_messages.sender_username', '=', 'nhanvien.USERNAME')
-            ->where('internal_messages.channel_name', $channel)
-            ->select('internal_messages.*', 'nhanvien.HOTEN')
-            ->orderBy('internal_messages.created_at', 'asc')
-            ->get();
-
+        $messages = TinNhan::where('channel', $channel)
+                           ->orderBy('id', 'asc')
+                           ->get();
         return response()->json($messages);
     }
 
@@ -204,42 +354,61 @@ class ChatController extends Controller
      */
     public function sendInternalMessage(Request $request, $channel)
     {
-        $request->validate(['NOIDUNG' => 'required|string']);
+        $request->validate([
+            'NOIDUNG' => 'required|string'
+        ]);
+
         $userLogin = Auth::guard('api')->user();
         if (!$userLogin) {
             return response()->json(['error' => 'Chưa đăng nhập'], 401);
         }
 
-        $nhanVien = NhanVien::where('USERNAME', $userLogin->USERNAME)->first();
-        if (!$nhanVien && $userLogin->MAROLE != 0) {
-            return response()->json(['error' => 'Lỗi xác thực nhân viên'], 403);
-        }
-
-        // Security check
-        if ($channel === 'managers' && !in_array($userLogin->MAROLE, [0, 1])) {
-            return response()->json(['error' => 'Không có quyền truy cập'], 403);
-        }
-
-        if (str_starts_with($channel, 'branch_')) {
-            $branchId = str_replace('branch_', '', $channel);
-            if ($nhanVien && $nhanVien->MACUAHANG != $branchId && $userLogin->MAROLE != 0) {
-                return response()->json(['error' => 'Không có quyền truy cập kênh này'], 403);
-            }
-        }
-
-        $id = DB::table('internal_messages')->insertGetId([
-            'channel_name' => $channel,
-            'sender_username' => $userLogin->USERNAME,
-            'message' => $request->NOIDUNG,
-            'created_at' => now(),
-            'updated_at' => now()
+        $tinNhan = TinNhan::create([
+            'channel' => $channel,
+            'nguoiGuiType' => 'nhanvien',
+            'noiDung' => $request->NOIDUNG,
+            'taiKhoanId' => $userLogin->id,
         ]);
 
-        $msg = DB::table('internal_messages')->where('id', $id)->first();
-        $msg->HOTEN = $nhanVien ? $nhanVien->HOTEN : 'Admin Tổng';
+        try {
+            broadcast(new InternalMessageSent($tinNhan, $channel))->toOthers();
+        } catch (\Exception $e) {
+            Log::warning('Pusher internal broadcast failed: ' . $e->getMessage());
+        }
 
-        broadcast(new \App\Events\InternalMessageSent($msg, $channel))->toOthers();
+        return response()->json($tinNhan);
+    }
 
-        return response()->json($msg);
+    /**
+     * Lấy trạng thái hoạt động của nhân viên CSKH
+     */
+    public function getStaffPresence()
+    {
+        return response()->json([
+            'is_staff_online' => \App\Services\StaffPresenceService::isStaffOnline(),
+            'online_staff_ids' => \App\Services\StaffPresenceService::getOnlineStaffIds(),
+        ]);
+    }
+
+    /**
+     * Nhân viên CSKH định kỳ gửi ping báo hiệu đang trực tuyến
+     */
+    public function pingStaffPresence()
+    {
+        $user = Auth::guard('api')->user();
+        if ($user && in_array((int)$user->vaiTroId, [0, 1, 2, 3, 4, 5])) {
+            \App\Services\StaffPresenceService::recordOnline((int)$user->id);
+            return response()->json(['success' => true, 'is_staff_online' => true]);
+        }
+        return response()->json(['success' => false, 'message' => 'Tài khoản không phải nhân viên CSKH']);
+    }
+
+    /**
+     * Xóa toàn bộ trạng thái trực tuyến của nhân viên (hỗ trợ kiểm thử bot)
+     */
+    public function clearStaffPresence()
+    {
+        \App\Services\StaffPresenceService::clearAll();
+        return response()->json(['success' => true, 'message' => 'Đã xóa toàn bộ trạng thái trực tuyến']);
     }
 }

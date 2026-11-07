@@ -14,14 +14,14 @@ class NhatKyHeThongController extends Controller
      */
     public function index(Request $request)
     {
-        $query = NhatKyHeThong::orderBy('created_at', 'desc');
+        $query = NhatKyHeThong::orderBy('createdAt', 'desc');
 
         // Lọc theo khoảng thời gian
         if ($request->filled('tu_ngay')) {
-            $query->whereDate('created_at', '>=', $request->tu_ngay);
+            $query->whereDate('createdAt', '>=', $request->tu_ngay);
         }
         if ($request->filled('den_ngay')) {
-            $query->whereDate('created_at', '<=', $request->den_ngay);
+            $query->whereDate('createdAt', '<=', $request->den_ngay);
         }
 
         // Lọc theo username
