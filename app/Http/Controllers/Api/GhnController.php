@@ -429,9 +429,9 @@ class GhnController extends Controller
                 'ShopId' => (int) $shopId
             ])->post($ghnApiUrl . '/v2/shipping-order/create', $payload);
 
-            // Tự động thử lại bằng Sandbox Dev Token nếu token trong .env bị lỗi 401 trên Dev
-            if ($response->status() === 401 && $creds['isDev'] && $token !== $creds['devToken']) {
-                \Illuminate\Support\Facades\Log::warning("Token GHN trả về 401 trên Dev Sandbox, chuyển sang Dev Sandbox Token 5c3ecd5a...");
+            // Tự động thử lại bằng Sandbox Dev Token & Dev ShopId nếu trên Dev gặp lỗi 401 hoặc ShopId của chi nhánh là mã Production (400/403)
+            if (!$response->successful() && $creds['isDev'] && ($token !== $creds['devToken'] || (int)$shopId !== (int)$creds['devShopId'])) {
+                \Illuminate\Support\Facades\Log::warning("GHN trả về HTTP {$response->status()} với ShopId {$shopId} trên Dev Sandbox, chuyển sang Dev Sandbox ShopId {$creds['devShopId']}...");
                 $token = $creds['devToken'];
                 $shopId = $creds['devShopId'];
                 $response = Http::withoutVerifying()->withHeaders([
