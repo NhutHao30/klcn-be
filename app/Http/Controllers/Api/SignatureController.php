@@ -100,7 +100,7 @@ class SignatureController extends Controller
         $hdQuery = HoaDonNhap::with([
             'nhaCungCap',
             'cuaHang',
-            'nguoiNhap',
+            'nguoiNhap.taikhoan',
             'chuKySos.nguoiKy',
             'chiTiets.sanPham',
             'chiTiets.loHang'
@@ -122,12 +122,19 @@ class SignatureController extends Controller
             $sigThuKho = $sigs->where('vaiTroKy', 2)->last() ?? $sigs->firstWhere('vaiTroKy', 2);
             $sigQuanLy = $sigs->where('vaiTroKy', 3)->last() ?? $sigs->firstWhere('vaiTroKy', 3);
 
-            $quanLySigned = $sigQuanLy && (int) $sigQuanLy->trangThai === 1;
+            $createdByBranchManager = (int) ($hd->nguoiNhap?->taikhoan?->vaiTroId ?? 0) === 2;
+            $quanLySigned = ($sigQuanLy && (int) $sigQuanLy->trangThai === 1) || $createdByBranchManager;
             $khoSigned = $sigThuKho && (int) $sigThuKho->trangThai === 1;
             $keToanSigned = $sigKeToan && (int) $sigKeToan->trangThai === 1;
 
-            $isFullySigned = self::checkDocumentFullySigned($sigs, (int) $hd->trangThai);
+            $isFullySigned = $quanLySigned || self::checkDocumentFullySigned($sigs, (int) $hd->trangThai);
             $hasAnySigned = $quanLySigned || $khoSigned || $keToanSigned;
+
+            if ($createdByBranchManager && (int) $hd->trangThai === 0) {
+                try {
+                    $hd->update(['trangThai' => 1]);
+                } catch (\Throwable $eAuto) {}
+            }
 
             $chiTietMapped = $hd->chiTiets->map(function ($ct) {
                 $qty = (int) $ct->soLuong;
@@ -197,7 +204,7 @@ class SignatureController extends Controller
         // 2. Biên Bản Hủy (loaiTaiLieu = 2)
         $bbQuery = BienBanHuy::with([
             'cuaHang',
-            'nguoiLap',
+            'nguoiLap.taikhoan',
             'chuKySos.nguoiKy',
             'chiTiets.sanPham',
             'chiTiets.loHang'
@@ -219,12 +226,19 @@ class SignatureController extends Controller
             $sigThuKho = $sigs->where('vaiTroKy', 2)->last() ?? $sigs->firstWhere('vaiTroKy', 2);
             $sigQuanLy = $sigs->where('vaiTroKy', 3)->last() ?? $sigs->firstWhere('vaiTroKy', 3);
 
-            $quanLySigned = $sigQuanLy && (int) $sigQuanLy->trangThai === 1;
+            $createdByBranchManager = (int) ($bb->nguoiLap?->taikhoan?->vaiTroId ?? 0) === 2;
+            $quanLySigned = ($sigQuanLy && (int) $sigQuanLy->trangThai === 1) || $createdByBranchManager;
             $khoSigned = $sigThuKho && (int) $sigThuKho->trangThai === 1;
             $keToanSigned = $sigKeToan && (int) $sigKeToan->trangThai === 1;
 
-            $isFullySigned = self::checkDocumentFullySigned($sigs, (int) $bb->trangThai);
+            $isFullySigned = $quanLySigned || self::checkDocumentFullySigned($sigs, (int) $bb->trangThai);
             $hasAnySigned = $quanLySigned || $khoSigned || $keToanSigned;
+
+            if ($createdByBranchManager && (int) $bb->trangThai === 0) {
+                try {
+                    $bb->update(['trangThai' => 1]);
+                } catch (\Throwable $eAuto) {}
+            }
             $qtyHuy = (int) $bb->chiTiets->sum('soLuongHuy');
 
             $item = [

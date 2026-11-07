@@ -160,7 +160,7 @@ class HoaDonNhapController extends Controller
             'items.*.hsd' => 'required|date',
         ]);
 
-        // Nếu Quản lý chi nhánh tạo: có thể ký duyệt ngay để đơn hoàn tất lập tức và cộng tồn kho
+        // Nếu Quản lý chi nhánh tạo: tự động hoàn tất luôn và cộng tồn kho ngay lập tức, KHÔNG cần phải duyệt nữa
         // Nếu Nhân viên kho tạo: lập yêu cầu nhập lô hàng mới (signImmediately = false), chờ Quản lý chi nhánh duyệt
         $kyQuanLy = null;
         $signImmediately = false;
@@ -171,11 +171,9 @@ class HoaDonNhapController extends Controller
             ?? null;
 
         if ($isBranchManager) {
+            $signImmediately = true;
             $kyQuanLyInput = $request->input('ky_quan_ly') ?? $request->input('ky_giam_doc') ?? null;
-            $signImmediately = $request->boolean('auto_sign_all', false) || !empty($kyQuanLyInput);
-            if ($signImmediately) {
-                $kyQuanLy = $kyQuanLyInput ?: $savedSignature;
-            }
+            $kyQuanLy = $kyQuanLyInput ?: $savedSignature ?: 'BRANCH_MANAGER_AUTO_APPROVED';
         }
         $yeuCauId = $request->input('yeuCauId') ?? $request->input('yeu_cau_id');
 
