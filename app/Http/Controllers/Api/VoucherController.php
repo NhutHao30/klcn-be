@@ -245,7 +245,8 @@ class VoucherController extends Controller
         if ($user) {
             $userIds = $this->resolveUserIds($user);
 
-            $usedInOrder = DB::table('donhang')
+            $donHangTable = \Illuminate\Support\Facades\Schema::hasTable('donHang') ? 'donHang' : 'donhang';
+            $usedInOrder = DB::table($donHangTable)
                 ->whereIn('nguoidungId', $userIds)
                 ->whereNotIn('trangThaiDonHang', [0, 6])
                 ->where(function($q) use ($code) {
@@ -379,7 +380,8 @@ class VoucherController extends Controller
         $savedCodes = $walletRows->where('trangThai', 0)->pluck('maVoucher')->map(fn($c) => strtoupper((string)$c))->toArray();
         $usedWalletCodes = $walletRows->where('trangThai', 1)->pluck('maVoucher')->map(fn($c) => strtoupper((string)$c))->toArray();
 
-        $usedOrderCodes = DB::table('donhang')
+        $donHangTable = \Illuminate\Support\Facades\Schema::hasTable('donHang') ? 'donHang' : 'donhang';
+        $usedOrderCodes = DB::table($donHangTable)
             ->whereIn('nguoidungId', $userIds)
             ->whereNotIn('trangThaiDonHang', [0, 6])
             ->whereNotNull('maVoucher')
@@ -436,7 +438,8 @@ class VoucherController extends Controller
         if ($user) {
             $userIds = $this->resolveUserIds($user);
 
-            $usedInOrder = DB::table('donhang')
+            $donHangTable = \Illuminate\Support\Facades\Schema::hasTable('donHang') ? 'donHang' : 'donhang';
+            $usedInOrder = DB::table($donHangTable)
                 ->whereIn('nguoidungId', $userIds)
                 ->whereNotIn('trangThaiDonHang', [0, 6])
                 ->whereNotNull('maVoucher')

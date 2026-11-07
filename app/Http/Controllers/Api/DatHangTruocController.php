@@ -6,10 +6,38 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
 
 class DatHangTruocController extends Controller
 {
+    private function getTables(): array
+    {
+        $donHang = Schema::hasTable('donHang') ? 'donHang' : 'donhang';
+        $chiTiet = Schema::hasTable('chiTietDonHang') ? 'chiTietDonHang' : 'chitietdonhang';
+        $sanPham = Schema::hasTable('sanPham') ? 'sanPham' : 'sanpham';
+
+        try {
+            if (!Schema::hasColumn($donHang, 'nhanVienId')) {
+                Schema::table($donHang, function ($t) {
+                    $t->unsignedBigInteger('nhanVienId')->nullable();
+                });
+            }
+            if (!Schema::hasColumn($donHang, 'daXuatKho')) {
+                Schema::table($donHang, function ($t) {
+                    $t->tinyInteger('daXuatKho')->default(0);
+                });
+            }
+            if (!Schema::hasColumn($donHang, 'minhChungThanhToan')) {
+                Schema::table($donHang, function ($t) {
+                    $t->longText('minhChungThanhToan')->nullable();
+                });
+            }
+        } catch (\Throwable $e) {}
+
+        return [$donHang, $chiTiet, $sanPham];
+    }
+
     private function mapStatusToString($code)
     {
         $map = [
@@ -46,7 +74,9 @@ class DatHangTruocController extends Controller
             $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
         }
 
-        $query = DB::table('donhang')
+        [$donHangTable, $chiTietTable, $sanPhamTable] = $this->getTables();
+
+        $query = DB::table($donHangTable)
             ->where('loaiDonHang', 2);
 
         if ($macuahang) {
@@ -55,14 +85,14 @@ class DatHangTruocController extends Controller
 
         if ($request->filled('search')) {
             $search = trim($request->search);
-            $query->where(function($q) use ($search) {
-                $q->where('donhang.maDonHang', 'like', "%{$search}%")
-                  ->orWhere('donhang.ghiChu', 'like', "%{$search}%")
-                  ->orWhere('donhang.diaChiGiaoHang', 'like', "%{$search}%")
-                  ->orWhereExists(function ($sub) use ($search) {
+            $query->where(function($q) use ($search, $donHangTable) {
+                $q->where("{$donHangTable}.maDonHang", 'like', "%{$search}%")
+                  ->orWhere("{$donHangTable}.ghiChu", 'like', "%{$search}%")
+                  ->orWhere("{$donHangTable}.diaChiGiaoHang", 'like', "%{$search}%")
+                  ->orWhereExists(function ($sub) use ($search, $donHangTable) {
                       $sub->select(DB::raw(1))
                           ->from('nguoidung')
-                          ->whereColumn('nguoidung.id', 'donhang.nguoidungId')
+                          ->whereColumn('nguoidung.id', "{$donHangTable}.nguoidungId")
                           ->where(function ($subQ) use ($search) {
                               $subQ->where('nguoidung.hoTen', 'like', "%{$search}%")
                                    ->orWhere('nguoidung.soDienThoai', 'like', "%{$search}%");
@@ -78,14 +108,15 @@ class DatHangTruocController extends Controller
 
         $orders = $query->orderBy('createdAt', 'desc')->get();
 
-        $result = $orders->map(function ($o) {
+        $result = $orders->map(function ($o) use ($chiTietTable, $sanPhamTable) {
             $cust = DB::table('nguoidung')->where('id', $o->nguoidungId)->first();
-            $staff = $o->nhanVienId ? DB::table('nguoidung')->where('id', $o->nhanVienId)->first() : null;
+            $staffIdVal = $o->nhanVienId ?? null;
+            $staff = $staffIdVal ? DB::table('nguoidung')->where('id', $staffIdVal)->first() : null;
             $staffName = $staff ? $staff->hoTen : 'Quản trị viên';
-            $details = DB::table('chitietdonhang')
-                ->leftJoin('sanpham', 'chitietdonhang.sanPhamId', '=', 'sanpham.id')
-                ->where('chitietdonhang.donHangId', $o->id)
-                ->select('chitietdonhang.*', 'sanpham.tenSanPham')
+            $details = DB::table($chiTietTable)
+                ->leftJoin($sanPhamTable, "{$chiTietTable}.sanPhamId", '=', "{$sanPhamTable}.id")
+                ->where("{$chiTietTable}.donHangId", $o->id)
+                ->select("{$chiTietTable}.*", "{$sanPhamTable}.tenSanPham")
                 ->get();
 
             $ngayHenLay = null;
@@ -154,6 +185,8 @@ class DatHangTruocController extends Controller
             'chi_tiet' => 'required|array|min:1',
         ]);
 
+        [$donHangTable, $chiTietTable, $sanPhamTable] = $this->getTables();
+
         $userLogin = Auth::guard('api')->user();
         $storeId = 1;
 
@@ -172,7 +205,8 @@ class DatHangTruocController extends Controller
                     'taiKhoanId' => null,
                     'hoTen' => trim($request->hoten_kh),
                     'soDienThoai' => $sdt,
-                    'loaiNguoiDung' => 3,
+                    'gioiTinh' => 1,
+                    'loaiNguoiDung' => 0,
                     'createdAt' => $nowStr,
                     'updatedAt' => $nowStr,
                 ]);
@@ -239,15 +273,16 @@ class DatHangTruocController extends Controller
             $phuongThucCoc = $request->input('phuong_thuc_coc') === 'Chuyển khoản' ? 2 : 1;
 
             $staffId = null;
+            $savedSig = null;
             if ($userLogin) {
                 $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
                 $staffId = $staffProfile ? $staffProfile->id : $userLogin->id;
+                $savedSig = $staffProfile?->chuKySo ?? $userLogin->chuKySo ?? null;
             }
 
-            $orderId = DB::table('donhang')->insertGetId([
+            $insertPayload = [
                 'maDonHang' => $maDHT,
                 'nguoidungId' => $userId,
-                'nhanVienId' => $staffId,
                 'cuaHangId' => $storeId,
                 'loaiDonHang' => 2,
                 'tongTienHang' => $tongTienBanh,
@@ -257,19 +292,27 @@ class DatHangTruocController extends Controller
                 'phuongThucThanhToan' => $phuongThucCoc,
                 'trangThaiThanhToan' => $tienCoc > 0 ? 1 : 0,
                 'trangThaiDonHang' => $statusCode,
-                'diaChiGiaoHang' => $request->input('hinh_thuc_nhan') === 'giao_tan_noi' ? $request->input('dia_chi_giao') : null,
+                'diaChiGiaoHang' => $request->input('hinh_thuc_nhan') === 'giao_tan_noi' ? ($request->input('dia_chi_giao') ?: 'Giao tận nơi') : 'Nhận tại cửa hàng',
                 'ghiChu' => trim($fullGhiChu),
-                'minhChungThanhToan' => $request->input('chu_ky'),
                 'createdAt' => $nowStr,
                 'updatedAt' => $nowStr,
-            ]);
+            ];
+
+            if (Schema::hasColumn($donHangTable, 'nhanVienId')) {
+                $insertPayload['nhanVienId'] = $staffId;
+            }
+            if (Schema::hasColumn($donHangTable, 'minhChungThanhToan')) {
+                $insertPayload['minhChungThanhToan'] = $request->input('chu_ky') ?: $savedSig;
+            }
+
+            $orderId = DB::table($donHangTable)->insertGetId($insertPayload);
 
             foreach ($chiTietData as $ct) {
                 $spId = !empty($ct['masp']) ? $ct['masp'] : 1;
                 $sl = (int)($ct['so_luong'] ?? 1);
                 $dg = (float)($ct['don_gia'] ?? 0);
 
-                DB::table('chitietdonhang')->insert([
+                DB::table($chiTietTable)->insert([
                     'donHangId' => $orderId,
                     'sanPhamId' => $spId,
                     'soLuong' => $sl,
@@ -305,7 +348,8 @@ class DatHangTruocController extends Controller
      */
     public function update(Request $request, $id)
     {
-        $o = DB::table('donhang')->where('maDonHang', $id)->first();
+        [$donHangTable, $chiTietTable, $sanPhamTable] = $this->getTables();
+        $o = DB::table($donHangTable)->where('maDonHang', $id)->first();
         if (!$o) {
             return response()->json(['success' => false, 'message' => 'Đơn hàng không tồn tại'], 404);
         }
@@ -327,7 +371,8 @@ class DatHangTruocController extends Controller
                     'taiKhoanId' => null,
                     'hoTen' => trim($request->hoten_kh),
                     'soDienThoai' => $sdt,
-                    'loaiNguoiDung' => 3,
+                    'gioiTinh' => 1,
+                    'loaiNguoiDung' => 0,
                     'createdAt' => $nowStr,
                     'updatedAt' => $nowStr,
                 ]);
@@ -368,25 +413,25 @@ class DatHangTruocController extends Controller
                 'tongThanhToan' => $tongTien,
                 'phuongThucThanhToan' => $phuongThucCoc,
                 'trangThaiThanhToan' => $tienCoc > 0 ? 1 : 0,
-                'diaChiGiaoHang' => $request->input('hinh_thuc_nhan') === 'giao_tan_noi' ? $request->input('dia_chi_giao') : null,
+                'diaChiGiaoHang' => $request->input('hinh_thuc_nhan') === 'giao_tan_noi' ? ($request->input('dia_chi_giao') ?: 'Giao tận nơi') : 'Nhận tại cửa hàng',
                 'ghiChu' => trim($fullGhiChu),
                 'updatedAt' => $nowStr,
             ];
 
-            if ($request->filled('chu_ky')) {
+            if ($request->filled('chu_ky') && Schema::hasColumn($donHangTable, 'minhChungThanhToan')) {
                 $updateData['minhChungThanhToan'] = $request->input('chu_ky');
             }
 
-            DB::table('donhang')->where('id', $o->id)->update($updateData);
+            DB::table($donHangTable)->where('id', $o->id)->update($updateData);
 
             // Re-insert line items
-            DB::table('chitietdonhang')->where('donHangId', $o->id)->delete();
+            DB::table($chiTietTable)->where('donHangId', $o->id)->delete();
             foreach ($chiTietData as $ct) {
                 $spId = !empty($ct['masp']) ? $ct['masp'] : 1;
                 $sl = (int)($ct['so_luong'] ?? 1);
                 $dg = (float)($ct['don_gia'] ?? 0);
 
-                DB::table('chitietdonhang')->insert([
+                DB::table($chiTietTable)->insert([
                     'donHangId' => $o->id,
                     'sanPhamId' => $spId,
                     'soLuong' => $sl,
@@ -418,7 +463,8 @@ class DatHangTruocController extends Controller
      */
     public function show($id)
     {
-        $o = DB::table('donhang')->where('maDonHang', $id)->first();
+        [$donHangTable, $chiTietTable, $sanPhamTable] = $this->getTables();
+        $o = DB::table($donHangTable)->where('maDonHang', $id)->first();
 
         if (!$o) {
             return response()->json([
@@ -429,12 +475,13 @@ class DatHangTruocController extends Controller
 
         $cust = DB::table('nguoidung')->where('id', $o->nguoidungId)->first();
         $storeObj = DB::table('cuahang')->where('id', $o->cuaHangId)->first();
-        $staff = $o->nhanVienId ? DB::table('nguoidung')->where('id', $o->nhanVienId)->first() : null;
+        $staffIdVal = $o->nhanVienId ?? null;
+        $staff = $staffIdVal ? DB::table('nguoidung')->where('id', $staffIdVal)->first() : null;
         $staffName = $staff ? $staff->hoTen : 'Quản trị viên';
-        $details = DB::table('chitietdonhang')
-            ->leftJoin('sanpham', 'chitietdonhang.sanPhamId', '=', 'sanpham.id')
-            ->where('chitietdonhang.donHangId', $o->id)
-            ->select('chitietdonhang.*', 'sanpham.tenSanPham')
+        $details = DB::table($chiTietTable)
+            ->leftJoin($sanPhamTable, "{$chiTietTable}.sanPhamId", '=', "{$sanPhamTable}.id")
+            ->where("{$chiTietTable}.donHangId", $o->id)
+            ->select("{$chiTietTable}.*", "{$sanPhamTable}.tenSanPham")
             ->get();
 
         $ngayHenLay = null;
@@ -497,7 +544,8 @@ class DatHangTruocController extends Controller
      */
     private function deductStockForOrder($order)
     {
-        $details = DB::table('chitietdonhang')->where('donHangId', $order->id)->get();
+        [, $chiTietTable] = $this->getTables();
+        $details = DB::table($chiTietTable)->where('donHangId', $order->id)->get();
         $storeId = $order->cuaHangId ?? 1;
 
         foreach ($details as $ct) {
@@ -530,7 +578,8 @@ class DatHangTruocController extends Controller
      */
     private function restoreStockForOrder($order)
     {
-        $details = DB::table('chitietdonhang')->where('donHangId', $order->id)->get();
+        [, $chiTietTable] = $this->getTables();
+        $details = DB::table($chiTietTable)->where('donHangId', $order->id)->get();
         $storeId = $order->cuaHangId ?? 1;
 
         foreach ($details as $ct) {
@@ -559,7 +608,8 @@ class DatHangTruocController extends Controller
 
     public function updateStatus(Request $request, $id)
     {
-        $o = DB::table('donhang')->where('maDonHang', $id)->first();
+        [$donHangTable] = $this->getTables();
+        $o = DB::table($donHangTable)->where('maDonHang', $id)->first();
         if (!$o) {
             return response()->json(['success' => false, 'message' => 'Đơn không tồn tại'], 404);
         }
@@ -582,11 +632,14 @@ class DatHangTruocController extends Controller
                     $daXuatKho = 0;
                 }
 
-                DB::table('donhang')->where('id', $o->id)->update([
+                $upd = [
                     'trangThaiDonHang' => $code,
-                    'daXuatKho' => $daXuatKho,
                     'updatedAt' => now()
-                ]);
+                ];
+                if (Schema::hasColumn($donHangTable, 'daXuatKho')) {
+                    $upd['daXuatKho'] = $daXuatKho;
+                }
+                DB::table($donHangTable)->where('id', $o->id)->update($upd);
 
                 DB::commit();
             } catch (\Throwable $e) {
@@ -610,7 +663,8 @@ class DatHangTruocController extends Controller
      */
     public function completePayment(Request $request, $id)
     {
-        $o = DB::table('donhang')->where('maDonHang', $id)->first();
+        [$donHangTable] = $this->getTables();
+        $o = DB::table($donHangTable)->where('maDonHang', $id)->first();
         if (!$o) {
             return response()->json(['success' => false, 'message' => 'Đơn không tồn tại'], 404);
         }
@@ -623,12 +677,15 @@ class DatHangTruocController extends Controller
                 $daXuatKho = 1;
             }
 
-            DB::table('donhang')->where('id', $o->id)->update([
+            $upd = [
                 'trangThaiDonHang' => 3, // 3 = da_giao (Hoàn thành)
                 'trangThaiThanhToan' => 2, // 2 = Đã thanh toán đủ
-                'daXuatKho' => $daXuatKho,
                 'updatedAt' => now()
-            ]);
+            ];
+            if (Schema::hasColumn($donHangTable, 'daXuatKho')) {
+                $upd['daXuatKho'] = $daXuatKho;
+            }
+            DB::table($donHangTable)->where('id', $o->id)->update($upd);
 
             DB::commit();
         } catch (\Throwable $e) {

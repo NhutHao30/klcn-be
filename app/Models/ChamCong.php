@@ -9,7 +9,23 @@ class ChamCong extends Model
     const CREATED_AT = 'createdAt';
     const UPDATED_AT = 'updatedAt';
 
-    protected $table = 'chamcong';
+    protected $table = 'chamCong';
+
+    public function getTable()
+    {
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('chamCong')) {
+                return 'chamCong';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('chamcong')) {
+                return 'chamcong';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('cham_cong')) {
+                return 'cham_cong';
+            }
+        } catch (\Throwable $e) {}
+        return 'chamCong';
+    }
 
     protected $fillable = [
         'USERNAME',
