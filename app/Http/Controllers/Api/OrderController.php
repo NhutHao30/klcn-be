@@ -135,6 +135,13 @@ class OrderController extends Controller
             }
             $khEmail = ($order->nguoidung && $order->nguoidung->taikhoan) ? $order->nguoidung->taikhoan->email : '';
 
+            $isGiaoTanNoi = ($order->diaChiGiaoHang && $order->diaChiGiaoHang !== 'Nhận tại cửa hàng');
+            if ($isGiaoTanNoi && empty($order->maVanDonGhn) && in_array((int)$order->trangThaiDonHang, [1, 2, 3, 7], true)) {
+                try {
+                    \App\Http\Controllers\Api\GhnController::createShippingOrderForDonHang($order);
+                } catch (\Throwable $eGhn) {}
+            }
+
             $staff = $order->nhanVienId ? \Illuminate\Support\Facades\DB::table('nguoidung')->where('id', $order->nhanVienId)->first() : null;
             $staffName = $staff ? $staff->hoTen : ($order->loaiDonHang == 0 ? 'Hệ thống (Đặt online)' : 'Nhân viên thu ngân');
 
@@ -791,6 +798,13 @@ class OrderController extends Controller
                 }
             }
             $khEmail = ($order->nguoidung && $order->nguoidung->taikhoan) ? $order->nguoidung->taikhoan->email : '';
+
+            $isGiaoTanNoi = ($order->diaChiGiaoHang && $order->diaChiGiaoHang !== 'Nhận tại cửa hàng');
+            if ($isGiaoTanNoi && empty($order->maVanDonGhn) && in_array((int)$order->trangThaiDonHang, [1, 2, 3, 7], true)) {
+                try {
+                    \App\Http\Controllers\Api\GhnController::createShippingOrderForDonHang($order);
+                } catch (\Throwable $eGhn) {}
+            }
 
             return [
                 'id' => $order->id,

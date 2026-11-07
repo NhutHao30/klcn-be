@@ -354,6 +354,7 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         Route::put('/admin/pre-orders/{id}', [DatHangTruocController::class, 'update']);
         Route::put('/admin/pre-orders/{id}/status', [DatHangTruocController::class, 'updateStatus']);
         Route::post('/admin/pre-orders/{id}/complete-payment', [DatHangTruocController::class, 'completePayment']);
+        Route::post('/admin/pre-orders/{id}/ghn-order', [DatHangTruocController::class, 'createGhnOrder']);
     });
 
     // ==========================================

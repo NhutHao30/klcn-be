@@ -20,6 +20,13 @@ class InventoryLedgerService
         if (self::$schemaChecked) {
             return;
         }
+
+        // Tránh chạy DDL (ALTER TABLE, CREATE VIEW) nếu đang trong active transaction
+        // vì MySQL tự động thực thi implicit COMMIT làm mất transaction
+        if (DB::transactionLevel() > 0) {
+            return;
+        }
+
         self::$schemaChecked = true;
 
         $tablesMap = [

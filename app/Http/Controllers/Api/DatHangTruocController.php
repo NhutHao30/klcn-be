@@ -83,11 +83,13 @@ class DatHangTruocController extends Controller
     private function mapStatusToString($code)
     {
         $map = [
-            0 => 'cho_xac_nhan',
+            0 => 'da_huy',
             1 => 'da_coc',
             2 => 'san_sang',
-            3 => 'da_giao',
-            4 => 'da_huy',
+            7 => 'dang_giao',
+            3 => 'dang_giao',
+            4 => 'da_giao',
+            5 => 'da_giao',
         ];
         return $map[(int)$code] ?? 'cho_xac_nhan';
     }
@@ -95,13 +97,14 @@ class DatHangTruocController extends Controller
     private function mapStringToStatusCode($str)
     {
         $map = [
-            'cho_xac_nhan' => 0,
+            'cho_xac_nhan' => 1,
             'da_coc' => 1,
             'san_sang' => 2,
-            'da_giao' => 3,
-            'da_huy' => 4,
+            'dang_giao' => 3,
+            'da_giao' => 4,
+            'da_huy' => 0,
         ];
-        return $map[$str] ?? 0;
+        return $map[$str] ?? 1;
     }
 
     /**
@@ -144,8 +147,17 @@ class DatHangTruocController extends Controller
         }
 
         if ($request->filled('trangThai')) {
-            $code = $this->mapStringToStatusCode($request->trangThai);
-            $query->where('trangThaiDonHang', $code);
+            $ttFilter = $request->trangThai;
+            if ($ttFilter === 'dang_giao') {
+                $query->whereIn('trangThaiDonHang', [3, 7]);
+            } elseif ($ttFilter === 'da_giao') {
+                $query->whereIn('trangThaiDonHang', [4, 5]);
+            } elseif ($ttFilter === 'da_huy') {
+                $query->where('trangThaiDonHang', 0);
+            } else {
+                $code = $this->mapStringToStatusCode($ttFilter);
+                $query->where('trangThaiDonHang', $code);
+            }
         }
 
         $orders = $query->orderBy('createdAt', 'desc')->get();
@@ -189,9 +201,13 @@ class DatHangTruocController extends Controller
                 'tongTien' => $tongTien,
                 'tienCoc' => $tienCoc,
                 'phuongThucCoc' => $o->phuongThucThanhToan == 2 ? 'Chuyển khoản' : 'Tiền mặt',
-                'hinhThucNhan' => $o->diaChiGiaoHang ? 'giao_tan_noi' : 'tai_cua_hang',
+                'hinhThucNhan' => ($o->diaChiGiaoHang && $o->diaChiGiaoHang !== 'Nhận tại cửa hàng') ? 'giao_tan_noi' : 'tai_cua_hang',
                 'diaChiGiao' => $o->diaChiGiaoHang,
                 'phiGiaoHang' => (float)$o->phiVanChuyen,
+                'maVanDon' => $o->maVanDonGhn ?? '',
+                'maVanDonGhn' => $o->maVanDonGhn ?? '',
+                'trangThaiDonHang' => (int)$o->trangThaiDonHang,
+                'trangThaiThanhToan' => (int)$o->trangThaiThanhToan,
                 'trangThai' => $this->mapStatusToString($o->trangThaiDonHang),
                 'chuKy' => $o->minhChungThanhToan,
                 'tienConLai' => $tienConLai,
@@ -345,6 +361,14 @@ class DatHangTruocController extends Controller
             }
             if (Schema::hasColumn($donHangTable, 'minhChungThanhToan')) {
                 $insertPayload['minhChungThanhToan'] = $request->input('chu_ky') ?: $savedSig;
+            }
+            if ($request->input('hinh_thuc_nhan') === 'giao_tan_noi') {
+                if ($request->filled('to_ward_code') && Schema::hasColumn($donHangTable, 'toWardCode')) {
+                    $insertPayload['toWardCode'] = (string)$request->input('to_ward_code');
+                }
+                if ($request->filled('to_district_id') && Schema::hasColumn($donHangTable, 'toDistrictId')) {
+                    $insertPayload['toDistrictId'] = (int)$request->input('to_district_id');
+                }
             }
 
             $orderId = DB::table($donHangTable)->insertGetId($insertPayload);
@@ -537,6 +561,19 @@ class DatHangTruocController extends Controller
 
         $ngayDatIct = $o->createdAt ? Carbon::parse($o->createdAt)->format('Y-m-d H:i:s') : null;
 
+        $isGiaoTanNoi = ($o->diaChiGiaoHang && $o->diaChiGiaoHang !== 'Nhận tại cửa hàng');
+        if ($isGiaoTanNoi && empty($o->maVanDonGhn)) {
+            $orderModel = \App\Models\DonHang::find($o->id);
+            if ($orderModel) {
+                try {
+                    $ghnRes = \App\Http\Controllers\Api\GhnController::createShippingOrderForDonHang($orderModel);
+                    if (!empty($ghnRes['order_code'])) {
+                        $o->maVanDonGhn = $ghnRes['order_code'];
+                    }
+                } catch (\Throwable $eGhn) {}
+            }
+        }
+
         $data = [
             'id' => $o->maDonHang,
             'maDHT' => $o->maDonHang,
@@ -554,9 +591,13 @@ class DatHangTruocController extends Controller
             'tongTien' => $tongTien,
             'tienCoc' => $tienCoc,
             'phuongThucCoc' => $o->phuongThucThanhToan == 2 ? 'Chuyển khoản' : 'Tiền mặt',
-            'hinhThucNhan' => $o->diaChiGiaoHang ? 'giao_tan_noi' : 'tai_cua_hang',
+            'hinhThucNhan' => ($o->diaChiGiaoHang && $o->diaChiGiaoHang !== 'Nhận tại cửa hàng') ? 'giao_tan_noi' : 'tai_cua_hang',
             'diaChiGiao' => $o->diaChiGiaoHang,
             'phiGiaoHang' => (float)$o->phiVanChuyen,
+            'maVanDon' => $o->maVanDonGhn ?? '',
+            'maVanDonGhn' => $o->maVanDonGhn ?? '',
+            'trangThaiDonHang' => (int)$o->trangThaiDonHang,
+            'trangThaiThanhToan' => (int)$o->trangThaiThanhToan,
             'trangThai' => $this->mapStatusToString($o->trangThaiDonHang),
             'chuKy' => $o->minhChungThanhToan,
             'tienConLai' => $tienConLai,
@@ -582,11 +623,10 @@ class DatHangTruocController extends Controller
      * Cập nhật trạng thái
      */
     /**
-     * Trừ tồn kho khi đơn chuyển sang Sẵn sàng (2) hoặc Đã giao (3)
+     * Trừ tồn kho khi đơn chuyển sang Sẵn sàng (2) hoặc Đã giao (3, 4)
      */
     private function deductStockForOrder($order)
     {
-        \App\Services\InventoryLedgerService::ensureSchema();
         [, $chiTietTable] = $this->getTables();
         $details = DB::table($chiTietTable)->where('donHangId', $order->id)->get();
         $storeId = $order->cuaHangId ?? 1;
@@ -617,11 +657,10 @@ class DatHangTruocController extends Controller
     }
 
     /**
-     * Hoàn trả tồn kho khi đơn bị hủy (4)
+     * Hoàn trả tồn kho khi đơn bị hủy (0)
      */
     private function restoreStockForOrder($order)
     {
-        \App\Services\InventoryLedgerService::ensureSchema();
         [, $chiTietTable] = $this->getTables();
         $details = DB::table($chiTietTable)->where('donHangId', $order->id)->get();
         $storeId = $order->cuaHangId ?? 1;
@@ -659,19 +698,25 @@ class DatHangTruocController extends Controller
         }
 
         $trangThaiStr = $request->input('trang_thai') ?? $request->input('trangThai');
+        $ghnMsg = '';
         if ($trangThaiStr) {
             $code = $this->mapStringToStatusCode($trangThaiStr);
             $daXuatKho = (int) ($o->daXuatKho ?? 0);
 
+            // Đảm bảo schema chạy trước bên ngoài transaction để không gây implicit commit
+            try {
+                \App\Services\InventoryLedgerService::ensureSchema();
+            } catch (\Throwable $eSchema) {}
+
             DB::beginTransaction();
             try {
-                // Khi chuyển sang Sẵn sàng giao (2) hoặc Đã giao (3) và chưa trừ kho -> Trừ kho
-                if (($code == 2 || $code == 3) && $daXuatKho == 0) {
+                // Khi chuyển sang Sẵn sàng (2), Đang giao (3), Đã giao (4) và chưa trừ kho -> Trừ kho
+                if (($code == 2 || $code == 3 || $code == 4) && $daXuatKho == 0) {
                     $this->deductStockForOrder($o);
                     $daXuatKho = 1;
                 }
-                // Khi hủy đơn (4) mà trước đó đã trừ kho -> Hoàn trả kho
-                else if ($code == 4 && $daXuatKho == 1) {
+                // Khi hủy đơn (0 hoặc 'da_huy') mà trước đó đã trừ kho -> Hoàn trả kho
+                else if (($code == 0 || $trangThaiStr === 'da_huy') && $daXuatKho == 1) {
                     $this->restoreStockForOrder($o);
                     $daXuatKho = 0;
                 }
@@ -685,20 +730,36 @@ class DatHangTruocController extends Controller
                 }
                 DB::table($donHangTable)->where('id', $o->id)->update($upd);
 
-                DB::commit();
+                if (DB::transactionLevel() > 0) {
+                    DB::commit();
+                }
             } catch (\Throwable $e) {
-                DB::rollBack();
+                if (DB::transactionLevel() > 0) {
+                    DB::rollBack();
+                }
                 \Illuminate\Support\Facades\Log::error("Error updating pre-order status: " . $e->getMessage());
                 return response()->json([
                     'success' => false,
                     'message' => 'Lỗi khi cập nhật trạng thái kho: ' . $e->getMessage()
                 ], 500);
             }
+
+            // Tự động tạo đơn GHN khi chuyển sang Sẵn sàng (2) hoặc Đang giao (3) nếu là đơn Giao tận nơi
+            $isGiaoTanNoi = ($o->diaChiGiaoHang && $o->diaChiGiaoHang !== 'Nhận tại cửa hàng');
+            if ($isGiaoTanNoi && ($code == 2 || $code == 3) && empty($o->maVanDonGhn)) {
+                $orderModel = \App\Models\DonHang::find($o->id);
+                if ($orderModel) {
+                    $ghnRes = \App\Http\Controllers\Api\GhnController::createShippingOrderForDonHang($orderModel);
+                    if (!empty($ghnRes['order_code'])) {
+                        $ghnMsg = " Đã tự động tạo vận đơn GHN: {$ghnRes['order_code']}.";
+                    }
+                }
+            }
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'Cập nhật trạng thái thành công!'
+            'message' => "Cập nhật trạng thái thành công!{$ghnMsg}"
         ]);
     }
 
@@ -713,6 +774,20 @@ class DatHangTruocController extends Controller
             return response()->json(['success' => false, 'message' => 'Đơn không tồn tại'], 404);
         }
 
+        try {
+            \App\Services\InventoryLedgerService::ensureSchema();
+        } catch (\Throwable $eSchema) {}
+
+        $isGiaoTanNoi = ($o->diaChiGiaoHang && $o->diaChiGiaoHang !== 'Nhận tại cửa hàng');
+
+        // PHÂN BIỆT RÕ HÌNH THỨC NHẬN HÀNG:
+        // 1. Nhận tại quầy (tại cửa hàng): Khách thanh toán nốt tiền và nhận bánh ngay -> Trạng thái ĐÃ GIAO (4)
+        // 2. Giao tận nơi: Khách thanh toán nốt tiền -> Trạng thái thanh toán là ĐÃ THANH TOÁN (1),
+        //    nhưng đơn hàng vẫn là ĐANG GIAO (3 hoặc 7) chứ CHƯA GIAO XONG (chỉ chuyển thành 4 khi shipper giao thành công)
+        $targetTrangThai = $isGiaoTanNoi
+            ? (in_array((int)$o->trangThaiDonHang, [4, 5], true) ? 4 : 3)
+            : 4;
+
         DB::beginTransaction();
         try {
             $daXuatKho = (int) ($o->daXuatKho ?? 0);
@@ -722,8 +797,8 @@ class DatHangTruocController extends Controller
             }
 
             $upd = [
-                'trangThaiDonHang' => 3, // 3 = da_giao (Hoàn thành)
-                'trangThaiThanhToan' => 2, // 2 = Đã thanh toán đủ
+                'trangThaiDonHang' => $targetTrangThai,
+                'trangThaiThanhToan' => 1, // 1 = Đã thanh toán đủ
                 'updatedAt' => now()
             ];
             if (Schema::hasColumn($donHangTable, 'daXuatKho')) {
@@ -731,8 +806,58 @@ class DatHangTruocController extends Controller
             }
             DB::table($donHangTable)->where('id', $o->id)->update($upd);
 
-            DB::commit();
+            if (DB::transactionLevel() > 0) {
+                DB::commit();
+            }
         } catch (\Throwable $e) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            return response()->json(['success' => false, 'message' => 'Lỗi khi xử lý kho: ' . $e->getMessage()], 500);
+        }
+
+        // Tự động tạo đơn vận chuyển GHN nếu là giao tận nơi mà chưa có mã vận đơn
+        $ghnMsg = '';
+        if ($isGiaoTanNoi && empty($o->maVanDonGhn)) {
+            $orderModel = \App\Models\DonHang::find($o->id);
+            if ($orderModel) {
+                $ghnRes = \App\Http\Controllers\Api\GhnController::createShippingOrderForDonHang($orderModel);
+                if (!empty($ghnRes['order_code'])) {
+                    $ghnMsg = " Đã tạo mã vận đơn GHN: {$ghnRes['order_code']}.";
+                }
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $isGiaoTanNoi
+                ? "Thu tiền còn lại thành công! Đơn hàng đang được vận chuyển qua GHN.{$ghnMsg}"
+                : "Hoàn tất thanh toán & giao bánh tại quầy thành công!"
+        ]);
+    }
+
+    /**
+     * Tạo vận đơn GHN thủ công cho đơn đặt trước
+     */
+    public function createGhnOrder(Request $request, $id)
+    {
+        [$donHangTable] = $this->getTables();
+        $o = DB::table($donHangTable)->where('maDonHang', $id)->first();
+        if (!$o) {
+            return response()->json(['error' => 'Đơn không tồn tại'], 404);
+        }
+
+        $orderModel = \App\Models\DonHang::find($o->id);
+        if (!$orderModel) {
+            return response()->json(['error' => 'Không tìm thấy hóa đơn'], 404);
+        }
+
+        $toWardCode = $request->input('to_ward_code') ?? $orderModel->toWardCode;
+        $toDistrictId = $request->input('to_district_id') ?? $orderModel->toDistrictId;
+
+        $res = \App\Http\Controllers\Api\GhnController::createShippingOrderForDonHang($orderModel, $toWardCode, $toDistrictId);
+        return response()->json($res);
+    }
             DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Lỗi khi xử lý kho: ' . $e->getMessage()], 500);
         }
