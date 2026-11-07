@@ -38,6 +38,48 @@ class DatHangTruocController extends Controller
         return [$donHang, $chiTiet, $sanPham];
     }
 
+    /**
+     * Chuyển đổi mã sản phẩm (int, chuỗi "SP045", hoặc tên bánh) sang sanPham.id kiểu số nguyên
+     */
+    private function resolveSanPhamId(array $ct, string $sanPhamTable): int
+    {
+        $rawMasp = $ct['masp'] ?? $ct['maSP'] ?? $ct['sanPhamId'] ?? null;
+
+        if ($rawMasp !== null && $rawMasp !== '') {
+            if (is_numeric($rawMasp) && (int)$rawMasp > 0) {
+                $exists = DB::table($sanPhamTable)->where('id', (int)$rawMasp)->value('id');
+                if ($exists) {
+                    return (int)$exists;
+                }
+            }
+
+            if (is_string($rawMasp) && preg_match('/(\d+)/', $rawMasp, $m)) {
+                $numId = (int)$m[1];
+                if ($numId > 0) {
+                    $exists = DB::table($sanPhamTable)->where('id', $numId)->value('id');
+                    if ($exists) {
+                        return (int)$exists;
+                    }
+                }
+            }
+        }
+
+        $tenSp = trim((string)($ct['ten_sp'] ?? $ct['tenSP'] ?? ''));
+        if ($tenSp !== '') {
+            $byExactName = DB::table($sanPhamTable)->where('tenSanPham', $tenSp)->value('id');
+            if ($byExactName) {
+                return (int)$byExactName;
+            }
+            $byLikeName = DB::table($sanPhamTable)->where('tenSanPham', 'like', "%{$tenSp}%")->value('id');
+            if ($byLikeName) {
+                return (int)$byLikeName;
+            }
+        }
+
+        $firstId = DB::table($sanPhamTable)->orderBy('id', 'asc')->value('id');
+        return $firstId ? (int)$firstId : 1;
+    }
+
     private function mapStatusToString($code)
     {
         $map = [
@@ -308,7 +350,7 @@ class DatHangTruocController extends Controller
             $orderId = DB::table($donHangTable)->insertGetId($insertPayload);
 
             foreach ($chiTietData as $ct) {
-                $spId = !empty($ct['masp']) ? $ct['masp'] : 1;
+                $spId = $this->resolveSanPhamId((array)$ct, $sanPhamTable);
                 $sl = (int)($ct['so_luong'] ?? 1);
                 $dg = (float)($ct['don_gia'] ?? 0);
 
@@ -427,7 +469,7 @@ class DatHangTruocController extends Controller
             // Re-insert line items
             DB::table($chiTietTable)->where('donHangId', $o->id)->delete();
             foreach ($chiTietData as $ct) {
-                $spId = !empty($ct['masp']) ? $ct['masp'] : 1;
+                $spId = $this->resolveSanPhamId((array)$ct, $sanPhamTable);
                 $sl = (int)($ct['so_luong'] ?? 1);
                 $dg = (float)($ct['don_gia'] ?? 0);
 
@@ -544,6 +586,7 @@ class DatHangTruocController extends Controller
      */
     private function deductStockForOrder($order)
     {
+        \App\Services\InventoryLedgerService::ensureSchema();
         [, $chiTietTable] = $this->getTables();
         $details = DB::table($chiTietTable)->where('donHangId', $order->id)->get();
         $storeId = $order->cuaHangId ?? 1;
@@ -578,6 +621,7 @@ class DatHangTruocController extends Controller
      */
     private function restoreStockForOrder($order)
     {
+        \App\Services\InventoryLedgerService::ensureSchema();
         [, $chiTietTable] = $this->getTables();
         $details = DB::table($chiTietTable)->where('donHangId', $order->id)->get();
         $storeId = $order->cuaHangId ?? 1;
