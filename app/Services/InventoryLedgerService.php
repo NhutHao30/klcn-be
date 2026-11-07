@@ -22,13 +22,8 @@ class InventoryLedgerService
         }
         self::$schemaChecked = true;
 
-        try {
-            $table = Schema::hasTable('nhatKyKho') ? 'nhatKyKho' : (Schema::hasTable('nhatkykho') ? 'nhatkykho' : (Schema::hasTable('nhatky_kho') ? 'nhatky_kho' : null));
-            if (!$table) {
-                return;
-            }
-
-            $colMap = [
+        $tablesMap = [
+            'nhatKyKho' => [
                 'cuahang_id' => 'cuaHangId',
                 'sanpham_id' => 'sanPhamId',
                 'loai_bien_dong' => 'loaiBienDong',
@@ -37,20 +32,130 @@ class InventoryLedgerService
                 'ma_tham_chieu' => 'maThamChieu',
                 'created_at' => 'createdAt',
                 'updated_at' => 'updatedAt',
-            ];
+            ],
+            'hoaDonNhap' => [
+                'ma_hoadon_nhap' => 'maHoaDonNhap',
+                'nhacungcap_id' => 'nhaCungCapId',
+                'cuahang_id' => 'cuaHangId',
+                'nguoi_nhap_id' => 'nguoiNhapId',
+                'ngay_nhap' => 'ngayNhap',
+                'tong_tien' => 'tongTien',
+                'ghi_chu' => 'ghiChu',
+                'trang_thai' => 'trangThai',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+            'loHang' => [
+                'ma_lo_hang' => 'maLoHang',
+                'sanpham_id' => 'sanPhamId',
+                'cuahang_id' => 'cuaHangId',
+                'nhacungcap_id' => 'nhaCungCapId',
+                'so_luong_nhap' => 'soLuongNhap',
+                'so_luong_con' => 'soLuongCon',
+                'ngay_san_xuat' => 'ngaySanXuat',
+                'han_su_dung' => 'hsd',
+                'hanSuDung' => 'hsd',
+                'gia_nhap' => 'giaNhap',
+                'don_gia_nhap' => 'giaNhap',
+                'donGiaNhap' => 'giaNhap',
+                'trang_thai' => 'trangThai',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+            'chiTietHoaDonNhap' => [
+                'hoadon_nhap_id' => 'hoaDonNhapId',
+                'lohang_id' => 'loHangId',
+                'sanpham_id' => 'sanPhamId',
+                'so_luong' => 'soLuong',
+                'so_luong_nhap' => 'soLuong',
+                'soLuongNhap' => 'soLuong',
+                'don_gia_nhap' => 'donGiaNhap',
+                'thanh_tien' => 'thanhTien',
+            ],
+            'tonKhoChiNhanh' => [
+                'cuahang_id' => 'cuaHangId',
+                'sanpham_id' => 'sanPhamId',
+                'so_luong_ton' => 'soLuongTon',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+            'bienBanHuy' => [
+                'ma_bien_ban' => 'maBienBan',
+                'cuahang_id' => 'cuaHangId',
+                'nguoi_lap_id' => 'nguoiLapId',
+                'ngay_lap' => 'ngayLap',
+                'ly_do' => 'lyDo',
+                'tong_gia_tri_huy' => 'tongGiaTriHuy',
+                'trang_thai' => 'trangThai',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+            'chiTietBienBanHuy' => [
+                'bien_ban_huy_id' => 'bienBanHuyId',
+                'lohang_id' => 'loHangId',
+                'sanpham_id' => 'sanPhamId',
+                'so_luong_huy' => 'soLuongHuy',
+                'don_gia' => 'donGia',
+                'thanh_tien' => 'thanhTien',
+            ],
+            'chuKySo' => [
+                'ma_chu_ky' => 'maChuKy',
+                'loai_tai_lieu' => 'loaiTaiLieu',
+                'tai_lieu_id' => 'taiLieuId',
+                'vai_tro_ky' => 'vaiTroKy',
+                'nguoi_ky_id' => 'nguoiKyId',
+                'ten_nguoi_ky' => 'tenNguoiKy',
+                'digital_signature_hash' => 'digitalSignatureHash',
+                'public_key' => 'publicKey',
+                'trang_thai' => 'trangThai',
+                'ngay_ky' => 'ngayKy',
+                'ghi_chu' => 'ghiChu',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+        ];
 
-            foreach ($colMap as $oldCol => $newCol) {
-                if (Schema::hasColumn($table, $oldCol) && !Schema::hasColumn($table, $newCol)) {
-                    try {
-                        DB::statement("ALTER TABLE `{$table}` RENAME COLUMN `{$oldCol}` TO `{$newCol}`");
-                    } catch (\Throwable $eAlter) {
-                        Log::warning("Could not rename {$table}.{$oldCol} to {$newCol}: " . $eAlter->getMessage());
+        try {
+            DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+        } catch (\Throwable $eFk) {}
+
+        $tablesRequiringCuaHangId = ['nhatKyKho', 'hoaDonNhap', 'loHang', 'tonKhoChiNhanh', 'bienBanHuy'];
+
+        foreach ($tablesMap as $targetTable => $colMap) {
+            try {
+                if (!Schema::hasTable($targetTable)) {
+                    continue;
+                }
+                foreach ($colMap as $oldCol => $newCol) {
+                    if (Schema::hasColumn($targetTable, $oldCol) && !Schema::hasColumn($targetTable, $newCol)) {
+                        try {
+                            DB::statement("ALTER TABLE `{$targetTable}` RENAME COLUMN `{$oldCol}` TO `{$newCol}`");
+                        } catch (\Throwable $eAlter) {
+                            Log::warning("Could not rename {$targetTable}.{$oldCol} to {$newCol}: " . $eAlter->getMessage());
+                        }
                     }
                 }
+                if (in_array($targetTable, $tablesRequiringCuaHangId, true) && !Schema::hasColumn($targetTable, 'cuaHangId')) {
+                    try {
+                        DB::statement("ALTER TABLE `{$targetTable}` ADD COLUMN `cuaHangId` INT UNSIGNED NULL DEFAULT 1");
+                    } catch (\Throwable $eAddCol) {
+                        Log::warning("Could not add cuaHangId to {$targetTable}: " . $eAddCol->getMessage());
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning("InventoryLedgerService::ensureSchema error on {$targetTable}: " . $e->getMessage());
             }
-        } catch (\Throwable $e) {
-            Log::warning("InventoryLedgerService::ensureSchema error: " . $e->getMessage());
         }
+
+        try {
+            if (Schema::hasTable('nhatKyKho')) {
+                DB::statement("CREATE OR REPLACE VIEW `nhatkykho` AS SELECT * FROM `nhatKyKho`");
+            }
+        } catch (\Throwable $eView) {}
+
+        try {
+            DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+        } catch (\Throwable $eFk) {}
     }
 
     /**

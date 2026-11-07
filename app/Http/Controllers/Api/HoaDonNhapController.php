@@ -22,6 +22,7 @@ class HoaDonNhapController extends Controller
      */
     public function index(Request $request)
     {
+        \App\Services\InventoryLedgerService::ensureSchema();
         $user = auth('api')->user();
         $profile = $user ? (NguoiDung::where('taiKhoanId', $user->id)->first() ?? $user->nguoidung) : null;
 
@@ -180,130 +181,107 @@ class HoaDonNhapController extends Controller
         try {
             \App\Services\InventoryLedgerService::ensureSchema();
 
-            $invoice = null;
-            try {
-                DB::statement('CALL sp_create_hoadon_nhap(?, ?, ?, ?, ?, ?, ?, @hoadon_id, @ma_hoadon, @error)', [
-                    $validated['nhaCungCapId'],
-                    $validated['cuaHangId'],
-                    $validated['nguoi_nhap_id'],
-                    $validated['ghiChu'] ?? null,
-                    $signImmediately ? 1 : 0,
-                    $kyQuanLy,
-                    json_encode($validated['items']),
+            $invoice = DB::transaction(function () use ($validated, $signImmediately, $kyQuanLy, $profile, $user) {
+                $maHoaDon = 'HDN-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 10));
+                $tenNguoiNhap = $profile?->hoTen ?? $user->username ?? 'Quản lý chi nhánh';
+
+                $hd = HoaDonNhap::create([
+                    'maHoaDonNhap' => $maHoaDon,
+                    'nhaCungCapId' => (int)$validated['nhaCungCapId'],
+                    'cuaHangId' => (int)$validated['cuaHangId'],
+                    'nguoiNhapId' => (int)$validated['nguoi_nhap_id'],
+                    'ngayNhap' => now(),
+                    'tongTien' => 0,
+                    'ghiChu' => $validated['ghiChu'] ?? null,
+                    'trangThai' => $signImmediately ? 1 : 0,
                 ]);
 
-                $res = DB::select('SELECT @hoadon_id AS hoadon_id, @ma_hoadon AS ma_hoadon, @error AS error')[0];
+                ChuKySo::create([
+                    'maChuKy' => 'SIG-HDN-' . $hd->id . '-R1-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 6)),
+                    'loaiTaiLieu' => 1,
+                    'taiLieuId' => $hd->id,
+                    'vaiTroKy' => 1,
+                    'nguoiKyId' => null,
+                    'tenNguoiKy' => 'Nhân viên kế toán',
+                    'trangThai' => 0,
+                ]);
 
-                if ($res->error) {
-                    throw new \Exception($res->error);
+                ChuKySo::create([
+                    'maChuKy' => 'SIG-HDN-' . $hd->id . '-R2-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 6)),
+                    'loaiTaiLieu' => 1,
+                    'taiLieuId' => $hd->id,
+                    'vaiTroKy' => 2,
+                    'nguoiKyId' => null,
+                    'tenNguoiKy' => 'Nhân viên kho',
+                    'trangThai' => 0,
+                ]);
+
+                ChuKySo::create([
+                    'maChuKy' => 'SIG-HDN-' . $hd->id . '-R3-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 6)),
+                    'loaiTaiLieu' => 1,
+                    'taiLieuId' => $hd->id,
+                    'vaiTroKy' => 3,
+                    'nguoiKyId' => $signImmediately ? (int)$validated['nguoi_nhap_id'] : null,
+                    'tenNguoiKy' => $signImmediately ? $tenNguoiNhap : 'Quản lý chi nhánh',
+                    'digitalSignatureHash' => $signImmediately ? ($kyQuanLy ?: hash('sha256', "HDN_{$hd->id}_R3_" . time())) : null,
+                    'publicKey' => $signImmediately ? 'BRANCH_MANAGER_SIGNATURE' : null,
+                    'trangThai' => $signImmediately ? 1 : 0,
+                    'ngayKy' => $signImmediately ? now() : null,
+                    'ghiChu' => $signImmediately ? 'Quản lý chi nhánh đã ký duyệt đơn nhập hàng' : null,
+                ]);
+
+                $tongTien = 0;
+                foreach ($validated['items'] as $it) {
+                    $spId = (int)$it['sanPhamId'];
+                    $qty = (int)$it['soLuong'];
+                    $donGia = (float)$it['don_gia_nhap'];
+                    $thanhTien = $qty * $donGia;
+                    $tongTien += $thanhTien;
+
+                    $maLo = 'LH-' . $hd->id . '-' . $spId . '-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 4));
+                    $lo = LoHang::create([
+                        'maLoHang' => $maLo,
+                        'sanPhamId' => $spId,
+                        'cuaHangId' => (int)$validated['cuaHangId'],
+                        'nhaCungCapId' => (int)$validated['nhaCungCapId'],
+                        'soLuongNhap' => $qty,
+                        'soLuongCon' => $qty,
+                        'ngaySanXuat' => $it['ngaySanXuat'] ?? null,
+                        'hsd' => $it['hsd'],
+                        'giaNhap' => $donGia,
+                        'trangThai' => 0,
+                    ]);
+
+                    ChiTietHoaDonNhap::create([
+                        'hoaDonNhapId' => $hd->id,
+                        'loHangId' => $lo->id,
+                        'sanPhamId' => $spId,
+                        'soLuong' => $qty,
+                        'donGiaNhap' => $donGia,
+                        'thanhTien' => $thanhTien,
+                    ]);
+
+                    if ($signImmediately) {
+                        $st = TonKhoChiNhanh::firstOrCreate(
+                            ['cuaHangId' => (int)$validated['cuaHangId'], 'sanPhamId' => $spId],
+                            ['soLuongTon' => 0]
+                        );
+                        $st->increment('soLuongTon', $qty);
+
+                        \App\Services\InventoryLedgerService::record(
+                            (int)$validated['cuaHangId'],
+                            $spId,
+                            4, // 4: Nhập lô mới
+                            $qty,
+                            $maHoaDon,
+                            (int)$st->fresh()->soLuongTon
+                        );
+                    }
                 }
 
-                $invoice = HoaDonNhap::with('chiTiets')->find($res->hoadon_id);
-            } catch (\Throwable $spEx) {
-                \Illuminate\Support\Facades\Log::warning('sp_create_hoadon_nhap failed, falling back to Eloquent: ' . $spEx->getMessage());
-
-                $invoice = DB::transaction(function () use ($validated, $signImmediately, $kyQuanLy, $profile, $user) {
-                    $maHoaDon = 'HDN-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 10));
-                    $tenNguoiNhap = $profile?->hoTen ?? $user->username ?? 'Quản lý chi nhánh';
-
-                    $hd = HoaDonNhap::create([
-                        'maHoaDonNhap' => $maHoaDon,
-                        'nhaCungCapId' => (int)$validated['nhaCungCapId'],
-                        'cuaHangId' => (int)$validated['cuaHangId'],
-                        'nguoiNhapId' => (int)$validated['nguoi_nhap_id'],
-                        'ngayNhap' => now(),
-                        'tongTien' => 0,
-                        'ghiChu' => $validated['ghiChu'] ?? null,
-                        'trangThai' => $signImmediately ? 1 : 0,
-                    ]);
-
-                    ChuKySo::create([
-                        'maChuKy' => 'SIG-HDN-' . $hd->id . '-R1-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 6)),
-                        'loaiTaiLieu' => 1,
-                        'taiLieuId' => $hd->id,
-                        'vaiTroKy' => 1,
-                        'nguoiKyId' => null,
-                        'tenNguoiKy' => 'Nhân viên kế toán',
-                        'trangThai' => 0,
-                    ]);
-
-                    ChuKySo::create([
-                        'maChuKy' => 'SIG-HDN-' . $hd->id . '-R2-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 6)),
-                        'loaiTaiLieu' => 1,
-                        'taiLieuId' => $hd->id,
-                        'vaiTroKy' => 2,
-                        'nguoiKyId' => null,
-                        'tenNguoiKy' => 'Nhân viên kho',
-                        'trangThai' => 0,
-                    ]);
-
-                    ChuKySo::create([
-                        'maChuKy' => 'SIG-HDN-' . $hd->id . '-R3-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 6)),
-                        'loaiTaiLieu' => 1,
-                        'taiLieuId' => $hd->id,
-                        'vaiTroKy' => 3,
-                        'nguoiKyId' => $signImmediately ? (int)$validated['nguoi_nhap_id'] : null,
-                        'tenNguoiKy' => $signImmediately ? $tenNguoiNhap : 'Quản lý chi nhánh',
-                        'digitalSignatureHash' => $signImmediately ? ($kyQuanLy ?: hash('sha256', "HDN_{$hd->id}_R3_" . time())) : null,
-                        'publicKey' => $signImmediately ? 'BRANCH_MANAGER_SIGNATURE' : null,
-                        'trangThai' => $signImmediately ? 1 : 0,
-                        'ngayKy' => $signImmediately ? now() : null,
-                        'ghiChu' => $signImmediately ? 'Quản lý chi nhánh đã ký duyệt đơn nhập hàng' : null,
-                    ]);
-
-                    $tongTien = 0;
-                    foreach ($validated['items'] as $it) {
-                        $spId = (int)$it['sanPhamId'];
-                        $qty = (int)$it['soLuong'];
-                        $donGia = (float)$it['don_gia_nhap'];
-                        $thanhTien = $qty * $donGia;
-                        $tongTien += $thanhTien;
-
-                        $maLo = 'LH-' . $hd->id . '-' . $spId . '-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 4));
-                        $lo = LoHang::create([
-                            'maLoHang' => $maLo,
-                            'sanPhamId' => $spId,
-                            'cuaHangId' => (int)$validated['cuaHangId'],
-                            'nhaCungCapId' => (int)$validated['nhaCungCapId'],
-                            'soLuongNhap' => $qty,
-                            'soLuongCon' => $qty,
-                            'ngaySanXuat' => $it['ngaySanXuat'] ?? null,
-                            'hsd' => $it['hsd'],
-                            'giaNhap' => $donGia,
-                            'trangThai' => 0,
-                        ]);
-
-                        ChiTietHoaDonNhap::create([
-                            'hoaDonNhapId' => $hd->id,
-                            'loHangId' => $lo->id,
-                            'sanPhamId' => $spId,
-                            'soLuong' => $qty,
-                            'donGiaNhap' => $donGia,
-                            'thanhTien' => $thanhTien,
-                        ]);
-
-                        if ($signImmediately) {
-                            $st = TonKhoChiNhanh::firstOrCreate(
-                                ['cuaHangId' => (int)$validated['cuaHangId'], 'sanPhamId' => $spId],
-                                ['soLuongTon' => 0]
-                            );
-                            $st->increment('soLuongTon', $qty);
-
-                            \App\Services\InventoryLedgerService::record(
-                                (int)$validated['cuaHangId'],
-                                $spId,
-                                4, // 4: Nhập lô mới
-                                $qty,
-                                $maHoaDon,
-                                (int)$st->fresh()->soLuongTon
-                            );
-                        }
-                    }
-
-                    $hd->update(['tongTien' => $tongTien]);
-                    return $hd->load('chiTiets');
-                });
-            }
+                $hd->update(['tongTien' => $tongTien]);
+                return $hd->load('chiTiets');
+            });
 
             // Ghi nhận sổ cái tồn kho nếu đơn đã được ký duyệt ngay lập tức
             if ($signImmediately && $invoice) {
@@ -507,51 +485,30 @@ class HoaDonNhapController extends Controller
             );
 
             \App\Services\InventoryLedgerService::ensureSchema();
-            $isFullySigned = false;
-            try {
-                DB::statement('CALL sp_sign_role(?, ?, ?, ?, ?, @is_fully_signed, @error)', [
-                    $slot->id,
-                    $profile?->id ?? $user->id,
-                    $kyNguoiNhan ?: json_encode(['docId' => $invoice->id, 'signer' => $tenNguoiNhan]),
-                    'BRANCH_SIGNATURE',
-                    $ghiChuKiemDem,
-                ]);
+            $slot->update([
+                'nguoiKyId' => $profile?->id ?? $user->id,
+                'tenNguoiKy' => $tenNguoiNhan,
+                'digitalSignatureHash' => $kyNguoiNhan ?: hash('sha256', "HDN_{$invoice->id}_R{$slotRole}_" . time()),
+                'publicKey' => 'BRANCH_SIGNATURE',
+                'trangThai' => 1,
+                'ngayKy' => now(),
+                'ghiChu' => $ghiChuKiemDem,
+            ]);
 
-                $res = DB::select('SELECT @is_fully_signed AS is_fully_signed, @error AS error')[0];
-                if ($res->error) {
-                    throw new \Exception($res->error);
-                }
+            $otherSlots = ChuKySo::where('loaiTaiLieu', 1)->where('taiLieuId', $invoice->id)->get();
+            $r1Signed = $otherSlots->where('vaiTroKy', 1)->where('trangThai', 1)->isNotEmpty();
+            $r2Signed = $otherSlots->where('vaiTroKy', 2)->where('trangThai', 1)->isNotEmpty();
+            $r3Signed = $otherSlots->where('vaiTroKy', 3)->where('trangThai', 1)->isNotEmpty();
 
-                $slot->update(['tenNguoiKy' => $tenNguoiNhan]);
-                $isFullySigned = (bool) $res->is_fully_signed;
-            } catch (\Throwable $spEx) {
-                \Illuminate\Support\Facades\Log::warning('sp_sign_role in xacNhanNhapKho failed, falling back to Eloquent: ' . $spEx->getMessage());
-
-                $slot->update([
-                    'nguoiKyId' => $profile?->id ?? $user->id,
-                    'tenNguoiKy' => $tenNguoiNhan,
-                    'digitalSignatureHash' => $kyNguoiNhan ?: hash('sha256', "HDN_{$invoice->id}_R{$slotRole}_" . time()),
-                    'publicKey' => 'BRANCH_SIGNATURE',
-                    'trangThai' => 1,
-                    'ngayKy' => now(),
-                    'ghiChu' => $ghiChuKiemDem,
-                ]);
-
-                $otherSlots = ChuKySo::where('loaiTaiLieu', 1)->where('taiLieuId', $invoice->id)->get();
-                $r1Signed = $otherSlots->where('vaiTroKy', 1)->where('trangThai', 1)->isNotEmpty();
-                $r2Signed = $otherSlots->where('vaiTroKy', 2)->where('trangThai', 1)->isNotEmpty();
-                $r3Signed = $otherSlots->where('vaiTroKy', 3)->where('trangThai', 1)->isNotEmpty();
-
-                $isFullySigned = $r3Signed || ($r1Signed && $r2Signed);
-                if ($isFullySigned && (int)$invoice->trangThai === 0) {
-                    $invoice->update(['trangThai' => 1]);
-                    foreach ($invoice->chiTiets as $ct) {
-                        $st = TonKhoChiNhanh::firstOrCreate(
-                            ['cuaHangId' => $invoice->cuaHangId, 'sanPhamId' => $ct->sanPhamId],
-                            ['soLuongTon' => 0]
-                        );
-                        $st->increment('soLuongTon', (int)$ct->soLuong);
-                    }
+            $isFullySigned = $r3Signed || ($r1Signed && $r2Signed);
+            if ($isFullySigned && (int)$invoice->trangThai === 0) {
+                $invoice->update(['trangThai' => 1]);
+                foreach ($invoice->chiTiets as $ct) {
+                    $st = TonKhoChiNhanh::firstOrCreate(
+                        ['cuaHangId' => $invoice->cuaHangId, 'sanPhamId' => $ct->sanPhamId],
+                        ['soLuongTon' => 0]
+                    );
+                    $st->increment('soLuongTon', (int)$ct->soLuong);
                 }
             }
 

@@ -292,13 +292,13 @@ BEGIN
             SET v_ma_lo = CONCAT('LO-', p_cuahang_id, '-', v_sp_id, '-', DATE_FORMAT(NOW(), '%y%m%d%H%i%s'), '-', (i + 1));
 
             -- Tạo lô hàng (theo dõi hạn sử dụng bánh)
-            INSERT INTO loHang (maLoHang, sanPhamId, nhaCungCapId, cuaHangId, soLuongNhap, soLuongCon, donGiaNhap, ngaySanXuat, hanSuDung, trangThai, createdAt, updatedAt)
-            VALUES (v_ma_lo, v_sp_id, p_nhacungcap_id, p_cuahang_id, v_qty, v_qty, v_don_gia, v_nsx, v_hsd, 1, NOW(), NOW());
+            INSERT INTO loHang (maLoHang, sanPhamId, nhaCungCapId, cuaHangId, soLuongNhap, soLuongCon, giaNhap, ngaySanXuat, hsd, trangThai, createdAt, updatedAt)
+            VALUES (v_ma_lo, v_sp_id, p_nhacungcap_id, p_cuahang_id, v_qty, v_qty, v_don_gia, v_nsx, v_hsd, 0, NOW(), NOW());
             SET v_lo_id = LAST_INSERT_ID();
 
             -- Tạo chi tiết hóa đơn nhập
-            INSERT INTO chiTietHoaDonNhap (hoaDonNhapId, sanPhamId, loHangId, soLuongNhap, donGiaNhap, thanhTien, createdAt, updatedAt)
-            VALUES (p_hoadon_id, v_sp_id, v_lo_id, v_qty, v_don_gia, v_thanh_tien, NOW(), NOW());
+            INSERT INTO chiTietHoaDonNhap (hoaDonNhapId, sanPhamId, loHangId, soLuong, donGiaNhap, thanhTien)
+            VALUES (p_hoadon_id, v_sp_id, v_lo_id, v_qty, v_don_gia, v_thanh_tien);
 
             -- Cộng tồn kho vào chi nhánh
             INSERT INTO tonKhoChiNhanh (cuaHangId, sanPhamId, soLuongTon, createdAt, updatedAt)

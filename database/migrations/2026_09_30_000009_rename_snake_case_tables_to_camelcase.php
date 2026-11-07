@@ -348,6 +348,16 @@ return new class extends Migration {
                 'don_gia' => 'donGia',
                 'thanh_tien' => 'thanhTien',
             ],
+            'nhatKyKho' => [
+                'cuahang_id' => 'cuaHangId',
+                'sanpham_id' => 'sanPhamId',
+                'loai_bien_dong' => 'loaiBienDong',
+                'so_luong_thay_doi' => 'soLuongThayDoi',
+                'so_luong_ton_sau' => 'soLuongTonSau',
+                'ma_tham_chieu' => 'maThamChieu',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
         ];
 
         foreach ($columnMap as $tableName => $cols) {

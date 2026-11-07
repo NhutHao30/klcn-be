@@ -91,6 +91,7 @@ class SignatureController extends Controller
      */
     public function getPendingSignatures(Request $request)
     {
+        \App\Services\InventoryLedgerService::ensureSchema();
         $user = $this->getAuthUser($request);
         $profile = $user ? (NguoiDung::where('taiKhoanId', $user->id)->first() ?? $user->nguoidung) : null;
         $userStoreId = $profile?->cuaHangId;
@@ -516,99 +517,76 @@ class SignatureController extends Controller
 
         try {
             \App\Services\InventoryLedgerService::ensureSchema();
-            $isFullySigned = false;
-            try {
-                DB::statement('CALL sp_sign_role(?, ?, ?, ?, ?, @is_fully_signed, @error)', [
-                    $slot->id,
-                    $profile?->id ?? 1,
-                    $rawPayload,
-                    'SYSTEM_RSA_PUBLIC_KEY',
-                    $request->input('ghi_chu', "Đã ký duyệt bởi {$signerName}"),
-                ]);
 
-                $res = DB::select('SELECT @is_fully_signed AS is_fully_signed, @error AS error')[0];
+            $sigHash = ($signatureImage && (str_starts_with((string) $signatureImage, 'data:image/') || str_starts_with((string) $signatureImage, '<svg') || str_starts_with((string) $signatureImage, 'http')))
+                ? $signatureImage
+                : hash('sha256', $rawPayload . "_ROLE_{$targetRole}_" . time());
 
-                if ($res->error) {
-                    throw new \Exception($res->error);
-                }
+            $slot->update([
+                'nguoiKyId' => $profile?->id ?? 1,
+                'tenNguoiKy' => $signerName,
+                'digitalSignatureHash' => $sigHash,
+                'publicKey' => 'SYSTEM_RSA_PUBLIC_KEY',
+                'trangThai' => 1,
+                'ngayKy' => now(),
+                'ghiChu' => $request->input('ghi_chu', "Đã ký duyệt bởi {$signerName}"),
+            ]);
 
-                // Đảm bảo cập nhật tên người ký rõ ràng
-                $slot->update(['tenNguoiKy' => $signerName]);
+            $otherSlots = \App\Models\ChuKySo::where('loaiTaiLieu', $loaiTaiLieu)
+                ->where('taiLieuId', $taiLieuId)
+                ->get();
+            $r1Signed = $otherSlots->where('vaiTroKy', 1)->where('trangThai', 1)->isNotEmpty();
+            $r2Signed = $otherSlots->where('vaiTroKy', 2)->where('trangThai', 1)->isNotEmpty();
+            $r3Signed = $otherSlots->where('vaiTroKy', 3)->where('trangThai', 1)->isNotEmpty();
 
-                $isFullySigned = (bool) $res->is_fully_signed;
-            } catch (\Throwable $spEx) {
-                \Illuminate\Support\Facades\Log::warning('sp_sign_role failed, falling back to Eloquent: ' . $spEx->getMessage());
+            $isFullySigned = $r3Signed || ($r1Signed && $r2Signed);
 
-                $sigHash = ($signatureImage && (str_starts_with((string) $signatureImage, 'data:image/') || str_starts_with((string) $signatureImage, '<svg') || str_starts_with((string) $signatureImage, 'http')))
-                    ? $signatureImage
-                    : hash('sha256', $rawPayload . "_ROLE_{$targetRole}_" . time());
-
-                $slot->update([
-                    'nguoiKyId' => $profile?->id ?? 1,
-                    'tenNguoiKy' => $signerName,
-                    'digitalSignatureHash' => $sigHash,
-                    'publicKey' => 'SYSTEM_RSA_PUBLIC_KEY',
-                    'trangThai' => 1,
-                    'ngayKy' => now(),
-                    'ghiChu' => $request->input('ghi_chu', "Đã ký duyệt bởi {$signerName}"),
-                ]);
-
-                $otherSlots = \App\Models\ChuKySo::where('loaiTaiLieu', $loaiTaiLieu)
-                    ->where('taiLieuId', $taiLieuId)
-                    ->get();
-                $r1Signed = $otherSlots->where('vaiTroKy', 1)->where('trangThai', 1)->isNotEmpty();
-                $r2Signed = $otherSlots->where('vaiTroKy', 2)->where('trangThai', 1)->isNotEmpty();
-                $r3Signed = $otherSlots->where('vaiTroKy', 3)->where('trangThai', 1)->isNotEmpty();
-
-                $isFullySigned = $r3Signed || ($r1Signed && $r2Signed);
-
-                if ($isFullySigned) {
-                    if ($loaiTaiLieu == 1) { // HoaDonNhap
-                        $hdn = \App\Models\HoaDonNhap::with('chiTiets')->find($taiLieuId);
-                        if ($hdn && $hdn->trangThai == 0) {
-                            $hdn->update(['trangThai' => 1]);
-                            foreach ($hdn->chiTiets as $ct) {
-                                $st = \App\Models\TonKhoChiNhanh::firstOrCreate(
-                                    ['cuaHangId' => $hdn->cuaHangId, 'sanPhamId' => $ct->sanPhamId],
-                                    ['soLuongTon' => 0]
-                                );
-                                $st->increment('soLuongTon', (int)$ct->soLuong);
-                                \App\Services\InventoryLedgerService::record(
-                                    (int)$hdn->cuaHangId,
-                                    (int)$ct->sanPhamId,
-                                    4,
-                                    (int)$ct->soLuong,
-                                    $hdn->maHoaDonNhap
-                                );
-                            }
+            if ($isFullySigned) {
+                if ($loaiTaiLieu == 1) { // HoaDonNhap
+                    $hdn = \App\Models\HoaDonNhap::with('chiTiets')->find($taiLieuId);
+                    if ($hdn && $hdn->trangThai == 0) {
+                        $hdn->update(['trangThai' => 1]);
+                        foreach ($hdn->chiTiets as $ct) {
+                            $st = \App\Models\TonKhoChiNhanh::firstOrCreate(
+                                ['cuaHangId' => $hdn->cuaHangId, 'sanPhamId' => $ct->sanPhamId],
+                                ['soLuongTon' => 0]
+                            );
+                            $st->increment('soLuongTon', (int)$ct->soLuong);
+                            \App\Services\InventoryLedgerService::record(
+                                (int)$hdn->cuaHangId,
+                                (int)$ct->sanPhamId,
+                                4,
+                                (int)$ct->soLuong,
+                                $hdn->maHoaDonNhap
+                            );
                         }
-                    } elseif ($loaiTaiLieu == 2) { // BienBanHuy
-                        $bb = \App\Models\BienBanHuy::with('chiTiets')->find($taiLieuId);
-                        if ($bb && $bb->trangThai == 0) {
-                            $bb->update(['trangThai' => 1]);
-                            foreach ($bb->chiTiets as $ct) {
-                                $lo = \App\Models\LoHang::find($ct->loHangId);
-                                if ($lo) {
-                                    $newQty = max(0, (int)$lo->soLuongCon - (int)$ct->soLuongHuy);
-                                    $lo->update([
-                                        'soLuongCon' => $newQty,
-                                        'trangThai' => $newQty === 0 ? 3 : 2,
-                                    ]);
-                                }
-                                $st = \App\Models\TonKhoChiNhanh::where('cuaHangId', $bb->cuaHangId)
-                                    ->where('sanPhamId', $ct->sanPhamId)
-                                    ->first();
-                                if ($st) {
-                                    $st->update(['soLuongTon' => max(0, (int)$st->soLuongTon - (int)$ct->soLuongHuy)]);
-                                }
-                                \App\Services\InventoryLedgerService::record(
-                                    (int)$bb->cuaHangId,
-                                    (int)$ct->sanPhamId,
-                                    5,
-                                    -(int)$ct->soLuongHuy,
-                                    $bb->maBienBan
-                                );
+                    }
+                } elseif ($loaiTaiLieu == 2) { // BienBanHuy
+                    $bb = \App\Models\BienBanHuy::with('chiTiets')->find($taiLieuId);
+                    if ($bb && $bb->trangThai == 0) {
+                        $bb->update(['trangThai' => 1]);
+                        foreach ($bb->chiTiets as $ct) {
+                            $lo = \App\Models\LoHang::find($ct->loHangId);
+                            if ($lo) {
+                                $newQty = max(0, (int)$lo->soLuongCon - (int)$ct->soLuongHuy);
+                                $lo->update([
+                                    'soLuongCon' => $newQty,
+                                    'trangThai' => $newQty === 0 ? 3 : 2,
+                                ]);
                             }
+                            $st = \App\Models\TonKhoChiNhanh::where('cuaHangId', $bb->cuaHangId)
+                                ->where('sanPhamId', $ct->sanPhamId)
+                                ->first();
+                            if ($st) {
+                                $st->update(['soLuongTon' => max(0, (int)$st->soLuongTon - (int)$ct->soLuongHuy)]);
+                            }
+                            \App\Services\InventoryLedgerService::record(
+                                (int)$bb->cuaHangId,
+                                (int)$ct->sanPhamId,
+                                5,
+                                -(int)$ct->soLuongHuy,
+                                $bb->maBienBan
+                            );
                         }
                     }
                 }
