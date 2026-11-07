@@ -128,8 +128,70 @@ class ProductController extends Controller
                 }
             }
 
+            // Price range filter (single min/max or multiple checkbox ranges)
+            $minPrice = $request->input('min_price') ?? $request->input('minPrice');
+            $maxPrice = $request->input('max_price') ?? $request->input('maxPrice');
+            if ($minPrice !== null && $minPrice !== '' && is_numeric($minPrice)) {
+                $query->where('giaBan', '>=', (float)$minPrice);
+            }
+            if ($maxPrice !== null && $maxPrice !== '' && is_numeric($maxPrice)) {
+                $query->where('giaBan', '<=', (float)$maxPrice);
+            }
+
+            $priceRangesRaw = $request->input('price_ranges') ?? $request->input('priceRanges');
+            if (!empty($priceRangesRaw)) {
+                $rangeIds = is_array($priceRangesRaw)
+                    ? $priceRangesRaw
+                    : array_filter(array_map('trim', explode(',', (string)$priceRangesRaw)));
+
+                $rangeMap = [
+                    'under_10k' => [0, 10000],
+                    '10k_50k'   => [10000, 50000],
+                    '50k_100k'  => [50000, 100000],
+                    '100k_200k' => [100000, 200000],
+                    '200k_300k' => [200000, 300000],
+                    '300k_1m'   => [300000, 1000000],
+                    'over_1m'   => [1000000, null],
+                ];
+
+                $validRanges = array_values(array_filter($rangeIds, fn($id) => isset($rangeMap[$id])));
+                if (!empty($validRanges)) {
+                    $query->where(function ($qPrice) use ($validRanges, $rangeMap) {
+                        foreach ($validRanges as $rId) {
+                            [$min, $max] = $rangeMap[$rId];
+                            $qPrice->orWhere(function ($subQ) use ($rId, $min, $max) {
+                                if ($rId === 'under_10k') {
+                                    $subQ->where('giaBan', '<', $max);
+                                } elseif ($max === null) {
+                                    $subQ->where('giaBan', '>=', $min);
+                                } else {
+                                    $subQ->whereBetween('giaBan', [$min, $max]);
+                                }
+                            });
+                        }
+                    });
+                }
+            }
+
+            // Sorting
+            $sortBy = strtolower(trim((string)($request->input('sortBy') ?? $request->input('sort_by') ?? '')));
+            $direction = strtolower(trim((string)($request->input('direction') ?? $request->input('sortDir') ?? 'desc')));
+            if (!in_array($direction, ['asc', 'desc'], true)) {
+                $direction = 'desc';
+            }
+
+            if (in_array($sortBy, ['tensp', 'tensanpham', 'name'], true)) {
+                $query->orderBy('tenSanPham', $direction);
+            } elseif (in_array($sortBy, ['giaban', 'price'], true)) {
+                $query->orderBy('giaBan', $direction);
+            } elseif (in_array($sortBy, ['new', 'createdat', 'created_at'], true)) {
+                $query->orderBy('isNew', 'desc')->orderBy('id', 'desc');
+            } else {
+                $query->orderBy('id', 'desc');
+            }
+
             $perPage = (int) ($request->input('size') ?? $request->input('per_page') ?? 10);
-            $products = $query->orderBy('id', 'desc')->paginate($perPage);
+            $products = $query->paginate($perPage);
 
             $products->getCollection()->transform(function ($p) use ($targetStoreId) {
                 if ($targetStoreId) {
