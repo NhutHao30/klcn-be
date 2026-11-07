@@ -11,18 +11,112 @@ use App\Models\ChiTietDonHang;
 
 class AdminController extends Controller
 {
+    private static bool $schemaRolesChecked = false;
+
     /**
-     * Đảm bảo các vai trò hệ thống (7: Kế toán, 8: Giám đốc) và cột ca làm việc, lương tồn tại
+     * Đảm bảo các vai trò hệ thống và cấu trúc cột camelCase cho các bảng liên quan đến tài khoản
      */
-    public static function ensureRolesAndColumnsExist()
+    public static function ensureRolesAndColumnsExist(): void
     {
+        if (self::$schemaRolesChecked) {
+            return;
+        }
+        self::$schemaRolesChecked = true;
+
+        try {
+            DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+        } catch (\Throwable $eFk) {}
+
+        $tablesMap = [
+            'taikhoan' => [
+                'vaitro_id' => 'vaiTroId',
+                'google_id' => 'googleId',
+                'trang_thai' => 'trangThai',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+            'nguoidung' => [
+                'taikhoan_id' => 'taiKhoanId',
+                'cuahang_id' => 'cuaHangId',
+                'ho_ten' => 'hoTen',
+                'so_dien_thoai' => 'soDienThoai',
+                'gioi_tinh' => 'gioiTinh',
+                'ngay_sinh' => 'ngaySinh',
+                'cccd_number' => 'cccdNumber',
+                'cccd_image_url' => 'cccdImageUrl',
+                'loai_nguoidung' => 'loaiNguoiDung',
+                'diem_tich_luy' => 'diemTichLuy',
+                'tong_chi_tieu' => 'tongChiTieu',
+                'hang_thanh_vien' => 'hangThanhVien',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+            'vaitro' => [
+                'ten_vaitro' => 'tenVaiTro',
+                'mo_ta' => 'moTa',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+            'cuahang' => [
+                'ten_cuahang' => 'tenCuaHang',
+                'so_dien_thoai' => 'soDienThoai',
+                'dia_chi_chi_tiet' => 'diaChiChiTiet',
+                'ma_tinh' => 'maTinh',
+                'ma_huyen' => 'maHuyen',
+                'ma_xa' => 'maXa',
+                'ghn_shop_id' => 'ghnShopId',
+                'trang_thai' => 'trangThai',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+            'diaChi' => [
+                'nguoidung_id' => 'nguoidungId',
+                'ho_ten_nguoi_nhan' => 'hoTenNguoiNhan',
+                'so_dien_thoai' => 'soDienThoai',
+                'dia_chi_chi_tiet' => 'diaChiChiTiet',
+                'is_default' => 'isDefault',
+                'created_at' => 'createdAt',
+                'updated_at' => 'updatedAt',
+            ],
+        ];
+
+        foreach ($tablesMap as $targetTable => $colMap) {
+            try {
+                if (!\Illuminate\Support\Facades\Schema::hasTable($targetTable)) {
+                    continue;
+                }
+                foreach ($colMap as $oldCol => $newCol) {
+                    if (\Illuminate\Support\Facades\Schema::hasColumn($targetTable, $oldCol) && !\Illuminate\Support\Facades\Schema::hasColumn($targetTable, $newCol)) {
+                        try {
+                            DB::statement("ALTER TABLE `{$targetTable}` RENAME COLUMN `{$oldCol}` TO `{$newCol}`");
+                        } catch (\Throwable $eAlter) {}
+                    }
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('dia_chi') && !\Illuminate\Support\Facades\Schema::hasTable('diaChi')) {
+                DB::statement("CREATE OR REPLACE VIEW `diaChi` AS SELECT * FROM `dia_chi`");
+            }
+        } catch (\Throwable $eView) {}
+
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('nguoidung')) {
+                if (!\Illuminate\Support\Facades\Schema::hasColumn('nguoidung', 'caLamViec')) {
+                    DB::statement("ALTER TABLE `nguoidung` ADD COLUMN `caLamViec` VARCHAR(50) NULL DEFAULT 'Ca Sáng'");
+                }
+                if (!\Illuminate\Support\Facades\Schema::hasColumn('nguoidung', 'luong')) {
+                    DB::statement("ALTER TABLE `nguoidung` ADD COLUMN `luong` DECIMAL(15,2) NULL DEFAULT 0");
+                }
+            }
+        } catch (\Throwable $eCol) {}
+
         try {
             $vaitroTable = \Illuminate\Support\Facades\Schema::hasTable('vaiTro') ? 'vaiTro' : 'vaitro';
             if (\Illuminate\Support\Facades\Schema::hasTable($vaitroTable)) {
                 $tenCol = \Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, 'tenVaiTro') ? 'tenVaiTro' : 'ten_vaitro';
                 $moTaCol = \Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, 'moTa') ? 'moTa' : 'mo_ta';
-                $createdCol = \Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, 'createdAt') ? 'createdAt' : 'created_at';
-                $updatedCol = \Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, 'updatedAt') ? 'updatedAt' : 'updated_at';
 
                 $rolesToEnsure = [
                     1 => ['name' => 'ADMIN', 'desc' => 'Quản trị hệ thống'],
@@ -38,96 +132,187 @@ class AdminController extends Controller
                 foreach ($rolesToEnsure as $id => $info) {
                     $exists = DB::table($vaitroTable)->where('id', $id)->first();
                     if (!$exists) {
-                        $insertData = [
+                        DB::table($vaitroTable)->insert([
                             'id' => $id,
                             $tenCol => $info['name'],
                             $moTaCol => $info['desc'],
-                        ];
-                        if (\Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, $createdCol)) {
-                            $insertData[$createdCol] = now();
-                        }
-                        if (\Illuminate\Support\Facades\Schema::hasColumn($vaitroTable, $updatedCol)) {
-                            $insertData[$updatedCol] = now();
-                        }
-                        DB::table($vaitroTable)->insert($insertData);
+                        ]);
                     }
                 }
             }
+        } catch (\Throwable $eRole) {}
 
-            if (\Illuminate\Support\Facades\Schema::hasTable('nguoidung')) {
-                \Illuminate\Support\Facades\Schema::table('nguoidung', function (\Illuminate\Database\Schema\Blueprint $table) {
-                    if (!\Illuminate\Support\Facades\Schema::hasColumn('nguoidung', 'caLamViec')) {
-                        $table->string('caLamViec', 50)->default('Ca Sáng')->nullable();
-                    }
-                    if (!\Illuminate\Support\Facades\Schema::hasColumn('nguoidung', 'luong')) {
-                        $table->decimal('luong', 15, 2)->default(0)->nullable();
-                    }
-                });
-            }
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning("ensureRolesAndColumnsExist warning: " . $e->getMessage());
-        }
+        try {
+            DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+        } catch (\Throwable $eFk) {}
     }
 
     /**
-     * View a list of all accounts
+     * Lấy danh sách tài khoản (hỗ trợ phân quyền Quản trị viên và Quản lý chi nhánh)
      */
     public function listUsers()
     {
         self::ensureRolesAndColumnsExist();
+        \App\Services\InventoryLedgerService::ensureSchema();
 
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $query = TaiKhoan::with(['nguoidung.cuahang', 'nguoidung.diachi', 'vaitro']);
+        try {
+            $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
+            $query = TaiKhoan::with(['nguoidung.cuahang', 'vaitro']);
 
-        if ($user && (int)$user->vaiTroId === 2) {
-            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first();
-            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+            if ($user && (int)$user->vaiTroId === 2) {
+                $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first();
+                $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
 
-            $query->where(function ($q) use ($macuahang, $user) {
-                $q->where(function ($q2) use ($macuahang) {
-                    $q2->whereIn('vaiTroId', [3, 4, 5, 7, 8])
-                       ->whereHas('nguoidung', function ($q3) use ($macuahang) {
-                           $q3->where('cuaHangId', $macuahang);
-                       });
-                })->orWhere('id', $user->id);
+                $query->where(function ($q) use ($macuahang, $user) {
+                    $q->where(function ($q2) use ($macuahang) {
+                        $q2->whereIn('vaiTroId', [3, 4, 5, 7, 8])
+                           ->whereHas('nguoidung', function ($q3) use ($macuahang) {
+                               $q3->where('cuaHangId', $macuahang);
+                           });
+                    })->orWhere('id', $user->id);
+                });
+            }
+
+            $users = $query->orderBy('id', 'desc')->get()->map(function ($u) {
+                $nd = $u->nguoidung;
+                $isCustomer = (int)$u->vaiTroId === 6 || ($nd && (int)$nd->loaiNguoiDung === 0 && (int)$u->vaiTroId === 6);
+                $isAdminSuper = strtolower($u->username) === 'admin';
+
+                return [
+                    'id' => $u->id,
+                    'username' => $u->username,
+                    'USERNAME' => $u->username,
+                    'email' => $u->email,
+                    'EMAIL' => $u->email,
+                    'trangThai' => (int)$u->trangThai,
+                    'TRANGTHAI' => (int)$u->trangThai === 1 ? 'Đang làm việc' : 'Nghỉ việc',
+                    'vaiTroId' => (int)$u->vaiTroId,
+                    'MAROLE' => $u->MAROLE,
+                    'tenVaiTro' => $u->vaitro?->tenVaiTro ?? $u->tenVaiTro,
+                    'vaitro' => $u->vaitro,
+                    'loaiTaiKhoan' => $isCustomer ? 'CUSTOMER' : 'STAFF',
+                    'hoTen' => $nd?->hoTen ?? $u->username,
+                    'soDienThoai' => $nd?->soDienThoai ?? '',
+                    'cuaHangId' => $nd?->cuaHangId ?? null,
+                    'tenCuaHang' => $nd?->cuahang?->tenCuaHang ?? null,
+                    'diemTichLuy' => (int)($nd?->diemTichLuy ?? 0),
+                    'cccdNumber' => $nd?->cccdNumber ?? '',
+                    'ngaySinh' => $nd?->ngaySinh ? substr((string)$nd->ngaySinh, 0, 10) : null,
+                    'gioiTinh' => $nd?->gioiTinh ?? null,
+                    'caLamViec' => $nd?->caLamViec ?? 'Ca Sáng',
+                    'luong' => (float)($nd?->luong ?? 0),
+                    'nguoidung' => $nd,
+                    'khachhang' => $isCustomer ? $nd : null,
+                    'nhanvien' => (!$isCustomer && !$isAdminSuper) ? $nd : null,
+                    'createdAt' => $u->createdAt ?? $u->created_at,
+                    'updatedAt' => $u->updatedAt ?? $u->updated_at,
+                ];
             });
+
+            return response()->json($users);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error("listUsers Eloquent error, using raw DB fallback: " . $e->getMessage());
+
+            try {
+                $rawUsers = DB::table('taikhoan')
+                    ->leftJoin('nguoidung', function($join) {
+                        $join->on('nguoidung.taiKhoanId', '=', 'taikhoan.id');
+                    })
+                    ->leftJoin('vaitro', function($join) {
+                        $join->on('vaitro.id', '=', 'taikhoan.vaiTroId');
+                    })
+                    ->leftJoin('cuahang', function($join) {
+                        $join->on('cuahang.id', '=', 'nguoidung.cuaHangId');
+                    })
+                    ->select(
+                        'taikhoan.id',
+                        'taikhoan.username',
+                        'taikhoan.email',
+                        'taikhoan.vaiTroId',
+                        'taikhoan.trangThai',
+                        'taikhoan.createdAt',
+                        'taikhoan.updatedAt',
+                        'vaitro.tenVaiTro',
+                        'nguoidung.hoTen',
+                        'nguoidung.soDienThoai',
+                        'nguoidung.gioiTinh',
+                        'nguoidung.ngaySinh',
+                        'nguoidung.cccdNumber',
+                        'nguoidung.loaiNguoiDung',
+                        'nguoidung.cuaHangId',
+                        'nguoidung.caLamViec',
+                        'nguoidung.luong',
+                        'nguoidung.diemTichLuy',
+                        'cuahang.tenCuaHang'
+                    )
+                    ->orderBy('taikhoan.id', 'desc')
+                    ->get();
+
+                $mapped = $rawUsers->map(function ($u) {
+                    $isCustomer = (int)$u->vaiTroId === 6 || (int)$u->loaiNguoiDung === 0;
+                    $isAdminSuper = strtolower($u->username) === 'admin';
+
+                    $roleNames = [
+                        1 => 'Quản trị viên',
+                        2 => 'Quản lý chi nhánh',
+                        3 => 'Nhân viên bán hàng',
+                        4 => 'Nhân viên kho',
+                        5 => 'Nhân viên chăm sóc khách hàng',
+                        6 => 'Khách hàng',
+                        7 => 'Nhân viên kế toán',
+                        8 => 'Ban Giám đốc',
+                    ];
+
+                    $ndObj = [
+                        'hoTen' => $u->hoTen,
+                        'soDienThoai' => $u->soDienThoai,
+                        'cuaHangId' => $u->cuaHangId,
+                        'tenCuaHang' => $u->tenCuaHang,
+                        'cccdNumber' => $u->cccdNumber,
+                        'ngaySinh' => $u->ngaySinh ? substr((string)$u->ngaySinh, 0, 10) : null,
+                        'gioiTinh' => $u->gioiTinh,
+                        'caLamViec' => $u->caLamViec ?: 'Ca Sáng',
+                        'luong' => (float)($u->luong ?: 0),
+                        'diemTichLuy' => (int)($u->diemTichLuy ?: 0),
+                        'cuahang' => ['tenCuaHang' => $u->tenCuaHang, 'TENCUAHANG' => $u->tenCuaHang],
+                    ];
+
+                    return [
+                        'id' => $u->id,
+                        'username' => $u->username,
+                        'USERNAME' => $u->username,
+                        'email' => $u->email,
+                        'EMAIL' => $u->email,
+                        'trangThai' => (int)$u->trangThai,
+                        'TRANGTHAI' => (int)$u->trangThai === 1 ? 'Đang làm việc' : 'Nghỉ việc',
+                        'vaiTroId' => (int)$u->vaiTroId,
+                        'MAROLE' => (int)$u->vaiTroId,
+                        'tenVaiTro' => $u->tenVaiTro ?: ($roleNames[(int)$u->vaiTroId] ?? 'Nhân viên'),
+                        'loaiTaiKhoan' => $isCustomer ? 'CUSTOMER' : 'STAFF',
+                        'hoTen' => $u->hoTen ?: $u->username,
+                        'soDienThoai' => $u->soDienThoai ?: '',
+                        'cuaHangId' => $u->cuaHangId,
+                        'tenCuaHang' => $u->tenCuaHang,
+                        'diemTichLuy' => (int)($u->diemTichLuy ?: 0),
+                        'cccdNumber' => $u->cccdNumber ?: '',
+                        'ngaySinh' => $u->ngaySinh ? substr((string)$u->ngaySinh, 0, 10) : null,
+                        'gioiTinh' => $u->gioiTinh,
+                        'caLamViec' => $u->caLamViec ?: 'Ca Sáng',
+                        'luong' => (float)($u->luong ?: 0),
+                        'nguoidung' => $ndObj,
+                        'khachhang' => $isCustomer ? $ndObj : null,
+                        'nhanvien' => (!$isCustomer && !$isAdminSuper) ? $ndObj : null,
+                        'createdAt' => $u->createdAt,
+                        'updatedAt' => $u->updatedAt,
+                    ];
+                });
+
+                return response()->json($mapped);
+            } catch (\Throwable $eRaw) {
+                \Illuminate\Support\Facades\Log::error("listUsers raw DB error: " . $eRaw->getMessage());
+                return response()->json([], 200);
+            }
         }
-
-        $users = $query->orderBy('id', 'desc')->get()->map(function ($u) {
-            $nd = $u->nguoidung;
-            $isCustomer = (int)$u->vaiTroId === 6 || ($nd && (int)$nd->loaiNguoiDung === 0 && (int)$u->vaiTroId === 6);
-            $isAdminSuper = strtolower($u->username) === 'admin';
-
-            return [
-                'id' => $u->id,
-                'username' => $u->username,
-                'USERNAME' => $u->username,
-                'email' => $u->email,
-                'EMAIL' => $u->email,
-                'trangThai' => (int)$u->trangThai,
-                'TRANGTHAI' => (int)$u->trangThai === 1 ? 'Đang làm việc' : 'Nghỉ việc',
-                'vaiTroId' => (int)$u->vaiTroId,
-                'MAROLE' => $u->MAROLE,
-                'tenVaiTro' => $u->vaitro?->tenVaiTro ?? $u->tenVaiTro,
-                'vaitro' => $u->vaitro,
-                'loaiTaiKhoan' => $isCustomer ? 'CUSTOMER' : 'STAFF',
-                'hoTen' => $nd?->hoTen ?? $u->username,
-                'soDienThoai' => $nd?->soDienThoai ?? '',
-                'cuaHangId' => $nd?->cuaHangId ?? null,
-                'tenCuaHang' => $nd?->cuahang?->tenCuaHang ?? null,
-                'diemTichLuy' => (int)($nd?->diemTichLuy ?? 0),
-                'cccdNumber' => $nd?->cccdNumber ?? '',
-                'ngaySinh' => $nd?->ngaySinh ?? null,
-                'gioiTinh' => $nd?->gioiTinh ?? null,
-                'nguoidung' => $nd,
-                'khachhang' => $isCustomer ? $nd : null,
-                'nhanvien' => (!$isCustomer && !$isAdminSuper) ? $nd : null,
-                'createdAt' => $u->createdAt,
-                'updatedAt' => $u->updatedAt,
-            ];
-        });
-
-        return response()->json($users);
     }
 
     public function createStaff(Request $request)
