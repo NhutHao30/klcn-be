@@ -3,528 +3,1513 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\LoHangService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use App\Models\DonHang;
+use App\Models\ChiTietDonHang;
+use App\Models\LichSuTrangThaiDonHang;
+use App\Models\SanPham;
+use App\Models\KhuyenMai;
+use App\Models\NhatKyKho;
+use App\Models\TonKhoChiNhanh;
 
 class OrderController extends Controller
 {
-    protected LoHangService $loHangService;
+    private static array $statusMap = [
+        0 => 'Đã hủy',
+        1 => 'Chờ xác nhận',
+        2 => 'Đang chuẩn bị',
+        3 => 'Đang giao',
+        4 => 'Đã hoàn thành',
+        5 => 'Đã hoàn thành',
+        6 => 'Đã hoàn hàng',
+        7 => 'Chờ lấy hàng',
+        8 => 'Yêu cầu hoàn trả',
+    ];
 
-    public function __construct(LoHangService $loHangService)
-    {
-        $this->loHangService = $loHangService;
-    }
-    public function storePOS(Request $request)
-    {
-        $request->validate([
-            'cart' => 'required|array',
-            'cart.*.id' => 'required|string',
-            'cart.*.quantity' => 'required|numeric|min:1',
-            'cart.*.price' => 'required|numeric|min:0',
-        ]);
+    private static array $stringToStatusMap = [
+        'Đã hủy' => 0,
+        'Chờ xác nhận' => 1,
+        'Chờ xử lý' => 1,
+        'Đang chuẩn bị' => 2,
+        'Chờ lấy hàng' => 7,
+        'Đang giao' => 3,
+        'Đã hoàn thành' => 4,
+        'Đã hoàn hàng' => 6,
+        'Yêu cầu hoàn trả' => 8,
+        'Yêu cầu trả hàng' => 8,
+        'DA_HUY' => 0,
+        'CHO_XAC_NHAN' => 1,
+        'DANG_CHE_BIEN' => 2,
+        'CHO_LAY_HANG' => 7,
+        'DANG_GIAO' => 3,
+        'HOAN_THANH' => 4,
+        'HOAN_HANG' => 6,
+        'YEU_CAU_HOAN_HANG' => 8,
+    ];
 
-        \Illuminate\Support\Facades\DB::beginTransaction();
-        try {
-            // Tính tổng tiền
-            $total = 0;
-            foreach ($request->cart as $item) {
-                $total += $item['price'] * $item['quantity'];
-            }
-
-            // Create a sales invoice (HdBan) with a maximum length of 10 characters (varchar(10))
-            $mahd = 'HD' . substr(time(), -8);
-            // Identify the customer; if none exists, create a default visitor
-            $makh = $request->customerId;
-            if (empty($makh)) {
-                $defaultKhach = \App\Models\KhachHang::firstOrCreate(
-                    ['SDT' => '0000000000'],
-                    [
-                        'MAKH' => 'KH000000',
-                        'HOTEN' => 'Khách vãng lai (POS)',
-                        'DIEMTICHLUY' => 0
-                    ]
-                );
-                $makh = $defaultKhach->MAKH;
-            }
-
-            // Xác định chi nhánh lập hóa đơn dựa trên nhân viên đang đăng nhập
-            $maCuaHang = 1; // Mặc định là chi nhánh trung tâm
-            $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-            if ($user && in_array($user->MAROLE, [0, 1, 2])) { // Admin, Branch Manager, Staff
-                $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-                if ($nhanVien && $nhanVien->MACUAHANG) {
-                    $maCuaHang = $nhanVien->MACUAHANG;
-                }
-            }
-
-            \App\Models\HdBan::create([
-                'MAHD' => $mahd,
-                'NGAYLAP' => now(),
-                'TONGTIEN' => $total,
-                'PHUONGTHUCTHANHTOAN' => $request->paymentMethod === 'MOMO' ? 'Ví Momo P2P' : ($request->paymentMethod === 'VIETQR' ? 'Chuyển khoản VietQR' : ($request->paymentMethod === 'COD_GIAO' ? 'COD (Giao hàng)' : 'Tiền mặt')),
-                'TRANGTHAITHANHTOAN' => $request->paymentMethod === 'COD_GIAO' ? 'Đang giao' : 'Đã hoàn thành',
-                'GHICHU' => 'Khách mua tại quầy (POS)',
-                'MAKH' => $makh,
-                'MAVANDON' => null,
-                'MACUAHANG' => $maCuaHang,
-            ]);
-
-            // Set variables for inventory trigger
-            \Illuminate\Support\Facades\DB::statement('SET @inv_type = ?, @inv_ref_type = ?, @inv_ref_id = ?, @inv_username = ?', [
-                'POS_SALE', 'HdBan', $mahd, $user->USERNAME ?? null
-            ]);
-
-            // Save Sales Invoice Details
-            foreach ($request->cart as $item) {
-                \App\Models\ChiTietHdBan::create([
-                    'MAHD' => $mahd,
-                    'MASP' => $item['id'],
-                    'SOLUONG' => $item['quantity'],
-                    'DONGIA' => $item['price'],
-                ]);
-
-                // Trừ tồn kho tại cửa hàng hiện tại
-                // Trừ tồn kho bằng FEFO (ưu tiên lô gần hết hạn trước)
-                $fefoResult = $this->loHangService->getFefoLo($item['id'], $maCuaHang, $item['quantity']);
-
-                if (!empty($fefoResult)) {
-                    // Đủ hàng trong lô — trừ từng lô FEFO
-                    foreach ($fefoResult as $fefoItem) {
-                        $this->loHangService->consumeLo(
-                            $fefoItem['malohan'],
-                            $fefoItem['soLuong'],
-                            $mahd,
-                            $user?->USERNAME
-                        );
-                    }
-                    // Ghi MALOHAN (lô đầu tiên được dùng) vào chitiethdban
-                    $primaryLo = $fefoResult[0]['malohan'];
-                    \Illuminate\Support\Facades\DB::table('chitiethdban')
-                        ->where('MAHD', $mahd)
-                        ->where('MASP', $item['id'])
-                        ->update(['MALOHAN' => $primaryLo]);
-                } else {
-                    // Nếu sản phẩm đã có bảng lô hàng nhưng không có lô FEFO còn hạn -> Bị hết hạn
-                    $hasLoHang = \App\Models\LoHang::where('MASP', $item['id'])->where('MACUAHANG', $maCuaHang)->exists();
-                    if ($hasLoHang) {
-                        throw new \Exception("Sản phẩm {$item['id']} đã hết hạn sử dụng hoặc không đủ lô còn hạn để xuất cho khách!");
-                    }
-                    // Fallback: trừ tonkho_cuahang trực tiếp chỉ dành cho dữ liệu legacy không có lô
-                    $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $maCuaHang)
-                                ->where('MASP', $item['id'])->first();
-                    if ($tonKho) {
-                        \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                            ->where('MACUAHANG', $maCuaHang)
-                            ->where('MASP', $item['id'])
-                            ->update(['SOLUONG_TON' => max(0, $tonKho->SOLUONG_TON - $item['quantity'])]);
-                    }
-                }
-
-                // Trừ tồn kho thủ công (bảng sanpham) để tương thích ngược
-                $sp = \App\Models\SanPham::find($item['id']);
-                if ($sp) {
-                    $sp->SOLUONG -= $item['quantity'];
-                    $sp->save();
-                }
-            }
-
-            // Tích điểm cho khách hàng (Nếu không phải Khách vãng lai)
-            if ($makh !== 'KH000000') {
-                $khachHang = \App\Models\KhachHang::find($makh);
-                if ($khachHang) {
-                    $diemCong = floor($total / 10000); // 10k = 1 điểm
-                    $khachHang->DIEMTICHLUY += $diemCong;
-                    $khachHang->save();
-                }
-            }
-
-            \Illuminate\Support\Facades\DB::commit();
-
-            // Xóa cache vì tồn kho đã thay đổi
-            \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
-
-            return response()->json([
-                'message' => 'Thanh toán thành công',
-                'mahd' => $mahd
-            ], 200);
-
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\DB::rollBack();
-            return response()->json(['error' => 'Lỗi tạo hóa đơn: ' . $e->getMessage()], 500);
-        }
-    }
-
-    // Get the list of invoices
+    /**
+     * Customer & Admin: View order list / Sales invoices
+     */
     public function index(Request $request)
     {
-        $query = \App\Models\HdBan::with(['khachhang', 'cuahang']);
+        $user = Auth::guard('api')->user();
+        if (!$user) {
+            return response()->json(['error' => 'Chưa đăng nhập'], 401);
+        }
 
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
+        $query = DonHang::with(['chitiet.sanpham', 'cuahang', 'nguoidung', 'voucher', 'timelineGHN']);
+
+        // Customer views only own orders
+        if ($user->vaiTroId == 6) { // CUSTOMER
+            $nguoidung = $user->nguoidung;
+            $query->where('nguoidungId', $nguoidung ? $nguoidung->id : 0);
+        }
+
+        // Branch Manager views only own branch orders
+        if ($user->vaiTroId == 2) {
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first();
+            if ($staffProfile && $staffProfile->cuaHangId) {
+                $query->where('cuaHangId', $staffProfile->cuaHangId);
+            }
+        }
+
+        // Filter by numeric status
+        if ($request->filled('trangThaiDonHang')) {
+            $stVal = (int) $request->input('trangThaiDonHang');
+            if ($stVal === 0) {
+                $query->whereIn('trangThaiDonHang', [0, 6]);
+            } else {
+                $query->where('trangThaiDonHang', $stVal);
+            }
+        }
+
+        // Filter by text status (e.g. 'Chờ xử lý', 'Đang giao', 'Đã hoàn thành', 'Đã hủy')
+        $statusText = $request->input('trangThai');
+        if (!empty($statusText)) {
+            if (isset(self::$stringToStatusMap[$statusText])) {
+                $targetVal = self::$stringToStatusMap[$statusText];
+                if ($targetVal == 4) {
+                    $query->whereIn('trangThaiDonHang', [4, 5]);
+                } elseif ($targetVal == 0) {
+                    $query->whereIn('trangThaiDonHang', [0, 6]);
+                } else {
+                    $query->where('trangThaiDonHang', $targetVal);
+                }
+            }
+        }
+
+        // Search query (ma_don_hang, customer name, phone, or customer code)
+        $search = $request->input('search') ?? $request->input('searchQuery') ?? $request->input('keyword');
+        if (!empty($search)) {
             $query->where(function ($q) use ($search) {
-                $q->where('MAHD', 'like', "%{$search}%")
-                  ->orWhere('MAKH', 'like', "%{$search}%");
+                $q->where('maDonHang', 'like', "%{$search}%")
+                  ->orWhereHas('nguoidung', function ($q2) use ($search) {
+                      $q2->where('hoTen', 'like', "%{$search}%")
+                         ->orWhere('soDienThoai', 'like', "%{$search}%")
+                         ->orWhere('id', 'like', "%{$search}%");
+                  });
             });
         }
 
-        if ($request->has('trangThai') && !empty($request->trangThai)) {
-            $query->where('TRANGTHAITHANHTOAN', $request->trangThai);
-        }
+        $perPage = (int) ($request->input('size') ?? $request->input('per_page') ?? 100);
+        $paginator = $query->orderBy('id', 'desc')->paginate($perPage);
 
-        if ($request->has('maKH') && !empty($request->maKH)) {
-            $query->where('MAKH', $request->maKH);
-        }
+        $mappedContent = collect($paginator->items())->map(function ($order) {
+            $khCode = $order->nguoidung 
+                ? ('KH' . str_pad($order->nguoidung->id, 7, '0', STR_PAD_LEFT)) 
+                : 'Khách lẻ';
 
-        // Nếu là Quản lý chi nhánh (Role 1) hoặc Nhân viên (Role 2), chỉ hiển thị hóa đơn của chi nhánh đó
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if ($user && in_array($user->MAROLE, [1, 2])) {
-            $nhanVien = \App\Models\NhanVien::where('USERNAME', $user->USERNAME)->first();
-            if ($nhanVien && $nhanVien->MACUAHANG) {
-                $query->where('MACUAHANG', $nhanVien->MACUAHANG);
+            $khName = $order->nguoidung ? $order->nguoidung->hoTen : 'Khách Vãng Lai';
+            $khSdt = $order->nguoidung ? ($order->nguoidung->soDienThoai ?? '') : '';
+            if (empty($khSdt) && $order->nguoidungId) {
+                $defaultDiaChi = \App\Models\DiaChi::where('nguoidungId', $order->nguoidungId)
+                    ->whereNotNull('soDienThoai')
+                    ->where('soDienThoai', '!=', '')
+                    ->orderBy('isDefault', 'desc')
+                    ->first();
+                if ($defaultDiaChi) {
+                    $khSdt = $defaultDiaChi->soDienThoai;
+                }
             }
-        }
+            $khEmail = ($order->nguoidung && $order->nguoidung->taikhoan) ? $order->nguoidung->taikhoan->email : '';
 
-        $size = $request->input('size', 100);
-        $invoices = $query->orderBy('NGAYLAP', 'desc')->paginate($size);
+            $isGiaoTanNoi = ($order->diaChiGiaoHang && $order->diaChiGiaoHang !== 'Nhận tại cửa hàng');
+            if ($isGiaoTanNoi && empty($order->maVanDonGhn) && in_array((int)$order->trangThaiDonHang, [1, 2, 3, 7], true)) {
+                try {
+                    \App\Http\Controllers\Api\GhnController::createShippingOrderForDonHang($order);
+                } catch (\Throwable $eGhn) {}
+            }
 
-        // Normalize the response to the desired frontend format.
-        $formattedInvoices = collect($invoices->items())->map(function ($invoice) {
+            $staff = $order->nhanVienId ? \Illuminate\Support\Facades\DB::table('nguoidung')->where('id', $order->nhanVienId)->first() : null;
+            $staffName = $staff ? $staff->hoTen : ($order->loaiDonHang == 0 ? 'Hệ thống (Đặt online)' : 'Nhân viên thu ngân');
+
+            $stTitle = self::$statusMap[$order->trangThaiDonHang] ?? 'Chờ xử lý';
+
+            $isPaidOrTransferred = (int)$order->trangThaiThanhToan === 1
+                || in_array((int)$order->phuongThucThanhToan, [1, 2], true)
+                || !empty($order->minhChungThanhToan);
+            $isCodUnpaid = (int)$order->phuongThucThanhToan === 0
+                && (int)$order->trangThaiThanhToan === 0
+                && empty($order->minhChungThanhToan);
+
             return [
-                'maHD' => $invoice->MAHD,
-                'ngayLap' => $invoice->NGAYLAP,
-                'tongTien' => $invoice->TONGTIEN,
-                'trangThai' => $invoice->TRANGTHAITHANHTOAN,
-                'ghiChu' => $invoice->GHICHU,
-                'donViVanChuyen' => $invoice->DonViVanChuyen,
-                'maVanDon' => $invoice->MAVANDON,
-                'maKH' => $invoice->MAKH,
-                'hoTenKH' => $invoice->khachhang ? $invoice->khachhang->HOTEN : 'Khách vãng lai',
-                'tenCuaHang' => $invoice->cuahang ? $invoice->cuahang->TENCUAHANG : 'Không rõ'
+                'id' => $order->id,
+                'maHD' => $order->maDonHang,
+                'MAHD' => $order->maDonHang,
+                'MAHDBAN' => $order->maDonHang,
+                'tenCuaHang' => $order->cuahang ? ($order->cuahang->tenCuaHang ?? $order->cuahang->ten_cuahang ?? 'DolaBakery - Chi nhánh') : 'DolaBakery - Cửa hàng chính',
+                'cuaHangId' => $order->cuaHangId,
+                'maKH' => $khCode,
+                'tenKH' => $khName,
+                'hoTenKH' => $khName,
+                'HOTEN_KH' => $khName,
+                'TENKH' => $khName,
+                'sdtKH' => $khSdt,
+                'SDT' => $khSdt,
+                'soDienThoai' => $khSdt,
+                'nhanVienLap' => $staffName,
+                'tenNhanVien' => $staffName,
+                'NHANVIEN' => $staffName,
+                'SDT' => $khSdt,
+                'EMAIL' => $khEmail,
+                'ngayLap' => $order->createdAt ? $order->createdAt->timezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s') : '',
+                'CREATED_AT' => $order->createdAt ? $order->createdAt->timezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s') : '',
+                'NGAYTAO' => $order->createdAt ? $order->createdAt->timezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s') : '',
+                'tongTien' => (float) $order->tongThanhToan,
+                'TONGTIEN' => (float) $order->tongThanhToan,
+                'TONG_TIEN' => (float) $order->tongThanhToan,
+                'tongTienHang' => (float) ($order->tongTienHang ?: ($order->tongThanhToan - $order->phiVanChuyen + $order->soTienGiam)),
+                'soTienGiam' => (float) $order->soTienGiam,
+                'phiVanChuyen' => (float) $order->phiVanChuyen,
+                'donViVanChuyen' => $order->loaiDonHang == 1 ? 'Mua tại cửa hàng (POS)' : ($order->don_vi_van_chuyen ?? 'GHN Express'),
+                'maVanDon' => $order->maVanDonGhn ?? '',
+                'maVanDonGhn' => $order->maVanDonGhn ?? '',
+                'MAVANDON' => $order->maVanDonGhn ?? '',
+                'ghiChu' => $order->ghiChu ?? '',
+                'diaChiGiao' => $order->diaChiGiaoHang ?? '',
+                'DIACHI_GIAO' => $order->diaChiGiaoHang ?? '',
+                'lyDoHuy' => $order->lyDoHuy ?? '',
+                'ghiChuHuy' => $order->ghiChuHuy ?? '',
+                'nganHangHoanTien' => $order->nganHangHoanTien ?? '',
+                'soTaiKhoanHoanTien' => $order->soTaiKhoanHoanTien ?? '',
+                'tenNguoiNhanHoanTien' => $order->tenNguoiNhanHoanTien ?? '',
+                'soTienHoan' => $order->soTienHoan !== null ? (float)$order->soTienHoan : null,
+                'maGiaoDichHoanTien' => $order->maGiaoDichHoanTien ?? '',
+                'trangThaiHoanTien' => $order->trangThaiHoanTien ?? '',
+                'ngayHoanTien' => $order->ngayHoanTien ? \Carbon\Carbon::parse($order->ngayHoanTien)->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i') : '',
+                'ghiChuHoanTien' => $order->ghiChuHoanTien ?? '',
+                'minhChungHoanTien' => $order->minhChungHoanTien ?? null,
+                'nhanVienHoanTienId' => $order->nhanVienHoanTienId ?? null,
+                'minhChungThanhToan' => $order->minhChungThanhToan ?? null,
+                'lyDoHoanTra' => $order->lyDoHoanTra ?? '',
+                'ghiChuHoanTra' => $order->ghiChuHoanTra ?? '',
+                'hinhAnhHoanTra' => $order->hinhAnhHoanTra ?? null,
+                'ngayYeuCauHoanTra' => $order->ngayYeuCauHoanTra ? \Carbon\Carbon::parse($order->ngayYeuCauHoanTra)->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i') : '',
+                'trangThaiHoanHang' => $order->trangThaiHoanHang ?? '',
+                'lyDoTuChoiHoanTra' => $order->lyDoTuChoiHoanTra ?? '',
+                'isPaidOrTransferred' => $isPaidOrTransferred,
+                'isReturnable' => in_array((int)$order->trangThaiDonHang, [3, 4, 5], true) && empty($order->trangThaiHoanHang) && (!empty($order->updatedAt) ? now()->diffInDays(\Carbon\Carbon::parse($order->updatedAt)) <= 3 : true),
+                'isCancellable' => ((int)$order->trangThaiDonHang === 1) && $isCodUnpaid && !$isPaidOrTransferred,
+                'trangThai' => $stTitle,
+                'TRANGTHAI' => $stTitle,
+                'TRANG_THAI' => $stTitle,
+                'trangThaiDonHang' => $order->trangThaiDonHang,
+                'trangThaiThanhToan' => $order->trangThaiThanhToan,
+                'phuongThucThanhToan' => (int) $order->phuongThucThanhToan,
+                'phuongThucTT' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD (Tiền mặt)'),
+                'PHUONGTHUCTHANHTOAN' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD (Tiền mặt)'),
+                'loaiDonHang' => $order->loaiDonHang,
+                'khach_hang' => [
+                    'HOTEN' => $khName,
+                    'SDT' => $khSdt,
+                    'EMAIL' => $khEmail,
+                    'user' => [
+                        'EMAIL' => $khEmail
+                    ]
+                ]
             ];
         });
 
         return response()->json([
-            'content' => $formattedInvoices,
-            'totalElements' => $invoices->total(),
-            'totalPages' => $invoices->lastPage(),
+            'content' => $mappedContent,
+            'data' => $mappedContent,
+            'total' => $paginator->total(),
+            'current_page' => $paginator->currentPage(),
+            'last_page' => $paginator->lastPage(),
+            'per_page' => $paginator->perPage(),
         ]);
     }
 
+    /**
+     * Get single invoice details
+     */
     public function show($id)
     {
-        $invoice = \App\Models\HdBan::find($id);
-        if (!$invoice) {
-            return response()->json(['message' => 'Not found'], 404);
+        $order = DonHang::with(['chitiet.sanpham', 'cuahang', 'nguoidung', 'voucher'])
+            ->where('maDonHang', $id)
+            ->orWhere('id', $id)
+            ->first();
+
+        if (!$order) {
+            return response()->json(['error' => 'Không tìm thấy hóa đơn'], 404);
         }
-        return response()->json($invoice);
+
+        $khCode = $order->nguoidung 
+            ? ('KH' . str_pad($order->nguoidung->id, 7, '0', STR_PAD_LEFT)) 
+            : 'Khách lẻ';
+
+        $khName = $order->nguoidung ? $order->nguoidung->hoTen : 'Khách Vãng Lai';
+        $khSdt = $order->nguoidung ? ($order->nguoidung->soDienThoai ?? '') : '';
+        if (empty($khSdt) && $order->nguoidungId) {
+            $defaultDiaChi = \App\Models\DiaChi::where('nguoidungId', $order->nguoidungId)
+                ->whereNotNull('soDienThoai')
+                ->where('soDienThoai', '!=', '')
+                ->orderBy('isDefault', 'desc')
+                ->first();
+            if ($defaultDiaChi) {
+                $khSdt = $defaultDiaChi->soDienThoai;
+            }
+        }
+        $khEmail = ($order->nguoidung && $order->nguoidung->taikhoan) ? $order->nguoidung->taikhoan->email : '';
+
+        $staff = $order->nhanVienId ? \Illuminate\Support\Facades\DB::table('nguoidung')->where('id', $order->nhanVienId)->first() : null;
+        $staffName = $staff ? $staff->hoTen : ($order->loaiDonHang == 0 ? 'Hệ thống (Đặt online)' : 'Nhân viên thu ngân');
+
+        $staffRefund = $order->nhanVienHoanTienId ? \Illuminate\Support\Facades\DB::table('nguoidung')->where('id', $order->nhanVienHoanTienId)->first() : null;
+        $staffRefundName = $staffRefund ? $staffRefund->hoTen : '';
+
+        $stTitle = self::$statusMap[$order->trangThaiDonHang] ?? 'Chờ xử lý';
+
+        return response()->json([
+            'id' => $order->id,
+            'maHD' => $order->maDonHang,
+            'MAHD' => $order->maDonHang,
+            'tenCuaHang' => $order->cuahang ? $order->cuahang->ten_cuahang : 'Cửa hàng chính',
+            'maKH' => $khCode,
+            'tenKH' => $khName,
+            'hoTenKH' => $khName,
+            'HOTEN_KH' => $khName,
+            'TENKH' => $khName,
+            'sdtKH' => $khSdt,
+            'SDT' => $khSdt,
+            'soDienThoai' => $khSdt,
+            'nhanVienLap' => $staffName,
+            'tenNhanVien' => $staffName,
+            'NHANVIEN' => $staffName,
+            'SDT' => $khSdt,
+            'EMAIL' => $khEmail,
+            'ngayLap' => $order->createdAt ? $order->createdAt->timezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s') : '',
+            'CREATED_AT' => $order->createdAt ? $order->createdAt->timezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s') : '',
+            'tongTien' => (float) $order->tongThanhToan,
+            'TONGTIEN' => (float) $order->tongThanhToan,
+            'tongTienHang' => (float) ($order->tongTienHang ?: ($order->tongThanhToan - $order->phiVanChuyen + $order->soTienGiam)),
+            'soTienGiam' => (float) $order->soTienGiam,
+            'phiVanChuyen' => (float) $order->phiVanChuyen,
+            'donViVanChuyen' => $order->loaiDonHang == 1 ? 'Mua tại cửa hàng (POS)' : ($order->don_vi_van_chuyen ?? 'GHN Express'),
+            'maVanDon' => $order->maVanDonGhn ?? '',
+            'maVanDonGhn' => $order->maVanDonGhn ?? '',
+            'MAVANDON' => $order->maVanDonGhn ?? '',
+            'ghiChu' => $order->ghiChu ?? '',
+            'diaChiGiao' => $order->diaChiGiaoHang ?? '',
+            'DIACHI_GIAO' => $order->diaChiGiaoHang ?? '',
+            'lyDoHuy' => $order->lyDoHuy ?? '',
+            'ghiChuHuy' => $order->ghiChuHuy ?? '',
+            'nganHangHoanTien' => $order->nganHangHoanTien ?? '',
+            'soTaiKhoanHoanTien' => $order->soTaiKhoanHoanTien ?? '',
+            'tenNguoiNhanHoanTien' => $order->tenNguoiNhanHoanTien ?? '',
+            'soTienHoan' => $order->soTienHoan !== null ? (float)$order->soTienHoan : null,
+            'maGiaoDichHoanTien' => $order->maGiaoDichHoanTien ?? '',
+            'trangThaiHoanTien' => $order->trangThaiHoanTien ?? '',
+            'ngayHoanTien' => $order->ngayHoanTien ? \Carbon\Carbon::parse($order->ngayHoanTien)->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i') : '',
+            'ghiChuHoanTien' => $order->ghiChuHoanTien ?? '',
+            'minhChungHoanTien' => $order->minhChungHoanTien ?? null,
+            'nhanVienHoanTienId' => $order->nhanVienHoanTienId ?? null,
+            'tenNhanVienHoan' => $staffRefundName,
+            'minhChungThanhToan' => $order->minhChungThanhToan ?? null,
+            'lyDoHoanTra' => $order->lyDoHoanTra ?? '',
+            'ghiChuHoanTra' => $order->ghiChuHoanTra ?? '',
+            'hinhAnhHoanTra' => $order->hinhAnhHoanTra ?? null,
+            'ngayYeuCauHoanTra' => $order->ngayYeuCauHoanTra ? \Carbon\Carbon::parse($order->ngayYeuCauHoanTra)->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i') : '',
+            'trangThaiHoanHang' => $order->trangThaiHoanHang ?? '',
+            'lyDoTuChoiHoanTra' => $order->lyDoTuChoiHoanTra ?? '',
+            'isPaidOrTransferred' => ((int)$order->trangThaiThanhToan === 1 || in_array((int)$order->phuongThucThanhToan, [1, 2], true) || !empty($order->minhChungThanhToan)),
+            'isReturnable' => in_array((int)$order->trangThaiDonHang, [3, 4, 5], true) && empty($order->trangThaiHoanHang) && (!empty($order->updatedAt) ? now()->diffInDays(\Carbon\Carbon::parse($order->updatedAt)) <= 3 : true),
+            'isCancellable' => ((int)$order->trangThaiDonHang === 1) && ((int)$order->phuongThucThanhToan === 0) && ((int)$order->trangThaiThanhToan === 0) && empty($order->minhChungThanhToan),
+            'trangThai' => $stTitle,
+            'TRANGTHAI' => $stTitle,
+            'TRANG_THAI' => $stTitle,
+            'trangThaiDonHang' => $order->trangThaiDonHang,
+            'trangThaiThanhToan' => $order->trangThaiThanhToan,
+            'phuongThucThanhToan' => (int) $order->phuongThucThanhToan,
+            'phuongThucTT' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD (Tiền mặt)'),
+            'PHUONGTHUCTHANHTOAN' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD (Tiền mặt)'),
+            'loaiDonHang' => $order->loaiDonHang,
+            'khach_hang' => [
+                'HOTEN' => $khName,
+                'SDT' => $khSdt,
+                'EMAIL' => $khEmail,
+                'user' => [
+                    'EMAIL' => $khEmail
+                ]
+            ]
+        ]);
     }
 
+    /**
+     * Get invoice line items
+     */
     public function getDetails($id)
     {
-        $details = \App\Models\ChiTietHdBan::with('sanpham')->where('MAHD', $id)->get();
-        $formatted = $details->map(function ($item) {
+        $order = DonHang::with(['chitiet.sanpham'])
+            ->where('maDonHang', $id)
+            ->orWhere('id', $id)
+            ->first();
+
+        if (!$order) {
+            return response()->json([], 200);
+        }
+
+        // Lấy thông tin các đánh giá đã có của đơn hàng này
+        $reviews = \App\Models\DanhGiaSanPham::where('donHangId', $order->id)->get()->keyBy('sanPhamId');
+
+        $items = $order->chitiet->map(function ($item) use ($reviews) {
+            $sp = $item->sanpham;
+            $name = $sp ? $sp->tenSanPham : ('Sản phẩm #' . $item->sanPhamId);
+            $masp = $sp ? ($sp->ma_san_pham ?? ('SP' . str_pad($sp->id, 5, '0', STR_PAD_LEFT))) : ('SP' . $item->sanPhamId);
+            $sl = (int) $item->soLuong;
+            $gia = (float) $item->donGia;
+            $tt = (float) $item->thanhTien;
+
+            $rev = $reviews[$item->sanPhamId] ?? null;
+
             return [
-                'maSP' => $item->MASP,
-                'tenSP' => $item->sanpham ? $item->sanpham->TENSP : 'Sản phẩm ' . $item->MASP,
-                'soLuong' => $item->SOLUONG,
-                'donGia' => $item->DONGIA,
-                'thanhTien' => $item->SOLUONG * $item->DONGIA // Tính lại
+                'id' => $item->sanPhamId,
+                'sanPhamId' => $item->sanPhamId,
+                'maSP' => $masp,
+                'MASP' => $masp,
+                'tenSP' => $name,
+                'TENSP' => $name,
+                'soLuong' => $sl,
+                'SOLUONG' => $sl,
+                'SO_LUONG' => $sl,
+                'donGia' => $gia,
+                'DONGIA' => $gia,
+                'DON_GIA' => $gia,
+                'thanhTien' => $tt,
+                'THANHTIEN' => $tt,
+                'daDanhGia' => $rev !== null,
+                'soSao' => $rev ? (int)$rev->soSao : null,
+                'noiDung' => $rev ? $rev->noiDung : null,
+                'hinhAnhDanhGia' => $rev ? $rev->hinhAnhKemTheo : null,
+                'san_pham' => [
+                    'TENSP' => $name,
+                    'tenSanPham' => $name,
+                    'MASP' => $masp
+                ]
             ];
         });
-        return response()->json($formatted);
+
+        return response()->json($items);
     }
 
+    /**
+     * Update invoice status
+     */
     public function updateStatus(Request $request, $id)
     {
-        $invoice = \App\Models\HdBan::find($id);
-        if (!$invoice) {
-            return response()->json(['message' => 'Not found'], 404);
+        try {
+            $order = DonHang::where('maDonHang', $id)
+                ->orWhere('id', $id)
+                ->first();
+
+            if (!$order) {
+                return response()->json(['error' => 'Không tìm thấy hóa đơn'], 404);
+            }
+
+            $currentStatus = (int) $order->trangThaiDonHang;
+            if (in_array($currentStatus, [0, 4, 5], true)) {
+                $statusName = $currentStatus === 0 ? 'Đã hủy' : 'Đã hoàn thành';
+                return response()->json([
+                    'success' => false,
+                    'error' => "Đơn hàng đã ở trạng thái [{$statusName}], không thể cập nhật thêm trạng thái khác!",
+                    'message' => "Đơn hàng đã ở trạng thái [{$statusName}], không thể cập nhật thêm trạng thái khác!",
+                ], 400);
+            }
+
+            $statusText = $request->input('TRANGTHAI') ?? $request->input('TRANG_THAI') ?? $request->input('trangThai') ?? $request->input('trangThaiDonHang');
+
+            $statusMap = [
+                'CHO_XAC_NHAN' => 1,
+                'DANG_CHE_BIEN' => 2,
+                'CHO_LAY_HANG' => 7,
+                'DANG_GIAO' => 3,
+                'HOAN_THANH' => 4,
+                'DA_HUY' => 0,
+                'Chờ xác nhận' => 1,
+                'Chờ xử lý' => 1,
+                'Đang chuẩn bị' => 2,
+                'Xác nhận & Chế biến' => 2,
+                'Xác nhận và chế biến' => 2,
+                'Xác nhận' => 2,
+                'Chế biến' => 2,
+                'Đang chế biến' => 2,
+                'Chuẩn bị hàng' => 2,
+                'Chế biến xong (Tạo GHN)' => 7,
+                'Chờ lấy hàng' => 7,
+                'Đang giao' => 3,
+                'Đang giao hàng' => 3,
+                'Đã hoàn thành' => 4,
+                'Hoàn thành' => 4,
+                'Đã hủy' => 0,
+                'Hủy đơn' => 0,
+            ];
+
+            $newStatus = null;
+            if (isset($statusMap[$statusText])) {
+                $newStatus = $statusMap[$statusText];
+            } elseif (isset(self::$stringToStatusMap[$statusText])) {
+                $newStatus = self::$stringToStatusMap[$statusText];
+            } elseif (is_numeric($statusText)) {
+                $newStatus = (int) $statusText;
+            }
+
+            if ($newStatus === null) {
+                // Thử tìm kiếm mờ theo chuỗi
+                $lower = mb_strtolower(trim((string)$statusText), 'UTF-8');
+                if (str_contains($lower, 'chế biến') || str_contains($lower, 'chuẩn bị') || str_contains($lower, 'xác nhận')) {
+                    $newStatus = 2;
+                } elseif (str_contains($lower, 'chờ lấy') || str_contains($lower, 'sẵn sàng')) {
+                    $newStatus = 7;
+                } elseif (str_contains($lower, 'giao')) {
+                    $newStatus = 3;
+                } elseif (str_contains($lower, 'hoàn thành') || str_contains($lower, 'thành công')) {
+                    $newStatus = 4;
+                } elseif (str_contains($lower, 'hủy')) {
+                    $newStatus = 0;
+                } else {
+                    $newStatus = 2; // Default fallback an toàn
+                }
+            }
+
+            $order->trangThaiDonHang = $newStatus;
+
+            if (in_array($order->trangThaiDonHang, [4, 5])) {
+                $order->trangThaiThanhToan = 1;
+            }
+
+            // Tự động khởi tạo đơn GHN Express khi chuẩn bị xong bánh (chuyển sang 'Chờ lấy hàng' 7 hoặc 'Đang giao' 3)
+            $ghnMsg = '';
+            if (in_array($order->trangThaiDonHang, [7, 3]) && empty($order->maVanDonGhn)) {
+                // Ưu tiên ward/district từ request, nếu không có thì dùng giá trị đã lưu khi checkout
+                $toWardCode = $request->input('to_ward_code') ?? $request->input('ward_code') ?? $order->toWardCode;
+                $toDistrictId = $request->input('to_district_id') ?? $request->input('district_id') ?? $order->toDistrictId;
+
+                // Gọi đồng bộ tạo đơn GHN (không dispatch Job để tránh tạo đơn trùng)
+                try {
+                    $ghnRes = GhnController::createShippingOrderForDonHang($order, $toWardCode, $toDistrictId);
+                    if ($ghnRes['success']) {
+                        $ghnMsg = " " . $ghnRes['message'];
+                    } else {
+                        $ghnMsg = " (Lưu ý: " . ($ghnRes['message'] ?? 'Không thể tạo đơn GHN') . ")";
+                    }
+                } catch (\Throwable $ghnErr) {
+                    $ghnMsg = " (Không thể kết nối GHN: " . $ghnErr->getMessage() . ")";
+                }
+            }
+
+            // Lưu trực tiếp vào donHang an toàn (chống xung đột trigger)
+            try {
+                $order->save();
+            } catch (\Throwable $saveErr) {
+                \Illuminate\Support\Facades\Log::warning("Lỗi save model đơn hàng: " . $saveErr->getMessage() . ", chuyển sang update DB trực tiếp.");
+                $directUpdates = [
+                    'trangThaiDonHang' => $newStatus,
+                    'updatedAt' => now(),
+                ];
+                if (\Illuminate\Support\Facades\Schema::hasColumn('donHang', 'trang_thai_don_hang')) {
+                    $directUpdates['trang_thai_don_hang'] = $newStatus;
+                }
+                if (in_array($newStatus, [4, 5])) {
+                    $directUpdates['trangThaiThanhToan'] = 1;
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('donHang', 'trang_thai_thanhtoan')) {
+                        $directUpdates['trang_thai_thanhtoan'] = 1;
+                    }
+                }
+                DB::table('donHang')->where('id', $order->id)->update($directUpdates);
+            }
+
+            // Ghi nhận lịch sử trạng thái an toàn
+            try {
+                $historyTable = \Illuminate\Support\Facades\Schema::hasTable('lichSuTrangThaiDonHang') ? 'lichSuTrangThaiDonHang' : (\Illuminate\Support\Facades\Schema::hasTable('lich_su_trang_thai_don_hang') ? 'lich_su_trang_thai_don_hang' : null);
+                if ($historyTable) {
+                    $hasCol = fn($col) => \Illuminate\Support\Facades\Schema::hasColumn($historyTable, $col);
+                    $histRow = [];
+                    if ($hasCol('donHangId')) $histRow['donHangId'] = $order->id;
+                    elseif ($hasCol('donhang_id')) $histRow['donhang_id'] = $order->id;
+                    if ($hasCol('trangThaiCu')) $histRow['trangThaiCu'] = $currentStatus;
+                    elseif ($hasCol('trang_thai_cu')) $histRow['trang_thai_cu'] = $currentStatus;
+                    if ($hasCol('trangThaiMoi')) $histRow['trangThaiMoi'] = $newStatus;
+                    elseif ($hasCol('trang_thai_moi')) $histRow['trang_thai_moi'] = $newStatus;
+                    if ($hasCol('ghnStatusCode')) $histRow['ghnStatusCode'] = $order->maVanDonGhn ?? 'manual_update';
+                    elseif ($hasCol('ghn_status_code')) $histRow['ghn_status_code'] = $order->maVanDonGhn ?? 'manual_update';
+                    if ($hasCol('moTaChiTiet')) $histRow['moTaChiTiet'] = "Cập nhật trạng thái sang [{$newStatus}]";
+                    elseif ($hasCol('mo_ta_chi_tiet')) $histRow['mo_ta_chi_tiet'] = "Cập nhật trạng thái sang [{$newStatus}]";
+                    if ($hasCol('nguonCapNhat')) $histRow['nguonCapNhat'] = 1;
+                    elseif ($hasCol('nguon_cap_nhat')) $histRow['nguon_cap_nhat'] = 1;
+                    if ($hasCol('createdAt')) $histRow['createdAt'] = now();
+                    elseif ($hasCol('created_at')) $histRow['created_at'] = now();
+                    if ($hasCol('updatedAt')) $histRow['updatedAt'] = now();
+                    elseif ($hasCol('updated_at')) $histRow['updated_at'] = now();
+                    DB::table($historyTable)->insert($histRow);
+                }
+            } catch (\Throwable $histErr) {
+                \Illuminate\Support\Facades\Log::warning("Lỗi ghi log lịch sử đơn hàng: " . $histErr->getMessage());
+            }
+
+            // Tự động đồng bộ điểm tích lũy & hạng thành viên cho khách hàng khi đơn hàng hoàn tất
+            if (in_array((int)$order->trangThaiDonHang, [4, 5], true) && $order->nguoidung) {
+                try {
+                    $order->nguoidung->syncLoyaltyPoints();
+                } catch (\Throwable $eLoyalty) {}
+            }
+
+            // Refresh để trả về dữ liệu mới nhất (bao gồm maVanDonGhn vừa được GHN tạo)
+            try {
+                $order->refresh();
+            } catch (\Throwable $rfErr) {}
+
+            return response()->json(['message' => 'Cập nhật trạng thái thành công!' . $ghnMsg, 'data' => $order]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Lỗi updateStatus đơn hàng: ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine());
+            return response()->json(['error' => 'Lỗi khi cập nhật trạng thái đơn hàng: ' . $e->getMessage()], 400);
         }
-
-        if ($request->has('trangThai')) {
-            $newStatus = $request->trangThai;
-
-            // Validate using Database Function
-            $canTransition = \Illuminate\Support\Facades\DB::selectOne('SELECT fn_can_transition(?, ?) as can_transition', [$invoice->TRANGTHAITHANHTOAN, $newStatus])->can_transition;
-            
-            if (!$canTransition) {
-                return response()->json(['message' => 'Chuyển đổi trạng thái không hợp lệ'], 400);
-            }
-
-            // Gắn user thực hiện vào biến session DB để Trigger lưu Audit Log
-            $username = auth('api')->user()->USERNAME ?? 'system';
-            \Illuminate\Support\Facades\DB::statement('SET @audit_username = ?', [$username]);
-
-            // Nếu trạng thái là Đã duyệt/Đang giao và chưa có mã vận đơn GHN, thì đẩy sang GHN
-            if (in_array($newStatus, ['Đã duyệt', 'Đang giao', 'Đã xác nhận']) && empty($invoice->MAVANDON)) {
-
-                // Parse ward_code and district_id from GHICHU
-                $wardCode = null;
-                $districtId = null;
-                if (preg_match('/\[GHN_WARD:(.*?),GHN_DIST:(.*?)\]/', $invoice->GHICHU, $matches)) {
-                    $wardCode = $matches[1];
-                    $districtId = (int) $matches[2];
-                }
-
-                if ($wardCode && $districtId) {
-                    // Tách địa chỉ hiển thị khỏi chuỗi GHICHU
-                    $addressDisplay = preg_replace('/\[GHN_WARD:.*?\]/', '', $invoice->GHICHU);
-
-                    // Đẩy job tạo đơn vào hàng đợi
-                    \App\Jobs\PushOrderToGhnJob::dispatch($id, $wardCode, $districtId, $addressDisplay);
-                }
-            }
-
-            // Logic Hủy đơn hàng và hoàn kho
-            if ($newStatus === 'Đã hủy' && $invoice->TRANGTHAITHANHTOAN !== 'Đã hủy') {
-
-                // Nếu đơn hàng đã đẩy sang GHN, phải Hủy trên GHN
-                if (!empty($invoice->MAVANDON)) {
-                    $shopId = env('GHN_SHOP_ID');
-                    if ($invoice->MACUAHANG) {
-                        $cuaHang = \App\Models\CuaHang::find($invoice->MACUAHANG);
-                        if ($cuaHang && $cuaHang->GHN_SHOP_ID) {
-                            $shopId = $cuaHang->GHN_SHOP_ID;
-                        }
-                    }
-                    try {
-                        \Illuminate\Support\Facades\Http::withoutVerifying()->withHeaders([
-                            'Token' => env('GHN_API_TOKEN'),
-                            'ShopId' => (int)$shopId
-                        ])->post('https://online-gateway.ghn.vn/shiip/public-api/v2/switch-status/cancel', [
-                            'order_codes' => [$invoice->MAVANDON]
-                        ]);
-                    } catch (\Exception $e) {
-                        // Bỏ qua lỗi nếu không hủy được trên GHN
-                    }
-                }
-
-                // 1. Hoàn lại số lượng tồn kho
-                $items = \App\Models\ChiTietHdBan::where('MAHD', $id)->get();
-                foreach ($items as $item) {
-                    $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $invoice->MACUAHANG)
-                                ->where('MASP', $item->MASP)->first();
-                    if ($tonKho) {
-                        \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                            ->where('MACUAHANG', $invoice->MACUAHANG)
-                            ->where('MASP', $item->MASP)
-                            ->update(['SOLUONG_TON' => $tonKho->SOLUONG_TON + $item->SOLUONG]);
-                    }
-
-                    $sp = \App\Models\SanPham::find($item->MASP);
-                    if ($sp) {
-                        $sp->SOLUONG += $item->SOLUONG;
-                        $sp->save();
-                    }
-                }
-
-                // Xóa cache vì tồn kho đã thay đổi
-                \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
-
-                // 2. Hủy đơn trên GHN nếu đã có mã vận đơn
-                if (!empty($invoice->MAVANDON) && $invoice->DonViVanChuyen === 'Giao Hàng Nhanh') {
-                    \App\Jobs\CancelOrderOnGhnJob::dispatch($invoice->MAVANDON);
-                }
-            }
-
-            $invoice->TRANGTHAITHANHTOAN = $newStatus;
-            $invoice->save();
-        }
-        return response()->json(['message' => 'Cập nhật thành công', 'mavandon' => $invoice->MAVANDON]);
     }
 
     /**
-     * Customer: Xem danh sách đơn hàng của mình
+     * Update order line items and total amounts (Staff/Admin order editing)
      */
-    public function myOrders()
+    public function updateOrderItems(Request $request, $id)
     {
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if (!$user || $user->MAROLE != 3) {
-            return response()->json(['error' => 'Unauthorized'], 401);
-        }
-        $khachHang = \App\Models\KhachHang::where('USERNAME', $user->USERNAME)->first();
-        if (!$khachHang) {
-            return response()->json(['content' => []]);
+        $order = DonHang::where('maDonHang', $id)
+            ->orWhere('id', $id)
+            ->first();
+
+        if (!$order) {
+            return response()->json(['error' => 'Không tìm thấy hóa đơn'], 404);
         }
 
-        $orders = \App\Models\HdBan::with('cuahang')
-            ->where('MAKH', $khachHang->MAKH)
-            ->orderBy('NGAYLAP', 'desc')
+        $currentStatus = (int) $order->trangThaiDonHang;
+        if (in_array($currentStatus, [0, 4, 5], true)) {
+            $statusName = $currentStatus === 0 ? 'Đã hủy' : 'Đã hoàn thành';
+            return response()->json([
+                'success' => false,
+                'error' => "Đơn hàng đã ở trạng thái [{$statusName}], không thể cập nhật thêm trạng thái khác!",
+                'message' => "Đơn hàng đã ở trạng thái [{$statusName}], không thể cập nhật thêm trạng thái khác!",
+            ], 400);
+        }
+
+        $items = $request->input('items', []);
+        if (!is_array($items) || count($items) === 0) {
+            return response()->json(['error' => 'Danh sách sản phẩm chỉnh sửa không hợp lệ'], 400);
+        }
+
+        DB::beginTransaction();
+        try {
+            // First validate product existence and inventory for all items
+            foreach ($items as $item) {
+                $rawSpId = $item['sanPhamId'] ?? $item['sanpham_id'] ?? $item['id'] ?? $item['MASP'] ?? $item['maSP'] ?? null;
+                if (!$rawSpId) {
+                    continue;
+                }
+
+                $cleanId = (int) preg_replace('/\D/', '', (string) $rawSpId);
+                $sp = SanPham::where('id', $rawSpId)
+                    ->orWhere('id', $cleanId)
+                    ->first();
+
+                if (!$sp) {
+                    DB::rollBack();
+                    return response()->json(['error' => "Sản phẩm với mã ID '{$rawSpId}' không tồn tại trong hệ thống."], 400);
+                }
+
+                $requestedQty = max(1, (int)($item['soLuong'] ?? $item['SOLUONG'] ?? $item['SO_LUONG'] ?? 1));
+
+                // Check branch stock if order is linked to a store, or total stock
+                $cuaHangId = $order->cuaHangId;
+                if ($cuaHangId) {
+                    $tonKhoRec = TonKhoChiNhanh::where('cuaHangId', $cuaHangId)
+                        ->where('sanPhamId', $sp->id)
+                        ->first();
+                    $availableStock = $tonKhoRec ? (int)$tonKhoRec->soLuongTon : 0;
+                } else {
+                    $availableStock = (int) $sp->soLuongTon;
+                }
+
+                if ($requestedQty > $availableStock) {
+                    DB::rollBack();
+                    return response()->json([
+                        'error' => "Sản phẩm '{$sp->tenSanPham}' không đủ số lượng tồn kho! (Số lượng còn lại trong kho: {$availableStock}, Yêu cầu trong đơn: {$requestedQty})"
+                    ], 400);
+                }
+            }
+
+            // Delete existing line items
+            ChiTietDonHang::where('donHangId', $order->id)->delete();
+
+            $subtotal = 0;
+            foreach ($items as $item) {
+                $rawSpId = $item['sanPhamId'] ?? $item['sanpham_id'] ?? $item['id'] ?? $item['MASP'] ?? $item['maSP'] ?? null;
+                $cleanId = (int) preg_replace('/\D/', '', (string) $rawSpId);
+                $sp = SanPham::where('id', $rawSpId)
+                    ->orWhere('id', $cleanId)
+                    ->first();
+
+                if (!$sp) {
+                    continue;
+                }
+
+                $qty = max(1, (int)($item['soLuong'] ?? $item['SOLUONG'] ?? $item['SO_LUONG'] ?? 1));
+                $unitPrice = (float)($item['donGia'] ?? $item['DONGIA'] ?? $sp->giaBan ?? 0);
+                $lineTotal = $qty * $unitPrice;
+
+                ChiTietDonHang::create([
+                    'donHangId' => $order->id,
+                    'sanPhamId' => $sp->id,
+                    'soLuong' => $qty,
+                    'donGia' => $unitPrice,
+                    'thanhTien' => $lineTotal,
+                ]);
+
+                $subtotal += $lineTotal;
+            }
+
+            $shippingFee = (float)($request->input('phiVanChuyen') ?? $order->phiVanChuyen ?? 0);
+            $discount = (float)($request->input('soTienGiam') ?? $order->soTienGiam ?? 0);
+            $totalPayable = max(0, ($subtotal + $shippingFee) - $discount);
+
+            $order->tongTienHang = $subtotal;
+            $order->phiVanChuyen = $shippingFee;
+            $order->soTienGiam = $discount;
+            $order->tongThanhToan = $totalPayable;
+            try {
+                $order->save();
+            } catch (\Throwable $mErr) {
+                \Illuminate\Support\Facades\Log::warning("Order model save warning: " . $mErr->getMessage());
+            }
+
+            // Đồng bộ trực tiếp vào cơ sở dữ liệu để đảm bảo cả snake_case và camelCase đều được cập nhật 100%
+            $dbUpdates = [];
+            $donHangTbl = (new DonHang)->getTable();
+            $checkCol = fn($col) => \Illuminate\Support\Facades\Schema::hasColumn($donHangTbl, $col);
+
+            if ($checkCol('tongTienHang')) $dbUpdates['tongTienHang'] = $subtotal;
+            if ($checkCol('tong_tien_hang')) $dbUpdates['tong_tien_hang'] = $subtotal;
+            if ($checkCol('tongThanhToan')) $dbUpdates['tongThanhToan'] = $totalPayable;
+            if ($checkCol('tong_thanhtoan')) $dbUpdates['tong_thanhtoan'] = $totalPayable;
+            if ($checkCol('tongTien')) $dbUpdates['tongTien'] = $totalPayable;
+            if ($checkCol('tong_tien')) $dbUpdates['tong_tien'] = $totalPayable;
+            if ($checkCol('phiVanChuyen')) $dbUpdates['phiVanChuyen'] = $shippingFee;
+            if ($checkCol('phi_van_chuyen')) $dbUpdates['phi_van_chuyen'] = $shippingFee;
+            if ($checkCol('soTienGiam')) $dbUpdates['soTienGiam'] = $discount;
+            if ($checkCol('so_tien_giam')) $dbUpdates['so_tien_giam'] = $discount;
+            if ($checkCol('updatedAt')) $dbUpdates['updatedAt'] = now();
+            elseif ($checkCol('updated_at')) $dbUpdates['updated_at'] = now();
+
+            if (!empty($dbUpdates)) {
+                DB::table($donHangTbl)->where('id', $order->id)->update($dbUpdates);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Cập nhật nội dung đơn hàng thành công!',
+                'data' => $order->fresh()->load('chitiet.sanpham')
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Lỗi khi cập nhật đơn hàng: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Customer: Get list of my own orders
+     */
+    public function myOrders(Request $request)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) {
+            return response()->json(['error' => 'Chưa đăng nhập'], 401);
+        }
+
+        $nguoidung = $user->nguoidung;
+        $nguoidungId = $nguoidung ? $nguoidung->id : 0;
+
+        $orders = DonHang::with(['chitiet.sanpham', 'cuahang', 'nguoidung.taikhoan'])
+            ->where('nguoidungId', $nguoidungId)
+            ->orderBy('id', 'desc')
             ->get();
 
-        // Map data để Frontend dễ dùng (giống cấu trúc cũ)
-        $mapped = $orders->map(function ($order) {
+        $content = $orders->map(function ($order) {
+            $items = $order->chitiet->map(function ($ct) {
+                $sp = $ct->sanpham;
+                $spName = $sp ? ($sp->tenSanPham ?? $sp->TENSP ?? 'Sản phẩm') : 'Sản phẩm';
+                $spCode = $sp ? ($sp->MASP ?? 'SP' . $ct->sanPhamId) : ('SP' . $ct->sanPhamId);
+                $img = $sp ? ($sp->hinhAnh ?? $sp->HINHANH ?? null) : null;
+                return [
+                    'id' => $ct->id,
+                    'sanPhamId' => $ct->sanPhamId,
+                    'MASP' => $spCode,
+                    'maSP' => $spCode,
+                    'tenSP' => $spName,
+                    'TENSP' => $spName,
+                    'name' => $spName,
+                    'soLuong' => (int) $ct->soLuong,
+                    'SO_LUONG' => (int) $ct->soLuong,
+                    'quantity' => (int) $ct->soLuong,
+                    'donGia' => (float) $ct->donGia,
+                    'DONGIA' => (float) $ct->donGia,
+                    'price' => (float) $ct->donGia,
+                    'thanhTien' => (float) $ct->thanhTien,
+                    'image' => $img,
+                    'hinhAnh' => $img,
+                    'sanpham' => [
+                        'TENSP' => $spName,
+                        'tenSanPham' => $spName,
+                        'hinhAnh' => $img,
+                    ]
+                ];
+            });
+
+            $stTitle = self::$statusMap[$order->trangThaiDonHang] ?? 'Chờ xử lý';
+            $ngayTao = $order->createdAt ? $order->createdAt->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i:s') : '';
+
+            $khName = $order->nguoidung ? $order->nguoidung->hoTen : 'Khách hàng';
+            $khSdt = $order->nguoidung ? ($order->nguoidung->soDienThoai ?? '') : '';
+            if (empty($khSdt) && $order->nguoidungId) {
+                $defaultDiaChi = \App\Models\DiaChi::where('nguoidungId', $order->nguoidungId)
+                    ->whereNotNull('soDienThoai')
+                    ->where('soDienThoai', '!=', '')
+                    ->orderBy('isDefault', 'desc')
+                    ->first();
+                if ($defaultDiaChi) {
+                    $khSdt = $defaultDiaChi->soDienThoai;
+                }
+            }
+            $khEmail = ($order->nguoidung && $order->nguoidung->taikhoan) ? $order->nguoidung->taikhoan->email : '';
+
+            $isGiaoTanNoi = ($order->diaChiGiaoHang && $order->diaChiGiaoHang !== 'Nhận tại cửa hàng');
+            if ($isGiaoTanNoi && empty($order->maVanDonGhn) && in_array((int)$order->trangThaiDonHang, [1, 2, 3, 7], true)) {
+                try {
+                    \App\Http\Controllers\Api\GhnController::createShippingOrderForDonHang($order);
+                } catch (\Throwable $eGhn) {}
+            }
+
             return [
-                'maHD' => $order->MAHD,
-                'ngayLap' => $order->NGAYLAP,
-                'tongTien' => $order->TONGTIEN,
-                'hinhThucThanhToan' => $order->PHUONGTHUCTHANHTOAN,
-                'trangThai' => $order->TRANGTHAITHANHTOAN,
-                'diaChiGiao' => $order->GHICHU,
-                'maVanDon' => $order->MAVANDON,
-                'tenCuaHang' => $order->cuahang ? $order->cuahang->TENCUAHANG : 'Dola Bakery'
+                'id' => $order->id,
+                'maHD' => $order->maDonHang,
+                'MAHD' => $order->maDonHang,
+                'tenCuaHang' => $order->cuahang ? ($order->cuahang->tenCuaHang ?? $order->cuahang->ten_cuahang ?? 'Dola Bakery') : 'Dola Bakery',
+                'ngayLap' => $ngayTao,
+                'created_at' => $order->createdAt ? $order->createdAt->toISOString() : '',
+                'tongTienHang' => (float) ($order->tongTienHang ?: ($order->tongThanhToan - $order->phiVanChuyen + $order->soTienGiam)),
+                'phiVanChuyen' => (float) $order->phiVanChuyen,
+                'soTienGiam' => (float) $order->soTienGiam,
+                'tongTien' => (float) $order->tongThanhToan,
+                'TONG_TIEN' => (float) $order->tongThanhToan,
+                'total' => (float) $order->tongThanhToan,
+                'donViVanChuyen' => $order->loaiDonHang == 1 ? 'Mua tại cửa hàng (POS)' : 'Giao Hàng Nhanh (GHN Express)',
+                'maVanDon' => $order->maVanDonGhn ?? '',
+                'maVanDonGhn' => $order->maVanDonGhn ?? '',
+                'MAVANDON' => $order->maVanDonGhn ?? '',
+                'ghiChu' => $order->ghiChu ?? 'Không có',
+                'diaChiGiao' => $order->diaChiGiaoHang ?? '',
+                'diaChiGiaoHang' => $order->diaChiGiaoHang ?? '',
+                'DIACHI_GIAO' => $order->diaChiGiaoHang ?? '',
+                'lyDoHuy' => $order->lyDoHuy ?? '',
+                'ghiChuHuy' => $order->ghiChuHuy ?? '',
+                'nganHangHoanTien' => $order->nganHangHoanTien ?? '',
+                'soTaiKhoanHoanTien' => $order->soTaiKhoanHoanTien ?? '',
+                'tenNguoiNhanHoanTien' => $order->tenNguoiNhanHoanTien ?? '',
+                'soTienHoan' => $order->soTienHoan !== null ? (float)$order->soTienHoan : null,
+                'maGiaoDichHoanTien' => $order->maGiaoDichHoanTien ?? '',
+                'trangThaiHoanTien' => $order->trangThaiHoanTien ?? '',
+                'ngayHoanTien' => $order->ngayHoanTien ? \Carbon\Carbon::parse($order->ngayHoanTien)->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i') : '',
+                'ghiChuHoanTien' => $order->ghiChuHoanTien ?? '',
+                'minhChungHoanTien' => $order->minhChungHoanTien ?? null,
+                'lyDoHoanTra' => $order->lyDoHoanTra ?? '',
+                'ghiChuHoanTra' => $order->ghiChuHoanTra ?? '',
+                'hinhAnhHoanTra' => $order->hinhAnhHoanTra ?? null,
+                'ngayYeuCauHoanTra' => $order->ngayYeuCauHoanTra ? \Carbon\Carbon::parse($order->ngayYeuCauHoanTra)->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i') : '',
+                'trangThaiHoanHang' => $order->trangThaiHoanHang ?? '',
+                'lyDoTuChoiHoanTra' => $order->lyDoTuChoiHoanTra ?? '',
+                'isPaidOrTransferred' => ((int)$order->trangThaiThanhToan === 1 || in_array((int)$order->phuongThucThanhToan, [1, 2], true) || !empty($order->minhChungThanhToan)),
+                'isReturnable' => in_array((int)$order->trangThaiDonHang, [3, 4, 5], true) && empty($order->trangThaiHoanHang) && (!empty($order->updatedAt) ? now()->diffInDays(\Carbon\Carbon::parse($order->updatedAt)) <= 3 : true),
+                'isCancellable' => ((int)$order->trangThaiDonHang === 1) && ((int)$order->phuongThucThanhToan === 0) && ((int)$order->trangThaiThanhToan === 0) && empty($order->minhChungThanhToan),
+                'trangThai' => $stTitle,
+                'TRANGTHAI' => $stTitle,
+                'status' => $stTitle,
+                'trangThaiDonHang' => $order->trangThaiDonHang,
+                'trangThaiThanhToan' => $order->trangThaiThanhToan,
+                'phuongThucThanhToan' => (int) $order->phuongThucThanhToan,
+                'phuongThucTT' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD — thanh toán khi nhận hàng'),
+                'PHUONGTHUCTHANHTOAN' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD — thanh toán khi nhận hàng'),
+                'loaiDonHang' => $order->loaiDonHang == 1 ? 'Bán tại quầy' : 'Trực tuyến',
+                'minhChungThanhToan' => $order->minhChungThanhToan,
+                'tenKH' => $khName,
+                'hoTenKH' => $khName,
+                'HOTEN_KH' => $khName,
+                'sdtKH' => $khSdt,
+                'SDT' => $khSdt,
+                'EMAIL' => $khEmail,
+                'khach_hang' => [
+                    'HOTEN' => $khName,
+                    'SDT' => $khSdt,
+                    'EMAIL' => $khEmail,
+                    'user' => [
+                        'EMAIL' => $khEmail
+                    ]
+                ],
+                'chitiet' => $items,
+                'details' => $items,
+                'items' => $items,
             ];
         });
 
-        return response()->json(['content' => $mapped]);
+        return response()->json([
+            'content' => $content,
+            'data' => $content
+        ]);
     }
 
     /**
-     * Customer: Xem chi tiết đơn hàng của mình
+     * Customer: Get my order details
      */
     public function getMyOrderDetails($id)
     {
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if (!$user || $user->MAROLE != 3) {
-            return response()->json(['error' => 'Unauthorized'], 401);
-        }
-        $khachHang = \App\Models\KhachHang::where('USERNAME', $user->USERNAME)->first();
-        if (!$khachHang) {
-            return response()->json(['error' => 'Không tìm thấy KH'], 404);
+        return $this->getDetails($id);
+    }
+
+    /**
+     * Customer: Cancel order with reason
+     * Đơn hàng chỉ được hủy khi trạng thái là chờ xử lý hoặc chưa giao hàng
+     */
+    public function customerCancelOrder(Request $request, $id)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) {
+            return response()->json(['error' => 'Chưa đăng nhập'], 401);
         }
 
-        $order = \App\Models\HdBan::where('MAHD', $id)->where('MAKH', $khachHang->MAKH)->first();
+        $order = DonHang::where('maDonHang', $id)->orWhere('id', $id)->first();
         if (!$order) {
             return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
         }
 
-        $details = \App\Models\ChiTietHdBan::with('sanpham')->where('MAHD', $id)->get();
+        // Kiểm tra quyền hủy của khách hàng
+        if ($user->vaiTroId == 6 && $user->nguoidung) {
+            if ($order->nguoidungId && $order->nguoidungId !== $user->nguoidung->id) {
+                return response()->json(['error' => 'Bạn không có quyền hủy đơn hàng này'], 403);
+            }
+        }
 
-        $mapped = $details->map(function ($detail) {
-            return [
-                'maHD' => $detail->MAHD,
-                'maSP' => $detail->MASP,
-                'tenSP' => $detail->sanpham ? $detail->sanpham->TENSP : 'Sản phẩm đã bị xóa',
-                'hinhAnh' => $detail->sanpham ? $detail->sanpham->HINHANH : null,
-                'soLuong' => $detail->SOLUONG,
-                'donGia' => $detail->DONGIA,
-                'thanhTien' => $detail->SOLUONG * $detail->DONGIA
-            ];
-        });
+        // QUY TẮC NGHIỆP VỤ BẮT BUỘC:
+        // 1. Chỉ cho phép hủy khi trạng thái đơn đang là "Chờ xử lý" (1: Chờ xác nhận / Chờ xử lý ban đầu).
+        if ((int)$order->trangThaiDonHang !== 1) {
+            return response()->json([
+                'error' => 'Chỉ cho phép hủy đơn hàng khi trạng thái đang là Chờ xử lý! Đơn hàng đã được xác nhận hoặc đang vận chuyển không thể hủy.'
+            ], 400);
+        }
 
-        return response()->json($mapped);
-    }
+        // 2. Chỉ cho phép hủy khi khách hàng chọn thanh toán bằng COD (phuongThucThanhToan == 0) và chưa chuyển khoản.
+        // Trường hợp khách hàng ĐÃ CHUYỂN KHOẢN cho đơn hàng đó -> KHÔNG CHO HỦY dù trạng thái đơn có là Chờ xử lý,
+        // nhưng sẽ cho hoàn hàng khi nhận hàng (chụp ảnh trạng thái sản phẩm + kê khai tài khoản chờ hoàn tiền + đợi nhân viên xác nhận).
+        $isPaidOrTransferred = (int)$order->trangThaiThanhToan === 1
+            || in_array((int)$order->phuongThucThanhToan, [1, 2], true)
+            || !empty($order->minhChungThanhToan);
 
-    public function applyVoucher(Request $request)
-    {
-        $request->validate([
-            'voucher_code' => 'required|string',
-            'subtotal' => 'required|numeric|min:0'
+        if ($isPaidOrTransferred) {
+            return response()->json([
+                'error' => 'Đơn hàng đã chuyển khoản thanh toán nên không thể hủy trực tiếp (dù đang ở trạng thái Chờ xử lý). Quý khách sẽ được quyền Hoàn hàng khi nhận hàng: chụp ảnh trạng thái sản phẩm, kê khai tài khoản chờ hoàn tiền và đợi nhân viên xác nhận!'
+            ], 400);
+        }
+
+        $lyDoHuy = trim((string)($request->input('lyDoHuy') ?? $request->input('reason') ?? $request->input('ly_do_huy') ?? ''));
+        if (empty($lyDoHuy)) {
+            return response()->json(['error' => 'Vui lòng chọn 1 trong các lý do hủy đơn!'], 422);
+        }
+
+        $ghiChuHuy = trim((string)($request->input('ghiChuHuy') ?? $request->input('note') ?? $request->input('noiDungBoSung') ?? $request->input('noi_dung_bo_sung') ?? ''));
+
+        $nganHangHoan = trim((string)($request->input('nganHangHoanTien') ?? $request->input('ngan_hang_hoan') ?? $request->input('bank') ?? ''));
+        $soTaiKhoanHoan = trim((string)($request->input('soTaiKhoanHoanTien') ?? $request->input('so_tai_khoan_hoan') ?? $request->input('accountNo') ?? ''));
+        $tenNguoiNhanHoan = trim((string)($request->input('tenNguoiNhanHoanTien') ?? $request->input('chu_tai_khoan_hoan') ?? $request->input('accountName') ?? ''));
+
+        $oldStatus = (int) $order->trangThaiDonHang;
+        $order->trangThaiDonHang = 0; // 0: DA_HUY
+        $order->lyDoHuy = $lyDoHuy;
+        $order->ghiChuHuy = $ghiChuHuy;
+
+        // Nếu đơn đã từng thanh toán trực tuyến hoặc chuyển khoản -> Chuyển sang Hoàn tiền (2)
+        $isPaidOnline = (int)$order->trangThaiThanhToan === 1 || in_array((int)$order->phuongThucThanhToan, [1, 2]);
+        if ($isPaidOnline) {
+            $order->trangThaiThanhToan = 2; // 2: HOAN_TIEN (Chờ hoàn tiền)
+            $order->trangThaiHoanTien = 'CHO_HOAN_TIEN';
+        }
+
+        if ($nganHangHoan) {
+            $order->nganHangHoanTien = $nganHangHoan;
+        }
+        if ($soTaiKhoanHoan) {
+            $order->soTaiKhoanHoanTien = $soTaiKhoanHoan;
+        }
+        if ($tenNguoiNhanHoan) {
+            $order->tenNguoiNhanHoanTien = mb_strtoupper($tenNguoiNhanHoan, 'UTF-8');
+        }
+
+        $order->save();
+
+        // Hoàn trả lại số lượng tồn kho cho chi nhánh
+        if ($order->cuaHangId) {
+            foreach ($order->chitiet as $item) {
+                $tonKho = TonKhoChiNhanh::where('cuaHangId', $order->cuaHangId)
+                    ->where('sanPhamId', $item->sanPhamId)
+                    ->first();
+                if ($tonKho) {
+                    $tonKho->increment('soLuongTon', $item->soLuong);
+                    \App\Services\InventoryLedgerService::record(
+                        (int)$order->cuaHangId,
+                        (int)$item->sanPhamId,
+                        1,
+                        (int)$item->soLuong,
+                        $order->maDonHang ?? ('HD' . $order->id),
+                        (int)$tonKho->fresh()->soLuongTon
+                    );
+                }
+            }
+        }
+
+        // Hoàn lại voucher nếu khách có dùng
+        if (!empty($order->maVoucher) && $order->nguoidungId) {
+            DB::table('voucher_khachhang')
+                ->where('nguoidungId', $order->nguoidungId)
+                ->where('maVoucher', $order->maVoucher)
+                ->update([
+                    'trangThai' => 0,
+                    'ngaySuDung' => null,
+                    'maDonHang' => null
+                ]);
+
+            $voucherObj = \App\Models\Voucher::where('MA_VOUCHER', $order->maVoucher)->first();
+            if ($voucherObj && $voucherObj->SO_LUONG_DA_DUNG > 0) {
+                $voucherObj->decrement('SO_LUONG_DA_DUNG');
+            }
+        }
+
+        // Ghi vết vào lịch sử trạng thái
+        LichSuTrangThaiDonHang::create([
+            'donHangId' => $order->id,
+            'trangThaiCu' => $oldStatus,
+            'trangThaiMoi' => 0,
+            'ghnStatusCode' => 'cancel',
+            'moTaChiTiet' => "Khách hàng hủy đơn: {$lyDoHuy}" . ($ghiChuHuy ? " (Bổ sung: {$ghiChuHuy})" : ""),
+            'nguonCapNhat' => 2, // Khách hàng
         ]);
 
-        $code = $request->voucher_code;
-        $subtotal = $request->subtotal;
-
-        $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $khachHang = \App\Models\KhachHang::where('USERNAME', $user->USERNAME)->first();
-
-        if (!$khachHang) {
-            return response()->json(['error' => 'Bạn phải là khách hàng để dùng voucher'], 400);
-        }
-
-        $voucher = \App\Models\KhuyenMai::where('MA_VOUCHER', $code)->first();
-
-        if (!$voucher) {
-            return response()->json(['error' => 'Mã giảm giá không tồn tại'], 404);
-        }
-
-        if (!$voucher->is_valid) {
-            return response()->json(['error' => 'Mã giảm giá đã hết hạn, bị vô hiệu hóa hoặc hết lượt sử dụng'], 400);
-        }
-
-        if ($subtotal < $voucher->DON_TOI_THIEU) {
-            return response()->json(['error' => 'Đơn hàng chưa đạt giá trị tối thiểu để dùng mã này (' . number_format($voucher->DON_TOI_THIEU) . 'đ)'], 400);
-        }
-
-        // Check if user already used this voucher
-        $alreadyUsed = \App\Models\KhuyenMaiKhachHang::where('MA_VOUCHER', $code)
-            ->where('MAKH', $khachHang->MAKH)
-            ->exists();
-
-        if ($alreadyUsed) {
-            return response()->json(['error' => 'Bạn đã sử dụng mã giảm giá này rồi'], 400);
-        }
-
-        // Calculate discount
-        $discountAmount = 0;
-        if ($voucher->LOAI_GIAM === 'PHAN_TRAM') {
-            $discountAmount = $subtotal * ($voucher->GIA_TRI / 100);
-            if ($voucher->GIAM_TOI_DA && $discountAmount > $voucher->GIAM_TOI_DA) {
-                $discountAmount = $voucher->GIAM_TOI_DA;
+        // Hủy đơn trên GHN nếu đơn đã được đẩy mã vận đơn sang GHN
+        if (!empty($order->maVanDonGhn)) {
+            try {
+                \App\Jobs\CancelOrderOnGhnJob::dispatch($order->maVanDonGhn);
+            } catch (\Exception $eGhn) {
+                \Illuminate\Support\Facades\Log::warning("Không thể dispatch job hủy GHN: " . $eGhn->getMessage());
             }
-        } else {
-            $discountAmount = $voucher->GIA_TRI;
-        }
-
-        // Ensure discount doesn't exceed subtotal
-        if ($discountAmount > $subtotal) {
-            $discountAmount = $subtotal;
-        }
-
-        return response()->json([
-            'message' => 'Áp dụng mã giảm giá thành công',
-            'voucher_code' => $voucher->MA_VOUCHER,
-            'discount_amount' => $discountAmount,
-            'voucher_name' => $voucher->TEN_VOUCHER
-        ]);
-    }
-
-    public function customerCancelOrder($mahd)
-    {
-        $user = auth('api')->user();
-        if (!$user || $user->MAROLE != 3) {
-            return response()->json(['error' => 'Unauthorized'], 401);
-        }
-
-        $khachHang = \App\Models\KhachHang::where('USERNAME', $user->USERNAME)->first();
-        if (!$khachHang) {
-            return response()->json(['error' => 'Không tìm thấy thông tin khách hàng'], 404);
-        }
-
-        $order = \App\Models\HdBan::where('MAHD', $mahd)->where('MAKH', $khachHang->MAKH)->first();
-        if (!$order) {
-            return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
-        }
-
-        // Call Stored Procedure for cancellation (Handles State Machine & Audit)
-        try {
-            \Illuminate\Support\Facades\DB::statement('CALL sp_cancel_order(?, ?)', [
-                $mahd, 
-                $user->USERNAME
-            ]);
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
-        }
-
-        // Hoàn lại số lượng tồn kho
-        $items = \App\Models\ChiTietHdBan::where('MAHD', $mahd)->get();
-        foreach ($items as $item) {
-            $tonKho = \App\Models\TonKhoCuaHang::where('MACUAHANG', $order->MACUAHANG)
-                        ->where('MASP', $item->MASP)->first();
-            if ($tonKho) {
-                \Illuminate\Support\Facades\DB::table('tonkho_cuahang')
-                    ->where('MACUAHANG', $order->MACUAHANG)
-                    ->where('MASP', $item->MASP)
-                    ->update(['SOLUONG_TON' => $tonKho->SOLUONG_TON + $item->SOLUONG]);
-            }
-
-            $sp = \App\Models\SanPham::find($item->MASP);
-            if ($sp) {
-                $sp->SOLUONG += $item->SOLUONG;
-                $sp->save();
-            }
-        }
-
-        // Xóa cache vì tồn kho đã thay đổi
-        \Illuminate\Support\Facades\Cache::tags(['products'])->flush();
-
-        if ($order->MAVANDON) {
-            \App\Jobs\CancelOrderOnGhnJob::dispatch($order->MAVANDON);
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'Hủy đơn hàng thành công'
+            'message' => 'Đã hủy đơn hàng thành công!',
+            'data' => $order
+        ]);
+    }
+
+    /**
+     * Admin/Staff confirm refund completed for customer
+     */
+    public function refundOrder(Request $request, $id)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) {
+            return response()->json(['error' => 'Chưa đăng nhập'], 401);
+        }
+
+        $order = DonHang::where('maDonHang', $id)->orWhere('id', $id)->first();
+        if (!$order) {
+            return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
+        }
+
+        $ghiChu = trim((string)($request->input('ghiChu') ?? $request->input('note') ?? $request->input('ghiChuHoanTien') ?? 'Đã hoàn tiền cho khách qua chuyển khoản'));
+        $soTienHoan = (float)($request->input('soTienHoan') ?? $request->input('amount') ?? $order->tongThanhToan);
+        $maGiaoDich = trim((string)($request->input('maGiaoDichHoanTien') ?? $request->input('transactionCode') ?? $request->input('maGD') ?? ''));
+
+        // Handle upload of refund proof file (ảnh biên lai/chuyển tiền hoàn)
+        $proofUrl = null;
+        if ($request->hasFile('minhChungHoanTien') || $request->hasFile('receipt') || $request->hasFile('proof') || $request->hasFile('minhChung') || $request->hasFile('image')) {
+            $file = $request->file('minhChungHoanTien') ?? $request->file('receipt') ?? $request->file('proof') ?? $request->file('minhChung') ?? $request->file('image');
+            try {
+                $uploadService = new \App\Services\UploadService();
+                $proofUrl = $uploadService->uploadImage($file, 'refunds');
+            } catch (\Exception $eUpload) {
+                \Illuminate\Support\Facades\Log::warning("Lỗi upload minh chứng hoàn tiền: " . $eUpload->getMessage());
+            }
+        } elseif ($request->input('minhChungHoanTien') || $request->input('proofUrl')) {
+            $proofUrl = $request->input('minhChungHoanTien') ?? $request->input('proofUrl');
+        }
+
+        $order->trangThaiThanhToan = 3; // 3: DA_HOAN_TIEN
+        $order->trangThaiHoanTien = 'DA_HOAN_TIEN';
+        $order->ngayHoanTien = now();
+        $order->ghiChuHoanTien = $ghiChu;
+        $order->soTienHoan = $soTienHoan;
+        if ($maGiaoDich) {
+            $order->maGiaoDichHoanTien = $maGiaoDich;
+        }
+        if ($proofUrl) {
+            $order->minhChungHoanTien = $proofUrl;
+        }
+        if ($user && $user->nguoidung) {
+            $order->nhanVienHoanTienId = $user->nguoidung->id;
+        }
+        $order->save();
+
+        $staffName = ($user && $user->nguoidung) ? $user->nguoidung->hoTen : 'Nhân viên';
+
+        // Ghi vết vào lịch sử trạng thái
+        LichSuTrangThaiDonHang::create([
+            'donHangId' => $order->id,
+            'trangThaiCu' => $order->trangThaiDonHang,
+            'trangThaiMoi' => $order->trangThaiDonHang,
+            'ghnStatusCode' => 'refunded',
+            'moTaChiTiet' => "{$staffName} xác nhận hoàn tiền: " . number_format($soTienHoan, 0, ',', '.') . "đ" . ($maGiaoDich ? " (Mã GD: {$maGiaoDich})" : "") . ($ghiChu ? " - Ghi chú: {$ghiChu}" : ""),
+            'nguonCapNhat' => 1, // Nhân viên
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Đã xác nhận hoàn tiền thành công (" . number_format($soTienHoan, 0, ',', '.') . "đ) cho đơn hàng #{$order->maDonHang}!",
+            'data' => [
+                'id' => $order->id,
+                'maDonHang' => $order->maDonHang,
+                'trangThaiThanhToan' => $order->trangThaiThanhToan,
+                'trangThaiHoanTien' => $order->trangThaiHoanTien,
+                'soTienHoan' => (float)$order->soTienHoan,
+                'maGiaoDichHoanTien' => $order->maGiaoDichHoanTien,
+                'minhChungHoanTien' => $order->minhChungHoanTien,
+                'tenNhanVienHoan' => $staffName,
+                'ngayHoanTien' => $order->ngayHoanTien ? $order->ngayHoanTien->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i') : '',
+                'ghiChuHoanTien' => $order->ghiChuHoanTien,
+            ]
+        ]);
+    }
+
+    /**
+     * Customer: Checkout Online (Thông qua Stored Procedure sp_checkout_online)
+     */
+    public function checkoutOnline(Request $request)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) {
+            return response()->json(['error' => 'Chưa đăng nhập'], 401);
+        }
+
+        $nguoidung = $user->nguoidung;
+        if (!$nguoidung) {
+            return response()->json(['error' => 'Không tìm thấy hồ sơ người dùng'], 404);
+        }
+
+        $request->validate([
+            'cuaHangId' => 'required|exists:cuahang,id',
+            'items' => 'required|array|min:1',
+            'items.*.sanpham_id' => 'required|exists:sanPham,id',
+            'items.*.so_luong' => 'required|integer|min:1',
+            'diaChiGiaoHang' => 'required|string|max:255',
+            'phuongThucThanhToan' => 'required|integer|in:0,1,2',
+            'ma_voucher' => 'nullable|string',
+        ]);
+
+        try {
+            DB::statement('CALL sp_checkout_online(?, ?, ?, ?, ?, ?, ?, @donhang_id, @ma_don_hang, @error)', [
+                $nguoidung->id,
+                $request->cuaHangId,
+                $request->diaChiGiaoHang,
+                $request->phuongThucThanhToan,
+                $request->ma_voucher ?? null,
+                $request->ghiChu ?? null,
+                json_encode($request->items),
+            ]);
+
+            $res = DB::select('SELECT @donhang_id AS donhang_id, @ma_don_hang AS ma_don_hang, @error AS error')[0];
+
+            if ($res->error) {
+                return response()->json(['error' => 'Đặt hàng thất bại: ' . $res->error], 500);
+            }
+
+            $donHang = DonHang::find($res->donHangId);
+            return response()->json(['message' => 'Đặt hàng trực tuyến thành công', 'data' => $donHang->load('chitiet')], 201);
+
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Đặt hàng thất bại: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Customer: Cancel order if not yet shipped
+     */
+    public function cancelOrder(Request $request, $id)
+    {
+        return $this->customerCancelOrder($request, $id);
+    }
+
+    /**
+     * GHN Webhook Handler
+     */
+    public function handleGHNWebhook(Request $request)
+    {
+        $maVanDon = $request->OrderCode ?? $request->ma_van_don;
+        $ghnStatusCode = $request->Status ?? $request->ghnStatusCode;
+
+        if (!$maVanDon) {
+            return response()->json(['error' => 'Mã vận đơn không hợp lệ'], 400);
+        }
+
+        DB::statement('CALL sp_handle_ghn_webhook(?, ?, @donhang_id, @error)', [
+            $maVanDon,
+            $ghnStatusCode,
+        ]);
+
+        $res = DB::select('SELECT @donhang_id AS donhang_id, @error AS error')[0];
+
+        if ($res->error) {
+            return response()->json(['error' => $res->error], 404);
+        }
+
+        return response()->json(['success' => true, 'message' => 'Cập nhật Webhook GHN thành công']);
+    }
+
+    /**
+     * POS Checkout Proxy Method
+     */
+    public function storePOS(Request $request)
+    {
+        return (new PosShiftController())->posCheckout($request);
+    }
+
+    /**
+     * Xác nhận kiểm định hàng hoàn (Dành cho nhân viên kiểm tra bánh bị hoàn trả)
+     */
+    public function confirmReturnInspection(Request $request, $id)
+    {
+        $order = DonHang::where('maDonHang', $id)
+            ->orWhere('id', $id)
+            ->orWhere('maVanDonGhn', $id)
+            ->first();
+
+        if (!$order) {
+            return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
+        }
+
+        $restock = filter_var($request->input('restock', true), FILTER_VALIDATE_BOOLEAN);
+        $reason = $request->input('reason', 'Nhân viên đã kiểm tra chất lượng hàng hoàn');
+
+        $oldStatus = $order->trangThaiDonHang;
+        $order->trangThaiDonHang = 6; // HOAN_HANG (Đã hoàn tất kiểm định hoàn)
+
+        // Nếu bánh còn dùng được -> cộng lại vào tồn kho
+        if ($restock) {
+            foreach ($order->chitiet as $item) {
+                $tonKho = \App\Models\TonKhoChiNhanh::where('cuaHangId', $order->cuaHangId)
+                    ->where('sanPhamId', $item->sanPhamId)
+                    ->first();
+                if ($tonKho) {
+                    $tonKho->increment('soLuongTon', $item->soLuong);
+                    \App\Services\InventoryLedgerService::record(
+                        (int)$order->cuaHangId,
+                        (int)$item->sanPhamId,
+                        1,
+                        (int)$item->soLuong,
+                        $order->maDonHang ?? ('HD' . $order->id),
+                        (int)$tonKho->fresh()->soLuongTon
+                    );
+                }
+            }
+            $desc = "Xác nhận hàng hoàn: Bánh còn dùng được -> Đã cộng trả lại kho. Ghi chú: {$reason}";
+        } else {
+            $desc = "Xác nhận hàng hoàn: Bánh bị hỏng/tiêu hủy -> KHÔNG nhập lại kho. Ghi chú: {$reason}";
+        }
+
+        // Nếu đơn đã từng thanh toán trực tuyến -> chuyển sang trạng thái Hoàn tiền (2)
+        if ($order->trangThaiThanhToan == 1) {
+            $order->trangThaiThanhToan = 2; // HOAN_TIEN
+        }
+
+        $order->save();
+
+        \App\Models\LichSuTrangThaiDonHang::create([
+            'donHangId' => $order->id,
+            'trangThaiCu' => $oldStatus,
+            'trangThaiMoi' => 6,
+            'ghnStatusCode' => $order->ghnStatusCode ?? 'returned_inspected',
+            'moTaChiTiet' => $desc,
+            'nguonCapNhat' => 1, // Nhân viên
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => $desc,
+            'data' => $order->refresh()
+        ]);
+    }
+
+    /**
+     * Khách hàng: Gửi yêu cầu Trả hàng & Hoàn tiền khi đơn đã giao (hỏng hóc hoặc trong hạn đổi trả)
+     */
+    public function customerRequestReturn(Request $request, $id)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) {
+            return response()->json(['error' => 'Chưa đăng nhập'], 401);
+        }
+
+        $order = DonHang::where('maDonHang', $id)->orWhere('id', $id)->first();
+        if (!$order) {
+            return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
+        }
+
+        // Kiểm tra quyền
+        if ($user->vaiTroId == 6 && $user->nguoidung) {
+            if ($order->nguoidungId && $order->nguoidungId !== $user->nguoidung->id) {
+                return response()->json(['error' => 'Bạn không có quyền gửi yêu cầu cho đơn hàng này'], 403);
+            }
+        }
+
+        // Cho phép hoàn hàng khi nhận hàng (3: Đang giao đến khách / 4, 5: Đã giao / Hoàn thành)
+        if (!in_array((int)$order->trangThaiDonHang, [3, 4, 5], true)) {
+            return response()->json([
+                'error' => 'Chỉ có thể yêu cầu hoàn hàng khi nhận hàng (đơn hàng đang giao đến bạn hoặc đã giao thành công)!'
+            ], 400);
+        }
+
+        // Kiểm tra nếu đã yêu cầu hoàn trả hoặc đã hoàn
+        if ((int)$order->trangThaiDonHang === 8 || $order->trangThaiHoanHang === 'CHO_DUYET') {
+            return response()->json([
+                'error' => 'Đơn hàng này đang có yêu cầu hoàn trả chờ nhân viên xác nhận, vui lòng không gửi lại!'
+            ], 400);
+        }
+        if ((int)$order->trangThaiDonHang === 6 || $order->trangThaiHoanHang === 'DA_HOAN_HANG') {
+            return response()->json(['error' => 'Đơn hàng này đã được xử lý hoàn trả trước đó!'], 400);
+        }
+
+        // Kiểm tra thời hạn đổi trả (trong vòng 3 ngày kể từ khi đơn hoàn thành)
+        $deliveryDate = $order->updatedAt ?? $order->createdAt;
+        if ($deliveryDate && now()->diffInDays(\Carbon\Carbon::parse($deliveryDate)) > 3) {
+            return response()->json([
+                'error' => 'Đã quá thời hạn đổi trả quy định (3 ngày kể từ ngày nhận hàng). Không thể gửi yêu cầu hoàn trả!'
+            ], 400);
+        }
+
+        $lyDo = trim((string)($request->input('lyDoHoanTra') ?? $request->input('reason') ?? ''));
+        if (empty($lyDo)) {
+            return response()->json(['error' => 'Vui lòng chọn hoặc nhập lý do hoàn trả hàng!'], 422);
+        }
+
+        $ghiChu = trim((string)($request->input('ghiChuHoanTra') ?? $request->input('note') ?? ''));
+        $nganHang = trim((string)($request->input('nganHangHoanTien') ?? $request->input('bank') ?? ''));
+        $soTaiKhoan = trim((string)($request->input('soTaiKhoanHoanTien') ?? $request->input('accountNo') ?? ''));
+        $tenNguoiNhan = trim((string)($request->input('tenNguoiNhanHoanTien') ?? $request->input('accountName') ?? ''));
+
+        // Xử lý upload ảnh chụp trạng thái sản phẩm khi nhận hàng (BẮT BUỘC)
+        $proofImage = null;
+        if ($request->hasFile('hinhAnhHoanTra') || $request->hasFile('image') || $request->hasFile('evidence')) {
+            $file = $request->file('hinhAnhHoanTra') ?? $request->file('image') ?? $request->file('evidence');
+            try {
+                $uploadService = new \App\Services\UploadService();
+                $proofImage = $uploadService->uploadImage($file, 'returns');
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning("Lỗi upload ảnh minh chứng hoàn trả: " . $e->getMessage());
+                try {
+                    $destDir = public_path('assets/returns');
+                    if (!is_dir($destDir)) {
+                        @mkdir($destDir, 0775, true);
+                    }
+                    $filename = time() . '_return_' . preg_replace('/[^a-zA-Z0-9_\.-]/', '_', $file->getClientOriginalName());
+                    $file->move($destDir, $filename);
+                    $proofImage = '/assets/returns/' . $filename;
+                } catch (\Throwable $eFallback) {
+                    $mime = $file->getMimeType() ?: 'image/jpeg';
+                    $proofImage = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($file->getRealPath()));
+                }
+            }
+        } elseif ($request->input('hinhAnhHoanTra') || $request->input('imageUrl')) {
+            $proofImage = $request->input('hinhAnhHoanTra') ?? $request->input('imageUrl');
+        }
+
+        if (empty($proofImage)) {
+            return response()->json([
+                'error' => 'Vui lòng chụp hoặc tải lên ảnh trạng thái sản phẩm khi nhận hàng để làm minh chứng hoàn hàng!'
+            ], 422);
+        }
+
+        // Bắt buộc kê khai thông tin tài khoản ngân hàng chờ hoàn tiền
+        if (empty($nganHang) || empty($soTaiKhoan) || empty($tenNguoiNhan)) {
+            return response()->json([
+                'error' => 'Vui lòng kê khai đầy đủ Ngân hàng, Số tài khoản và Tên chủ tài khoản để chờ hoàn tiền!'
+            ], 422);
+        }
+
+        $oldStatus = (int) $order->trangThaiDonHang;
+        $order->trangThaiDonHang = 8; // 8: YEU_CAU_HOAN_HANG (Chờ nhân viên xác nhận)
+        $order->trangThaiHoanHang = 'CHO_DUYET';
+        $order->lyDoHoanTra = $lyDo;
+        $order->ghiChuHoanTra = $ghiChu;
+        $order->ngayYeuCauHoanTra = now();
+        $order->hinhAnhHoanTra = $proofImage;
+        $order->nganHangHoanTien = $nganHang;
+        $order->soTaiKhoanHoanTien = $soTaiKhoan;
+        $order->tenNguoiNhanHoanTien = mb_strtoupper($tenNguoiNhan, 'UTF-8');
+        $order->soTienHoan = $order->tongThanhToan;
+        $order->trangThaiThanhToan = 2; // 2: CHO_HOAN_TIEN
+        $order->trangThaiHoanTien = 'CHO_HOAN_TIEN';
+
+        $order->save();
+
+        // Ghi vết vào lịch sử trạng thái
+        LichSuTrangThaiDonHang::create([
+            'donHangId' => $order->id,
+            'trangThaiCu' => $oldStatus,
+            'trangThaiMoi' => 8,
+            'ghnStatusCode' => 'return_requested',
+            'moTaChiTiet' => "Khách hàng yêu cầu Hoàn hàng & Hoàn tiền khi nhận hàng. Lý do: {$lyDo}. Chi tiết: {$ghiChu}. Ngân hàng chờ hoàn tiền: {$nganHang} - STK: {$soTaiKhoan} ({$order->tenNguoiNhanHoanTien})",
+            'nguonCapNhat' => 2, // Khách hàng
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Đã gửi yêu cầu Hoàn hàng & Kê khai tài khoản hoàn tiền thành công! Vui lòng đợi nhân viên xác nhận và hoàn tiền.',
+            'data' => $order->refresh()
+        ]);
+    }
+
+    /**
+     * Admin/Staff duyệt yêu cầu hoàn trả & hoàn tiền cho khách
+     */
+    public function adminApproveReturn(Request $request, $id)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) return response()->json(['error' => 'Chưa đăng nhập'], 401);
+
+        $order = DonHang::where('maDonHang', $id)->orWhere('id', $id)->first();
+        if (!$order) return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
+
+        $restock = filter_var($request->input('restock', false), FILTER_VALIDATE_BOOLEAN);
+        $note = trim((string)($request->input('note') ?? $request->input('ghiChu') ?? 'Đã duyệt yêu cầu hoàn hàng và hoàn tiền'));
+        $maGD = trim((string)($request->input('maGiaoDich') ?? $request->input('transactionCode') ?? ''));
+
+        $oldStatus = (int) $order->trangThaiDonHang;
+        $order->trangThaiDonHang = 6; // 6: HOAN_HANG (Đã hoàn tất trả hàng)
+        $order->trangThaiHoanHang = 'DA_DUYET';
+        $order->trangThaiThanhToan = 3; // 3: DA_HOAN_TIEN (Đã hoàn tiền)
+        $order->trangThaiHoanTien = 'DA_HOAN_TIEN';
+        $order->ngayHoanTien = now();
+        $order->ghiChuHoanTien = $note;
+        $order->soTienHoan = $order->tongThanhToan;
+        if ($maGD) $order->maGiaoDichHoanTien = $maGD;
+
+        if ($user && $user->nguoidung) {
+            $order->nhanVienHoanTienId = $user->nguoidung->id;
+        }
+
+        // Nhập lại kho nếu bánh còn nguyên
+        if ($restock) {
+            foreach ($order->chitiet as $item) {
+                $tonKho = TonKhoChiNhanh::where('cuaHangId', $order->cuaHangId)
+                    ->where('sanPhamId', $item->sanPhamId)
+                    ->first();
+                if ($tonKho) {
+                    $tonKho->increment('soLuongTon', $item->soLuong);
+                    \App\Services\InventoryLedgerService::record(
+                        (int)$order->cuaHangId,
+                        (int)$item->sanPhamId,
+                        1,
+                        (int)$item->soLuong,
+                        $order->maDonHang ?? ('HD' . $order->id),
+                        (int)$tonKho->fresh()->soLuongTon
+                    );
+                }
+            }
+            $desc = "Duyệt trả hàng: Bánh còn nguyên -> Đã cộng trả lại kho. Ghi chú: {$note}";
+        } else {
+            $desc = "Duyệt trả hàng: Bánh bị hỏng hóc/tiêu hủy -> KHÔNG nhập lại kho. Ghi chú: {$note}";
+        }
+
+        $order->save();
+
+        LichSuTrangThaiDonHang::create([
+            'donHangId' => $order->id,
+            'trangThaiCu' => $oldStatus,
+            'trangThaiMoi' => 6,
+            'ghnStatusCode' => 'return_approved',
+            'moTaChiTiet' => $desc,
+            'nguonCapNhat' => 1, // Nhân viên
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Đã duyệt yêu cầu hoàn trả và ghi nhận hoàn tiền thành công!',
+            'data' => $order->refresh()
+        ]);
+    }
+
+    /**
+     * Admin/Staff từ chối yêu cầu trả hàng
+     */
+    public function adminRejectReturn(Request $request, $id)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) return response()->json(['error' => 'Chưa đăng nhập'], 401);
+
+        $order = DonHang::where('maDonHang', $id)->orWhere('id', $id)->first();
+        if (!$order) return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
+
+        $lyDoTuChoi = trim((string)($request->input('lyDoTuChoi') ?? $request->input('reason') ?? ''));
+        if (empty($lyDoTuChoi)) {
+            return response()->json(['error' => 'Vui lòng nhập lý do từ chối hoàn trả!'], 422);
+        }
+
+        $oldStatus = (int) $order->trangThaiDonHang;
+        $order->trangThaiDonHang = 4; // Khôi phục lại trạng thái Đã giao hàng
+        $order->trangThaiHoanHang = 'TU_CHOI';
+        $order->lyDoTuChoiHoanTra = $lyDoTuChoi;
+
+        if ($order->trangThaiThanhToan == 2) {
+            $order->trangThaiThanhToan = 1; // Khôi phục trạng thái đã thanh toán
+            $order->trangThaiHoanTien = 'TU_CHOI';
+        }
+
+        $order->save();
+
+        LichSuTrangThaiDonHang::create([
+            'donHangId' => $order->id,
+            'trangThaiCu' => $oldStatus,
+            'trangThaiMoi' => 4,
+            'ghnStatusCode' => 'return_rejected',
+            'moTaChiTiet' => "Từ chối yêu cầu trả hàng của khách. Lý do: {$lyDoTuChoi}",
+            'nguonCapNhat' => 1, // Nhân viên
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Đã từ chối yêu cầu hoàn trả đơn hàng!',
+            'data' => $order->refresh()
         ]);
     }
 }

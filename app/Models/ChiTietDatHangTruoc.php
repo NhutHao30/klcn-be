@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class ChiTietDatHangTruoc extends Model
 {
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
     protected $table = 'chi_tiet_dat_hang_truoc';
 
     protected $fillable = [

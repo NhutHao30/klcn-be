@@ -3,18 +3,19 @@ services:
   mysql:
     image: mysql:8.0
     container_name: dola_mysql
+    command: --lower-case-table-names=1
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: dola_bakery_db
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: Laravel_DB
+      MYSQL_ROOT_PASSWORD: '123'
     ports:
-      - "3307:3306" # Đổi cổng ra 3307 để tránh đụng độ với XAMPP/MySQL cũ trên máy
+      - "3306:3306"
     volumes:
       - dola_mysql_data:/var/lib/mysql
     deploy:
       resources:
         limits:
-          memory: 800M # MySQL 8 khá ngốn RAM, giới hạn 800MB là vừa đủ cho 20 người
+          memory: 800M
 
   # BỘ NHỚ TẠM REDIS (CACHING)
   redis:
@@ -28,7 +29,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 150M # Caching cơ bản cho 20 người chỉ cần tối đa 150MB
+          memory: 150M
 
   # HỆ THỐNG HÀNG ĐỢI RABBITMQ
   rabbitmq:
@@ -43,11 +44,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 800M # Ép Erlang/RabbitMQ không được phình to quá 800MB
+          memory: 800M
 
   # LƯU TRỮ ẢNH MINIO (S3)
   minio:
-    image: minio/minio:latest
+    image: coollabsio/minio:latest
     container_name: dola_minio
     restart: unless-stopped
     environment:
@@ -62,33 +63,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 400M # MinIO giới hạn 400MB chạy rất ổn định
+          memory: 400M
 
-  # TOOL TỰ ĐỘNG CẤU HÌNH MINIO (Chạy xong tự tắt)
-  # - Tự động tạo bucket 'dolabakery'
-  # - Tự động set quyền Public (không cần bạn làm bằng tay nữa)
-  minio-setup:
-    image: minio/mc:latest
-    container_name: dola_minio_setup
-    depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c "
-      echo 'Đang chờ MinIO khởi động...';
-      sleep 5;
-      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      /usr/bin/mc mb myminio/dolabakery --ignore-existing;
-      /usr/bin/mc anonymous set public myminio/dolabakery;
-      echo 'Đã cấu hình xong Bucket dolabakery!';
-      exit 0;
-      "
-    deploy:
-      resources:
-        limits:
-          memory: 100M # Chỉ là tool chạy 1 lần rồi tắt nên giới hạn thấp
-
-
-# KHAI BÁO Ổ CỨNG ẢO (Giúp lưu lại dữ liệu vĩnh viễn dù có tắt/xóa Container)
+# KHAI BÁO Ổ CỨNG ẢO
 volumes:
   dola_mysql_data:
   dola_redis_data:

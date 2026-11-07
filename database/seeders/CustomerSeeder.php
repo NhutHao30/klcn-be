@@ -4,47 +4,71 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-use App\Models\TaiKhoan;
-use App\Models\KhachHang;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
+use Carbon\Carbon;
 
 class CustomerSeeder extends Seeder
 {
     public function run(): void
     {
-        // Vô hiệu hóa kiểm tra khóa ngoại
-        DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+        $now = Carbon::now();
 
-        // Danh sách tài khoản khách hàng mẫu
         $customers = [
-            'khachhang_01',
-            'customer1',
-            'khachhang_02'
+            [
+                'username' => 'khachhang_01',
+                'email' => 'khachhang01@gmail.com',
+                'ho_ten' => 'Nguyễn Văn An',
+                'so_dien_thoai' => '0987654321',
+                'gioi_tinh' => 1, // Nam
+            ],
+            [
+                'username' => 'khachhang_02',
+                'email' => 'khachhang02@gmail.com',
+                'ho_ten' => 'Trần Thị Bình',
+                'so_dien_thoai' => '0987654322',
+                'gioi_tinh' => 0, // Nữ
+            ]
         ];
 
-        foreach ($customers as $index => $username) {
-            // Xóa cũ nếu có để tránh lỗi
-            KhachHang::where('USERNAME', $username)->delete();
-            TaiKhoan::where('USERNAME', $username)->delete();
+        $tkTable = 'taikhoan';
+        $ndTable = 'nguoidung';
+        $vaiTroIdCol = Schema::hasColumn($tkTable, 'vaiTroId') ? 'vaiTroId' : 'vaitro_id';
+        $tkTrangThaiCol = Schema::hasColumn($tkTable, 'trangThai') ? 'trangThai' : 'trang_thai';
+        $tkCreatedCol = Schema::hasColumn($tkTable, 'createdAt') ? 'createdAt' : 'created_at';
+        $tkUpdatedCol = Schema::hasColumn($tkTable, 'updatedAt') ? 'updatedAt' : 'updated_at';
 
-            // 1. Tạo tài khoản
-            $tk = TaiKhoan::create([
-                'USERNAME' => $username,
-                'PASSWORD' => '123456', // Sẽ được tự động hash nhờ cast 'hashed'
-                'MAROLE'   => 2,
-                'EMAIL'    => $username . '@gmail.com',
-            ]);
+        $taiKhoanIdCol = Schema::hasColumn($ndTable, 'taiKhoanId') ? 'taiKhoanId' : 'taikhoan_id';
+        $hoTenCol = Schema::hasColumn($ndTable, 'hoTen') ? 'hoTen' : 'ho_ten';
+        $sdtNdCol = Schema::hasColumn($ndTable, 'soDienThoai') ? 'soDienThoai' : 'so_dien_thoai';
+        $gioiTinhCol = Schema::hasColumn($ndTable, 'gioiTinh') ? 'gioiTinh' : 'gioi_tinh';
+        $loaiNdCol = Schema::hasColumn($ndTable, 'loaiNguoiDung') ? 'loaiNguoiDung' : 'loai_nguoidung';
+        $ndCreatedCol = Schema::hasColumn($ndTable, 'createdAt') ? 'createdAt' : 'created_at';
+        $ndUpdatedCol = Schema::hasColumn($ndTable, 'updatedAt') ? 'updatedAt' : 'updated_at';
 
-            // 2. Tạo thông tin khách hàng
-            KhachHang::create([
-                'MAKH'     => 'KH_SEED_' . ($index + 1),
-                'HOTEN'    => 'Khách Hàng ' . ($index + 1),
-                'SDT'      => '098765432' . $index,
-                'USERNAME' => $tk->USERNAME,
-                'DIEMTICHLUY' => 500,
-            ]);
+        foreach ($customers as $c) {
+            $exists = DB::table($tkTable)->where('username', $c['username'])->first();
+            if (!$exists) {
+                $tkId = DB::table($tkTable)->insertGetId([
+                    'username' => $c['username'],
+                    'email' => $c['email'],
+                    'password' => Hash::make('123456'),
+                    $vaiTroIdCol => 6, // CUSTOMER
+                    $tkTrangThaiCol => 1,
+                    $tkCreatedCol => $now,
+                    $tkUpdatedCol => $now
+                ]);
+
+                DB::table($ndTable)->insert([
+                    $taiKhoanIdCol => $tkId,
+                    $hoTenCol => $c['ho_ten'],
+                    $sdtNdCol => $c['so_dien_thoai'],
+                    $gioiTinhCol => $c['gioi_tinh'], // 0: Nữ, 1: Nam
+                    $loaiNdCol => 0, // 0: Khách hàng
+                    $ndCreatedCol => $now,
+                    $ndUpdatedCol => $now
+                ]);
+            }
         }
-
-        // Bật lại kiểm tra khóa ngoại
-        DB::statement('SET FOREIGN_KEY_CHECKS=1;');
     }
 }
