@@ -31,7 +31,11 @@ class SanPham extends Model
         'isNew' => 'boolean',
     ];
 
-    protected $appends = ['MASP', 'maSanPham', 'TENSP', 'GIABAN', 'HINHANH', 'MOTA', 'SOLUONG_TON', 'soLuongTon', 'TONKHO_THUCTE', 'isNew', 'IS_NEW', 'phanTramGiam', 'PHAN_TRAM_GIAM'];
+    protected $appends = [
+        'MASP', 'maSanPham', 'TENSP', 'GIABAN', 'HINHANH', 'MOTA',
+        'MALOAI', 'TENLOAI', 'SOLUONG_TON', 'soLuongTon', 'TONKHO_THUCTE',
+        'isNew', 'IS_NEW', 'phanTramGiam', 'PHAN_TRAM_GIAM', 'giaSauGiam', 'GIA_SAU_GIAM'
+    ];
 
     public function getMASPAttribute()
     {
@@ -45,6 +49,22 @@ class SanPham extends Model
     public function getMaSanPhamAttribute()
     {
         return $this->getMASPAttribute();
+    }
+
+    public function getMALOAIAttribute()
+    {
+        return $this->attributes['loaiId'] ?? $this->attributes['loai_id'] ?? $this->attributes['MALOAI'] ?? null;
+    }
+
+    public function getTENLOAIAttribute()
+    {
+        if ($this->relationLoaded('loaiSanPham') && $this->loaiSanPham) {
+            return $this->loaiSanPham->tenLoai;
+        }
+        if ($this->relationLoaded('loai') && $this->loai) {
+            return $this->loai->tenLoai;
+        }
+        return null;
     }
 
     public function getTENSPAttribute()
@@ -103,7 +123,17 @@ class SanPham extends Model
         if ($this->relationLoaded('lichSuGias')) {
             return (float) ($this->lichSuGias->first()->phanTramGiam ?? 0);
         }
-        return (float) ($this->lichSuGias()->orderBy('createdAt', 'desc')->value('phanTramGiam') ?? 0);
+        return (float) ($this->lichSuGias()->orderBy('id', 'desc')->orderBy('createdAt', 'desc')->value('phanTramGiam') ?? 0);
+    }
+
+    public function getGiaSauGiamAttribute()
+    {
+        $price = (float) $this->getGIABANAttribute();
+        $pct = (float) $this->getPhanTramGiamAttribute();
+        if ($pct > 0 && $pct <= 100) {
+            return round($price * (1 - $pct / 100));
+        }
+        return $price;
     }
 
     public function loaiSanPham()
@@ -133,6 +163,6 @@ class SanPham extends Model
 
     public function lichSuGias()
     {
-        return $this->hasMany(LichSuGiaSanPham::class, 'sanPhamId')->orderBy('createdAt', 'desc');
+        return $this->hasMany(LichSuGiaSanPham::class, 'sanPhamId')->orderBy('id', 'desc')->orderBy('createdAt', 'desc');
     }
 }

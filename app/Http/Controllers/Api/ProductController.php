@@ -372,22 +372,64 @@ class ProductController extends Controller
         return response()->json(['message' => 'Thêm sản phẩm thành công', 'data' => $product], 201);
     }
 
+    private function resolveSanPham($id): ?SanPham
+    {
+        if (empty($id)) return null;
+        if (is_numeric($id)) {
+            $p = SanPham::find((int)$id);
+            if ($p) return $p;
+        }
+        $cleanId = preg_replace('/^(SP|#)/i', '', trim((string)$id));
+        if (is_numeric($cleanId) && (int)$cleanId > 0) {
+            $p = SanPham::find((int)$cleanId);
+            if ($p) return $p;
+        }
+        if (preg_match('/(\d+)/', (string)$id, $m)) {
+            $p = SanPham::find((int)$m[1]);
+            if ($p) return $p;
+        }
+        return SanPham::where('slug', $id)->first();
+    }
+
+    private function cleanInputValue($val, $fallback = null)
+    {
+        if ($val === null || $val === '' || $val === 'undefined' || $val === 'null') {
+            return $fallback;
+        }
+        return $val;
+    }
+
     /**
      * Admin: Update product
      */
     public function update(Request $request, $id)
     {
-        $product = SanPham::find($id);
+        $product = $this->resolveSanPham($id);
         if (!$product) {
             return response()->json(['error' => 'Không tìm thấy sản phẩm'], 404);
         }
 
+        $rawTen = $request->input('tenSanPham') ?? $request->input('TENSP') ?? $request->input('TenSP');
+        $rawLoai = $request->input('loaiId') ?? $request->input('MALOAI') ?? $request->input('LOAISP');
+        $rawGia = $request->input('giaBan') ?? $request->input('GIABAN');
+        $rawDvt = $request->input('donViTinh') ?? $request->input('DVT');
+        $rawMoTa = $request->input('moTa') ?? $request->input('GHICHU');
+
+        $loaiVal = $this->cleanInputValue($rawLoai, $product->loaiId);
+        if (!is_numeric($loaiVal)) {
+            $map = [
+                'LSP001' => 1, 'LSP002' => 2, 'LSP003' => 3,
+                'LSP004' => 4, 'LSP005' => 5, 'LSP006' => 6, 'LSP007' => 6,
+            ];
+            $loaiVal = $map[(string)$loaiVal] ?? $product->loaiId;
+        }
+
         $request->merge([
-            'tenSanPham' => $request->input('tenSanPham') ?? $request->input('TENSP') ?? $request->input('TenSP') ?? $product->tenSanPham,
-            'loaiId' => $request->input('loaiId') ?? $request->input('MALOAI') ?? $request->input('LOAISP') ?? $product->loaiId,
-            'giaBan' => $request->input('giaBan') ?? $request->input('GIABAN') ?? $product->giaBan,
-            'donViTinh' => $request->input('donViTinh') ?? $request->input('DVT') ?? $product->donViTinh,
-            'moTa' => $request->input('moTa') ?? $request->input('GHICHU') ?? $product->moTa,
+            'tenSanPham' => $this->cleanInputValue($rawTen, $product->tenSanPham),
+            'loaiId' => (int)$loaiVal,
+            'giaBan' => (float)$this->cleanInputValue($rawGia, $product->giaBan),
+            'donViTinh' => $this->cleanInputValue($rawDvt, $product->donViTinh ?: 'Cái'),
+            'moTa' => $this->cleanInputValue($rawMoTa, $product->moTa),
         ]);
 
         $validated = $request->validate([
@@ -429,8 +471,8 @@ class ProductController extends Controller
                     'sanPhamId' => $product->id,
                     'giaCu' => $oldPrice,
                     'giaMoi' => $newPrice,
-                    'phanTramGiam' => max(0, $discountPct),
-                    'lyDo' => $request->ly_do_doi_gia ?? ($discountPct > 0 ? "Điều chỉnh % giảm giá: {$discountPct}%" : 'Điều chỉnh giá bán'),
+                    'phanTramGiam' => max(0, min(100, $discountPct)),
+                    'lyDo' => $request->ly_do_doi_gia ?? ($discountPct > 0 ? "Điều chỉnh % giảm giá: {$discountPct}%" : 'Hủy giảm giá / Điều chỉnh giá bán'),
                     'ngayApDung' => now(),
                 ]);
             } catch (\Throwable $e) {
@@ -438,9 +480,78 @@ class ProductController extends Controller
             }
         }
 
-        self::clearProductCache($id);
+        self::clearProductCache($product->id);
 
-        return response()->json(['message' => 'Cập nhật sản phẩm thành công', 'data' => $product]);
+        return response()->json(['message' => 'Cập nhật sản phẩm thành công', 'data' => $product->fresh(['loaiSanPham', 'lichSuGias'])]);
+    }
+
+    /**
+     * Admin: Áp dụng giảm giá nhanh cho danh sách sản phẩm hoặc danh mục
+     */
+    public function applyDiscount(Request $request)
+    {
+        $pct = max(0, min(100, (float)($request->input('phanTramGiam') ?? $request->input('PHAN_TRAM_GIAM') ?? $request->input('discount_percent') ?? 0)));
+        $productIdsRaw = $request->input('product_ids') ?? $request->input('productIds') ?? $request->input('masp_list') ?? [];
+        $categoryIdsRaw = $request->input('category_ids') ?? $request->input('categoryIds') ?? [];
+
+        $targetProducts = collect();
+
+        if (!empty($productIdsRaw) && is_array($productIdsRaw)) {
+            foreach ($productIdsRaw as $rawId) {
+                $p = $this->resolveSanPham($rawId);
+                if ($p) {
+                    $targetProducts->push($p);
+                }
+            }
+        }
+
+        if (!empty($categoryIdsRaw) && is_array($categoryIdsRaw)) {
+            $cleanCatIds = [];
+            foreach ($categoryIdsRaw as $cid) {
+                if (is_numeric($cid)) {
+                    $cleanCatIds[] = (int)$cid;
+                } elseif (preg_match('/(\d+)/', (string)$cid, $m)) {
+                    $cleanCatIds[] = (int)$m[1];
+                }
+            }
+            if (!empty($cleanCatIds)) {
+                $catProds = SanPham::whereIn('loaiId', $cleanCatIds)->get();
+                $targetProducts = $targetProducts->merge($catProds);
+            }
+        }
+
+        $targetProducts = $targetProducts->unique('id');
+        $count = 0;
+
+        DB::beginTransaction();
+        try {
+            foreach ($targetProducts as $product) {
+                LichSuGiaSanPham::create([
+                    'sanPhamId' => $product->id,
+                    'giaCu' => $product->giaBan,
+                    'giaMoi' => $product->giaBan,
+                    'phanTramGiam' => $pct,
+                    'lyDo' => $pct > 0 ? "Áp dụng khuyến mãi giảm giá {$pct}%" : 'Gỡ bỏ chương trình giảm giá',
+                    'ngayApDung' => now(),
+                ]);
+                $count++;
+            }
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Lỗi khi áp dụng giảm giá: ' . $e->getMessage()], 500);
+        }
+
+        self::clearProductCache();
+
+        return response()->json([
+            'success' => true,
+            'updated_count' => $count,
+            'phanTramGiam' => $pct,
+            'message' => $pct > 0
+                ? "Đã áp dụng giảm giá {$pct}% cho {$count} sản phẩm thành công!"
+                : "Đã gỡ giảm giá cho {$count} sản phẩm thành công!"
+        ]);
     }
 
     /**
@@ -448,13 +559,13 @@ class ProductController extends Controller
      */
     public function destroy($id)
     {
-        $product = SanPham::find($id);
+        $product = $this->resolveSanPham($id);
         if (!$product) {
             return response()->json(['error' => 'Không tìm thấy sản phẩm'], 404);
         }
 
         $product->update(['trangThai' => 0]);
-        self::clearProductCache($id);
+        self::clearProductCache($product->id);
         return response()->json(['message' => 'Đã ngừng kinh doanh sản phẩm']);
     }
 
@@ -463,13 +574,13 @@ class ProductController extends Controller
      */
     public function restore($id)
     {
-        $product = SanPham::find($id);
+        $product = $this->resolveSanPham($id);
         if (!$product) {
             return response()->json(['error' => 'Không tìm thấy sản phẩm'], 404);
         }
 
         $product->update(['trangThai' => 1]);
-        self::clearProductCache($id);
+        self::clearProductCache($product->id);
         return response()->json(['message' => 'Đã kích hoạt lại sản phẩm']);
     }
 
@@ -478,7 +589,9 @@ class ProductController extends Controller
      */
     public function getPriceHistory($id)
     {
-        $history = LichSuGiaSanPham::where('sanPhamId', $id)->orderBy('createdAt', 'desc')->get();
+        $product = $this->resolveSanPham($id);
+        $spId = $product ? $product->id : $id;
+        $history = LichSuGiaSanPham::where('sanPhamId', $spId)->orderBy('id', 'desc')->orderBy('createdAt', 'desc')->get();
         return response()->json($history);
     }
 

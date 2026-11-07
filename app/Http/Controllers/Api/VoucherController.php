@@ -7,9 +7,211 @@ use Illuminate\Http\Request;
 use App\Models\Voucher;
 use App\Models\KhuyenMai;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Database\Schema\Blueprint;
 
 class VoucherController extends Controller
 {
+    private static bool $schemaChecked = false;
+
+    public static function ensureVoucherSchema(): void
+    {
+        if (self::$schemaChecked) {
+            return;
+        }
+        self::$schemaChecked = true;
+
+        try {
+            if (!Schema::hasTable('voucher') && Schema::hasTable('khuyenmai')) {
+                Schema::rename('khuyenmai', 'voucher');
+            }
+
+            if (!Schema::hasTable('voucher')) {
+                Schema::create('voucher', function (Blueprint $table) {
+                    $table->string('MA_VOUCHER', 50)->primary();
+                    $table->string('TEN_VOUCHER', 255)->nullable();
+                    $table->string('LOAI_GIAM', 50)->default('TIEN_MAT');
+                    $table->decimal('GIA_TRI', 15, 2)->default(0);
+                    $table->decimal('DON_TOI_THIEU', 15, 2)->default(0);
+                    $table->decimal('GIAM_TOI_DA', 15, 2)->nullable();
+                    $table->integer('SO_LUONG_GIOI_HAN')->default(100);
+                    $table->integer('SO_LUONG_DA_DUNG')->default(0);
+                    $table->dateTime('NGAY_BAT_DAU')->nullable();
+                    $table->dateTime('NGAY_KET_THUC')->nullable();
+                    $table->tinyInteger('TRANG_THAI')->default(1);
+                });
+            } else {
+                // Kiểm tra chính xác tên cột phân biệt chữ hoa/thường trong INFORMATION_SCHEMA
+                $dbName = DB::getDatabaseName();
+                $cols = DB::select(
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'voucher'",
+                    [$dbName]
+                );
+                $exactCols = array_map(fn($c) => $c->COLUMN_NAME ?? $c->column_name ?? '', $cols);
+
+                $renamePairs = [
+                    'ma_voucher'         => 'MA_VOUCHER',
+                    'maVoucher'          => 'MA_VOUCHER',
+                    'ten_voucher'        => 'TEN_VOUCHER',
+                    'tenVoucher'         => 'TEN_VOUCHER',
+                    'loai_giam'          => 'LOAI_GIAM',
+                    'loaiGiam'           => 'LOAI_GIAM',
+                    'gia_tri_giam'       => 'GIA_TRI',
+                    'gia_tri'            => 'GIA_TRI',
+                    'giaTriGiam'         => 'GIA_TRI',
+                    'don_hang_toi_thieu' => 'DON_TOI_THIEU',
+                    'don_toi_thieu'      => 'DON_TOI_THIEU',
+                    'donHangToiThieu'    => 'DON_TOI_THIEU',
+                    'giam_toi_da'        => 'GIAM_TOI_DA',
+                    'giamToiDa'          => 'GIAM_TOI_DA',
+                    'so_luong'           => 'SO_LUONG_GIOI_HAN',
+                    'so_luong_gioi_han'  => 'SO_LUONG_GIOI_HAN',
+                    'soLuong'            => 'SO_LUONG_GIOI_HAN',
+                    'da_su_dung'         => 'SO_LUONG_DA_DUNG',
+                    'so_luong_da_dung'   => 'SO_LUONG_DA_DUNG',
+                    'daSuDung'           => 'SO_LUONG_DA_DUNG',
+                    'ngay_bat_dau'       => 'NGAY_BAT_DAU',
+                    'ngayBatDau'         => 'NGAY_BAT_DAU',
+                    'ngay_ket_thuc'      => 'NGAY_KET_THUC',
+                    'ngayKetThuc'        => 'NGAY_KET_THUC',
+                    'trang_thai'         => 'TRANG_THAI',
+                    'trangThai'          => 'TRANG_THAI',
+                ];
+
+                DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+                foreach ($renamePairs as $oldCol => $newCol) {
+                    if (in_array($oldCol, $exactCols, true) && !in_array($newCol, $exactCols, true)) {
+                        try {
+                            DB::statement("ALTER TABLE `voucher` RENAME COLUMN `{$oldCol}` TO `{$newCol}`");
+                            $exactCols[] = $newCol;
+                        } catch (\Throwable $eRen) {}
+                    }
+                }
+
+                if (!in_array('TEN_VOUCHER', $exactCols, true)) {
+                    try {
+                        Schema::table('voucher', function (Blueprint $t) {
+                            $t->string('TEN_VOUCHER', 255)->nullable();
+                        });
+                    } catch (\Throwable $e) {}
+                }
+                if (!in_array('LOAI_GIAM', $exactCols, true)) {
+                    try {
+                        Schema::table('voucher', function (Blueprint $t) {
+                            $t->string('LOAI_GIAM', 50)->default('TIEN_MAT');
+                        });
+                    } catch (\Throwable $e) {}
+                }
+                if (in_array('loai_giam_gia', $exactCols, true)) {
+                    try {
+                        DB::statement("ALTER TABLE `voucher` MODIFY COLUMN `loai_giam_gia` TINYINT DEFAULT 0 NULL");
+                    } catch (\Throwable $e) {}
+                }
+                DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+            }
+
+            // Đảm bảo bảng voucher_khachhang tồn tại
+            if (!Schema::hasTable('voucher_khachhang')) {
+                Schema::create('voucher_khachhang', function (Blueprint $table) {
+                    $table->id();
+                    $table->unsignedBigInteger('nguoidungId');
+                    $table->string('maVoucher', 50);
+                    $table->string('maDonHang', 50)->nullable();
+                    $table->dateTime('ngayThuThap')->nullable();
+                    $table->dateTime('ngaySuDung')->nullable();
+                    $table->tinyInteger('trangThai')->default(0);
+                    $table->timestamps();
+                    $table->index(['nguoidungId', 'maVoucher']);
+                });
+            }
+
+            // Đảm bảo có sẵn các voucher mẫu đang hoạt động
+            $sampleVouchers = [
+                [
+                    'MA_VOUCHER' => 'GIAM20K',
+                    'TEN_VOUCHER' => 'Giảm ngay 20.000đ cho đơn từ 100.000đ',
+                    'LOAI_GIAM' => 'TIEN_MAT',
+                    'GIA_TRI' => 20000,
+                    'DON_TOI_THIEU' => 100000,
+                    'GIAM_TOI_DA' => 20000,
+                    'SO_LUONG_GIOI_HAN' => 200,
+                    'SO_LUONG_DA_DUNG' => 0,
+                    'NGAY_BAT_DAU' => '2025-01-01 00:00:00',
+                    'NGAY_KET_THUC' => '2027-12-31 23:59:59',
+                    'TRANG_THAI' => 1,
+                ],
+                [
+                    'MA_VOUCHER' => 'FREESHIP30K',
+                    'TEN_VOUCHER' => 'Hỗ trợ phí giao bánh 30.000đ (Đơn từ 150K)',
+                    'LOAI_GIAM' => 'TIEN_MAT',
+                    'GIA_TRI' => 30000,
+                    'DON_TOI_THIEU' => 150000,
+                    'GIAM_TOI_DA' => 30000,
+                    'SO_LUONG_GIOI_HAN' => 200,
+                    'SO_LUONG_DA_DUNG' => 0,
+                    'NGAY_BAT_DAU' => '2025-01-01 00:00:00',
+                    'NGAY_KET_THUC' => '2027-12-31 23:59:59',
+                    'TRANG_THAI' => 1,
+                ],
+                [
+                    'MA_VOUCHER' => 'BANHKEM15',
+                    'TEN_VOUCHER' => 'Ưu đãi 15% tối đa 50.000đ cho đơn Bánh Kem',
+                    'LOAI_GIAM' => 'PHAN_TRAM',
+                    'GIA_TRI' => 15,
+                    'DON_TOI_THIEU' => 200000,
+                    'GIAM_TOI_DA' => 50000,
+                    'SO_LUONG_GIOI_HAN' => 150,
+                    'SO_LUONG_DA_DUNG' => 0,
+                    'NGAY_BAT_DAU' => '2025-01-01 00:00:00',
+                    'NGAY_KET_THUC' => '2027-12-31 23:59:59',
+                    'TRANG_THAI' => 1,
+                ],
+                [
+                    'MA_VOUCHER' => 'THANHVIENVIP',
+                    'TEN_VOUCHER' => 'Voucher Đặc Quyền Thành Viên - Giảm 50.000đ',
+                    'LOAI_GIAM' => 'TIEN_MAT',
+                    'GIA_TRI' => 50000,
+                    'DON_TOI_THIEU' => 300000,
+                    'GIAM_TOI_DA' => 50000,
+                    'SO_LUONG_GIOI_HAN' => 100,
+                    'SO_LUONG_DA_DUNG' => 0,
+                    'NGAY_BAT_DAU' => '2025-01-01 00:00:00',
+                    'NGAY_KET_THUC' => '2027-12-31 23:59:59',
+                    'TRANG_THAI' => 1,
+                ],
+            ];
+
+            foreach ($sampleVouchers as $sv) {
+                $exists = DB::table('voucher')->where('MA_VOUCHER', $sv['MA_VOUCHER'])->first();
+                if (!$exists) {
+                    DB::table('voucher')->insert($sv);
+                } else {
+                    // Đảm bảo voucher mẫu luôn có tên và thời hạn hợp lệ (2025 - 2027)
+                    $upd = [];
+                    if (empty($exists->TEN_VOUCHER)) {
+                        $upd['TEN_VOUCHER'] = $sv['TEN_VOUCHER'];
+                    }
+                    if (empty($exists->NGAY_BAT_DAU) || strtotime($exists->NGAY_BAT_DAU) > strtotime('2026-01-01')) {
+                        $upd['NGAY_BAT_DAU'] = '2025-01-01 00:00:00';
+                    }
+                    if (empty($exists->NGAY_KET_THUC) || strtotime($exists->NGAY_KET_THUC) < strtotime('2027-06-01')) {
+                        $upd['NGAY_KET_THUC'] = '2027-12-31 23:59:59';
+                    }
+                    if (!empty($upd)) {
+                        DB::table('voucher')->where('MA_VOUCHER', $sv['MA_VOUCHER'])->update($upd);
+                    }
+                }
+            }
+
+            // Điền tên mặc định cho các voucher cũ bị thiếu TEN_VOUCHER
+            DB::table('voucher')->whereNull('TEN_VOUCHER')->orWhere('TEN_VOUCHER', '')->update([
+                'TEN_VOUCHER' => DB::raw("CONCAT('Ưu đãi mã ', MA_VOUCHER)")
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Voucher schema check warning: ' . $e->getMessage());
+        }
+    }
+
     private function resolveUserIds($user): array
     {
         if (!$user) {
@@ -41,12 +243,14 @@ class VoucherController extends Controller
 
     public function index()
     {
+        self::ensureVoucherSchema();
         $vouchers = Voucher::orderBy('NGAY_BAT_DAU', 'desc')->get();
         return response()->json($vouchers);
     }
 
     private function findVoucherByIdentifier($id)
     {
+        self::ensureVoucherSchema();
         if (empty($id)) return null;
 
         $voucher = null;
@@ -84,6 +288,7 @@ class VoucherController extends Controller
 
     public function store(Request $request)
     {
+        self::ensureVoucherSchema();
         $code = strtoupper(trim($request->input('MA_VOUCHER') ?? $request->input('ma_voucher') ?? $request->input('maVoucher') ?? ''));
         $name = trim($request->input('TEN_VOUCHER') ?? $request->input('ten_voucher') ?? $request->input('tenVoucher') ?? $code);
         
@@ -166,7 +371,8 @@ class VoucherController extends Controller
         $ngayKetThuc = $request->input('NGAY_KET_THUC') ?? $voucher->NGAY_KET_THUC;
         $trangThai = $request->has('TRANG_THAI') ? ($request->input('TRANG_THAI') == '1' || $request->input('TRANG_THAI') === true || $request->input('TRANG_THAI') == 'true' ? 1 : 0) : $voucher->TRANG_THAI;
 
-        $voucher->update([
+        $voucherCode = $voucher->MA_VOUCHER ?: $id;
+        DB::table('voucher')->where('MA_VOUCHER', $voucherCode)->update([
             'TEN_VOUCHER' => $name,
             'LOAI_GIAM' => $loaiGiam,
             'GIA_TRI' => $giaTri,
@@ -178,7 +384,8 @@ class VoucherController extends Controller
             'TRANG_THAI' => $trangThai,
         ]);
 
-        return response()->json(['message' => 'Cập nhật Voucher thành công', 'data' => $voucher]);
+        $fresh = $this->findVoucherByIdentifier($voucherCode);
+        return response()->json(['message' => 'Cập nhật Voucher thành công', 'data' => $fresh ?? $voucher]);
     }
 
     public function destroy($id)
@@ -199,7 +406,7 @@ class VoucherController extends Controller
             DB::table('khuyenmai_khachhang')->where('maKhuyenMai', $voucherCode)->delete();
         } catch (\Throwable $e) {}
 
-        $voucher->delete();
+        DB::table('voucher')->where('MA_VOUCHER', $voucherCode)->delete();
         return response()->json(['message' => 'Xóa Voucher thành công']);
     }
 
@@ -208,6 +415,7 @@ class VoucherController extends Controller
      */
     public function applyVoucher(Request $request)
     {
+        self::ensureVoucherSchema();
         $code = strtoupper(trim($request->input('voucher_code') ?? $request->input('maVoucher') ?? $request->input('code') ?? ''));
         $subtotal = (float)($request->input('subtotal') ?? $request->input('tongTien') ?? 0);
 
@@ -297,6 +505,7 @@ class VoucherController extends Controller
      */
     public function collectVoucher(Request $request, $id = null)
     {
+        self::ensureVoucherSchema();
         $user = auth('api')->user();
         if (!$user) {
             return response()->json(['error' => 'Bạn cần đăng nhập để lưu voucher vào ví!'], 401);
@@ -360,6 +569,7 @@ class VoucherController extends Controller
      */
     public function getMyWallet(Request $request)
     {
+        self::ensureVoucherSchema();
         $user = auth('api')->user();
         if (!$user) {
             return response()->json([
@@ -430,6 +640,7 @@ class VoucherController extends Controller
      */
     public function suggestForOrder(Request $request)
     {
+        self::ensureVoucherSchema();
         $subtotal = (float)($request->input('subtotal') ?? $request->input('tongTien') ?? 0);
         $user = auth('api')->user();
         $userUsedVouchers = [];

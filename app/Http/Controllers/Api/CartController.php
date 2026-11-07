@@ -240,10 +240,11 @@ class CartController extends Controller
                 $sp = $spId ? SanPham::find($spId) : null;
                 if ($sp) {
                     $qty = max(1, (int)($it['SO_LUONG'] ?? $it['soLuong'] ?? $it['quantity'] ?? 1));
+                    $unitPrice = (float)($sp->giaSauGiam ?? $sp->giaBan);
                     $resolvedItems[] = [
                         'sanPhamId' => $sp->id,
                         'soLuong' => $qty,
-                        'donGia' => (float)$sp->giaBan,
+                        'donGia' => $unitPrice,
                         'sp' => $sp
                     ];
                 }
@@ -255,10 +256,11 @@ class CartController extends Controller
             foreach ($cartItems as $ci) {
                 $sp = $ci->sanpham;
                 if ($sp) {
+                    $unitPrice = (float)($sp->giaSauGiam ?? $sp->giaBan);
                     $resolvedItems[] = [
                         'sanPhamId' => $sp->id,
                         'soLuong' => (int)$ci->soLuong,
-                        'donGia' => (float)$sp->giaBan,
+                        'donGia' => $unitPrice,
                         'sp' => $sp
                     ];
                 }
@@ -335,6 +337,7 @@ class CartController extends Controller
         $voucherDiscount = 0;
         $voucherCode = strtoupper(trim($request->input('voucher_code') ?? $request->input('maVoucher') ?? $request->input('MA_VOUCHER') ?? ''));
         if ($voucherCode) {
+            \App\Http\Controllers\Api\VoucherController::ensureVoucherSchema();
             $voucherObj = \App\Models\Voucher::where('MA_VOUCHER', $voucherCode)->where('TRANG_THAI', 1)->first();
             if ($voucherObj) {
                 if ($voucherObj->LOAI_GIAM === 'PHAN_TRAM') {

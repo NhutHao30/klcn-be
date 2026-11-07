@@ -223,13 +223,6 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
 
         // 📋 Nhật ký hệ thống
         Route::get('/admin/nhat-ky-he-thong', [NhatKyHeThongController::class, 'index']);
-
-        // Khuyen Mai / Voucher Admin API
-        Route::get('/admin/vouchers', [\App\Http\Controllers\Api\VoucherController::class, 'index']);
-        Route::post('/admin/vouchers', [\App\Http\Controllers\Api\VoucherController::class, 'store'])->middleware(['feature.lock:PROMOTION']);
-        Route::get('/admin/vouchers/{id}', [\App\Http\Controllers\Api\VoucherController::class, 'show']);
-        Route::put('/admin/vouchers/{id}', [\App\Http\Controllers\Api\VoucherController::class, 'update'])->middleware(['feature.lock:PROMOTION']);
-        Route::delete('/admin/vouchers/{id}', [\App\Http\Controllers\Api\VoucherController::class, 'destroy'])->middleware(['feature.lock:PROMOTION']);
     });
 
     // ==========================================
@@ -298,9 +291,17 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
 
         // Quản lý Sản phẩm (Catalog)
         Route::post('/admin/products', [ProductController::class, 'store'])->middleware(['feature.lock:PRODUCT_CATALOG']);
+        Route::post('/admin/products/apply-discount', [ProductController::class, 'applyDiscount'])->middleware(['feature.lock:PRODUCT_CATALOG']);
         Route::match(['put', 'post'], '/admin/products/{id}', [ProductController::class, 'update'])->middleware(['feature.lock:PRODUCT_CATALOG']);
         Route::delete('/admin/products/{id}', [ProductController::class, 'destroy'])->middleware(['feature.lock:PRODUCT_CATALOG']);
         Route::put('/admin/products/{id}/restore', [ProductController::class, 'restore'])->middleware(['feature.lock:PRODUCT_CATALOG']);
+
+        // Khuyen Mai / Voucher Admin API
+        Route::get('/admin/vouchers', [\App\Http\Controllers\Api\VoucherController::class, 'index']);
+        Route::post('/admin/vouchers', [\App\Http\Controllers\Api\VoucherController::class, 'store'])->middleware(['feature.lock:PROMOTION']);
+        Route::get('/admin/vouchers/{id}', [\App\Http\Controllers\Api\VoucherController::class, 'show']);
+        Route::put('/admin/vouchers/{id}', [\App\Http\Controllers\Api\VoucherController::class, 'update'])->middleware(['feature.lock:PROMOTION']);
+        Route::delete('/admin/vouchers/{id}', [\App\Http\Controllers\Api\VoucherController::class, 'destroy'])->middleware(['feature.lock:PROMOTION']);
 
     });
 

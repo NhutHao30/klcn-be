@@ -376,7 +376,7 @@ class PosShiftController extends Controller
             $sp = $spId ? SanPham::find($spId) : null;
             if ($sp) {
                 $qty = max(1, (int)($it['soLuong'] ?? $it['quantity'] ?? $it['so_luong'] ?? 1));
-                $price = (float) $sp->giaBan;
+                $price = (float) ($sp->giaSauGiam ?? $sp->giaBan);
                 $thanhTien = $price * $qty;
                 $subtotal += $thanhTien;
 
