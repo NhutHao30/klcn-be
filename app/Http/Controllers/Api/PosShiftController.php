@@ -408,9 +408,14 @@ class PosShiftController extends Controller
 
         DB::beginTransaction();
         try {
-            $maDonHang = 'POS' . date('YmdHis') . rand(10, 99);
-            while (DonHang::where('maDonHang', $maDonHang)->exists()) {
-                $maDonHang = 'POS' . date('YmdHis') . rand(100, 999);
+            $requestedCode = strtoupper(trim((string)($request->input('maDonHang') ?? $request->input('orderCode') ?? '')));
+            if ($requestedCode !== '' && !DonHang::where('maDonHang', $requestedCode)->exists()) {
+                $maDonHang = $requestedCode;
+            } else {
+                $maDonHang = 'POS' . date('YmdHis') . rand(10, 99);
+                while (DonHang::where('maDonHang', $maDonHang)->exists()) {
+                    $maDonHang = 'POS' . date('YmdHis') . rand(100, 999);
+                }
             }
 
             $donHang = DonHang::create([

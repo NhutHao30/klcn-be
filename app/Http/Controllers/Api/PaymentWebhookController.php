@@ -31,10 +31,24 @@ class PaymentWebhookController extends Controller
             ?? $request->input('data.amount') 
             ?? 0);
 
-        // Trích xuất mã đơn hàng HD... từ nội dung chuyển khoản
+        // Trích xuất mã đơn hàng HD..., POS..., DHT... từ nội dung chuyển khoản
         $matchedCode = null;
-        if (preg_match('/(HD\d{6,14})/i', $content, $matches)) {
+        $normalizedContent = preg_replace('/\s+/', '', (string)$content);
+        if (preg_match('/((?:HD|POS|DHT)\d{4,25})/i', (string)$content, $matches)) {
             $matchedCode = strtoupper($matches[1]);
+        } elseif (preg_match('/((?:HD|POS|DHT)\d{4,25})/i', (string)$normalizedContent, $matches)) {
+            $matchedCode = strtoupper($matches[1]);
+        }
+
+        // Lưu thêm cache theo số tiền vừa chuyển khoản (trong 3 phút) để bắt được cả trường hợp ngân hàng cắt/đổi nội dung CK tại POS
+        if ($amount > 0) {
+            Cache::put('paid_recent_amount_' . (int)round($amount), [
+                'paid' => true,
+                'amount' => $amount,
+                'time' => now()->toIso8601String(),
+                'content' => $content,
+                'orderCode' => $matchedCode,
+            ], now()->addMinutes(3));
         }
 
         if ($matchedCode) {
@@ -107,6 +121,33 @@ class PaymentWebhookController extends Controller
                 'amount' => (float)$donHang->tongThanhToan,
                 'message' => 'Đơn hàng đã được xác nhận thanh toán thành công!'
             ]);
+        }
+
+        // 3. Fallback kiểm tra theo số tiền vừa chuyển khoản trong 3 phút gần nhất (hỗ trợ POS / QR khi nội dung CK bị ngân hàng rút gọn)
+        $expectedAmount = (int)round((float)$request->query('amount', 0));
+        if ($expectedAmount > 0) {
+            $recentByAmount = Cache::get('paid_recent_amount_' . $expectedAmount);
+            if ($recentByAmount && !empty($recentByAmount['paid'])) {
+                $boundCode = $recentByAmount['orderCode'] ?? null;
+                if (!$boundCode || strtoupper($boundCode) === $code) {
+                    // Đánh dấu mã đơn hiện tại đã thanh toán và xóa cache tạm theo tiền để tránh trùng lặp
+                    Cache::put('paid_order_' . $code, [
+                        'paid' => true,
+                        'amount' => $recentByAmount['amount'] ?? $expectedAmount,
+                        'time' => $recentByAmount['time'] ?? now()->toIso8601String(),
+                        'content' => $recentByAmount['content'] ?? ''
+                    ], now()->addHours(1));
+                    Cache::forget('paid_recent_amount_' . $expectedAmount);
+
+                    return response()->json([
+                        'paid' => true,
+                        'source' => 'webhook_amount',
+                        'amount' => $recentByAmount['amount'] ?? $expectedAmount,
+                        'time' => $recentByAmount['time'] ?? now()->toIso8601String(),
+                        'message' => 'Ngân hàng đã xác nhận giao dịch thành công!'
+                    ]);
+                }
+            }
         }
 
         return response()->json([
