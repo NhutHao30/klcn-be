@@ -164,10 +164,18 @@ class HoaDonNhapController extends Controller
         // Nếu Nhân viên kho tạo: lập yêu cầu nhập lô hàng mới (signImmediately = false), chờ Quản lý chi nhánh duyệt
         $kyQuanLy = null;
         $signImmediately = false;
+        $savedSignature = $profile?->chuKySo
+            ?? $profile?->getRawOriginal('chuKySo')
+            ?? $user->chuKySo
+            ?? $user->getRawOriginal('chuKySo')
+            ?? null;
 
         if ($isBranchManager) {
-            $kyQuanLy = $request->input('ky_quan_ly') ?? $request->input('ky_giam_doc') ?? null;
-            $signImmediately = $request->boolean('auto_sign_all', false) || !empty($kyQuanLy);
+            $kyQuanLyInput = $request->input('ky_quan_ly') ?? $request->input('ky_giam_doc') ?? null;
+            $signImmediately = $request->boolean('auto_sign_all', false) || !empty($kyQuanLyInput);
+            if ($signImmediately) {
+                $kyQuanLy = $kyQuanLyInput ?: $savedSignature;
+            }
         }
         $yeuCauId = $request->input('yeuCauId') ?? $request->input('yeu_cau_id');
 
@@ -358,8 +366,13 @@ class HoaDonNhapController extends Controller
         }
 
         $profile = NguoiDung::where('taiKhoanId', $user->id)->first() ?? $user->nguoidung;
+        $savedSignature = $profile?->chuKySo
+            ?? $profile?->getRawOriginal('chuKySo')
+            ?? $user->chuKySo
+            ?? $user->getRawOriginal('chuKySo')
+            ?? null;
         $items = $request->input('items', []);
-        $kyNguoiNhan = $request->input('ky_nguoi_nhan') ?? $request->input('ky_quan_ly') ?? $profile?->chuKySo;
+        $kyNguoiNhan = $request->input('ky_nguoi_nhan') ?? $request->input('ky_quan_ly') ?? $savedSignature;
         $tenNguoiNhan = $request->input('ten_nguoi_nhan') ?: ($profile?->hoTen ?? $user->username);
         $ghiChuKiemDem = $request->input('ghi_chu', $request->input('ghiChu', 'Đã kiểm đếm và ký xác nhận'));
 

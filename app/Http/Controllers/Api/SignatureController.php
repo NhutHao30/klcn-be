@@ -390,9 +390,16 @@ class SignatureController extends Controller
 
         $targetRole = $allowedSlotRole;
 
-        // Lấy profile người dùng
-        $profile = NguoiDung::where('taiKhoanId', $user->id)->first() ?? $user->nguoidung;
+        // Lấy profile người dùng (kèm relation taikhoan để đọc chuKySo đã lưu)
+        $profile = NguoiDung::with('taikhoan')->where('taiKhoanId', $user->id)->first() ?? $user->nguoidung;
         $signerName = $profile?->hoTen ?? $user->username ?? 'Người phê duyệt';
+
+        // Đọc chữ ký đã lưu từ profile hoặc từ tài khoản (fallback)
+        $savedSignature = $profile?->chuKySo
+            ?? $profile?->getRawOriginal('chuKySo')
+            ?? $user->chuKySo
+            ?? $user->getRawOriginal('chuKySo')
+            ?? null;
 
         // Xác định loại tài liệu
         $loaiPhieuInput = $request->input('loai_phieu') ?? $request->input('loai_tai_lieu');
@@ -470,9 +477,18 @@ class SignatureController extends Controller
         $signatureImage = $request->input('signature_data')
             ?? $request->input('chu_ky')
             ?? $request->input('chuKySo')
-            ?? $profile?->chuKySo
-            ?? $user?->chuKySo
+            ?? $savedSignature
             ?? null;
+
+        // Nếu người dùng vừa ký tay mà trong hồ sơ chưa lưu chữ ký thì tự động lưu lại cho lần sau
+        if (!empty($signatureImage) && empty($savedSignature) && str_starts_with((string) $signatureImage, 'data:image/')) {
+            try {
+                $user->update(['chuKySo' => $signatureImage]);
+                if ($profile) {
+                    $profile->update(['chuKySo' => $signatureImage]);
+                }
+            } catch (\Throwable $eSaveSig) {}
+        }
 
         $rawPayload = ($signatureImage && (str_starts_with((string) $signatureImage, 'data:image/') || str_starts_with((string) $signatureImage, '<svg') || str_starts_with((string) $signatureImage, 'http')))
             ? $signatureImage

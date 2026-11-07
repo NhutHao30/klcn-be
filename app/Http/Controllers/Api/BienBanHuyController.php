@@ -121,8 +121,9 @@ class BienBanHuyController extends Controller
                         'trangThai' => $autoSign ? 1 : 0,
                     ]);
 
-                    $user = \App\Models\NguoiDung::find($nguoiLapId);
+                    $user = \App\Models\NguoiDung::with('taikhoan')->find($nguoiLapId);
                     $userName = $user?->hoTen ?? 'Quản lý chi nhánh';
+                    $savedSig = $user?->chuKySo ?? $user?->getRawOriginal('chuKySo') ?? $user?->taikhoan?->chuKySo ?? null;
 
                     \App\Models\ChuKySo::create([
                         'maChuKy' => 'SIG-HUY-' . $bb->id . '-R1-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 6)),
@@ -151,7 +152,7 @@ class BienBanHuyController extends Controller
                         'vaiTroKy' => 3,
                         'nguoiKyId' => $autoSign ? $nguoiLapId : null,
                         'tenNguoiKy' => $autoSign ? $userName : 'Quản lý chi nhánh',
-                        'digitalSignatureHash' => $autoSign ? hash('sha256', "BBH_{$bb->id}_R3_" . time()) : null,
+                        'digitalSignatureHash' => $autoSign ? ($savedSig ?: hash('sha256', "BBH_{$bb->id}_R3_" . time())) : null,
                         'publicKey' => $autoSign ? 'BRANCH_MANAGER_SIGNATURE' : null,
                         'trangThai' => $autoSign ? 1 : 0,
                         'ngayKy' => $autoSign ? now() : null,
@@ -267,6 +268,7 @@ class BienBanHuyController extends Controller
 
         $profile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first() ?? $user->nguoidung;
         $tenNguoiKy = $profile?->hoTen ?? $user->username;
+        $savedSig = $profile?->chuKySo ?? $profile?->getRawOriginal('chuKySo') ?? $user->chuKySo ?? $user->getRawOriginal('chuKySo') ?? null;
 
         DB::beginTransaction();
         try {
@@ -282,7 +284,7 @@ class BienBanHuyController extends Controller
             DB::statement('CALL sp_sign_role(?, ?, ?, ?, ?, @is_fully_signed, @error)', [
                 $slot->id,
                 $profile?->id ?? $user->id,
-                json_encode(['docId' => $disposal->id, 'signer' => $tenNguoiKy, 'type' => 'BBH']),
+                $savedSig ?: json_encode(['docId' => $disposal->id, 'signer' => $tenNguoiKy, 'type' => 'BBH']),
                 'BRANCH_MANAGER_SIGNATURE',
                 'Quản lý chi nhánh đã phê duyệt biên bản hủy'
             ]);

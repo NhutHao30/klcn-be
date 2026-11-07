@@ -1,18 +1,19 @@
 <?php
 
-namespace AppHttpControllersApi;
+namespace App\Http\Controllers\Api;
 
-use AppHttpControllersController;
-use IlluminateHttpRequest;
-use IlluminateSupportFacadesAuth;
-use AppModelsPosShift;
-use AppModelsDonHang;
-use AppModelsChiTietDonHang;
-use AppModelsIdempotencyKey;
-use AppModelsSanPham;
-use AppModelsTonKhoChiNhanh;
-use IlluminateSupportFacadesDB;
-use CarbonCarbon;
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use App\Models\PosShift;
+use App\Models\DonHang;
+use App\Models\ChiTietDonHang;
+use App\Models\IdempotencyKey;
+use App\Models\SanPham;
+use App\Models\NguoiDung;
+use App\Models\TonKhoChiNhanh;
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 
 class PosShiftController extends Controller
 {
@@ -299,9 +300,26 @@ class PosShiftController extends Controller
         $idempotencyKey = $request->header('X-Idempotency-Key') ?? $request->header('Idempotency-Key') ?? $request->idempotency_key;
 
         if ($idempotencyKey) {
-            $existing = IdempotencyKey::where('idempotency_key', $idempotencyKey)->first();
-            if ($existing) {
-                return response()->json(json_decode($existing->response_payload, true), $existing->status_code);
+            try {
+                $existing = IdempotencyKey::where('idempotency_key', $idempotencyKey)->first();
+                if ($existing) {
+                    $payload = $existing->response_payload ?? $existing->responsePayload ?? null;
+                    $statusCode = (int)($existing->status_code ?? $existing->statusCode ?? 200);
+                    if ($payload) {
+                        return response()->json(json_decode($payload, true), $statusCode > 0 ? $statusCode : 200);
+                    }
+                }
+            } catch (\Throwable $eIdemLookup) {
+                try {
+                    $existing = IdempotencyKey::where('idempotencyKey', $idempotencyKey)->first();
+                    if ($existing) {
+                        $payload = $existing->responsePayload ?? $existing->response_payload ?? null;
+                        $statusCode = (int)($existing->statusCode ?? $existing->status_code ?? 200);
+                        if ($payload) {
+                            return response()->json(json_decode($payload, true), $statusCode > 0 ? $statusCode : 200);
+                        }
+                    }
+                } catch (\Throwable $eIdemLookup2) {}
             }
         }
 
@@ -380,10 +398,10 @@ class PosShiftController extends Controller
         $customerId = $request->input('customerId', $request->input('khachHangId', $request->input('nguoidungId')));
         if ($customerId) {
             if (!is_numeric($customerId)) {
-                $kh = AppModelsNguoiDung::where('soDienThoai', $customerId)->first();
+                $kh = NguoiDung::where('soDienThoai', $customerId)->first();
                 if ($kh) $customerId = $kh->id;
             }
-            if (!is_numeric($customerId) || !AppModelsNguoiDung::find($customerId)) {
+            if (!is_numeric($customerId) || !NguoiDung::find($customerId)) {
                 $customerId = null;
             }
         }
@@ -440,6 +458,10 @@ class PosShiftController extends Controller
 
             DB::commit();
 
+            try {
+                ProductController::clearProductCache();
+            } catch (\Throwable $eCache) {}
+
             $responseData = [
                 'message' => 'Thanh toán POS thành công',
                 'data' => $donHang->load('chitiet.sanpham')
@@ -452,12 +474,12 @@ class PosShiftController extends Controller
                         'response_payload' => json_encode($responseData),
                         'status_code' => 200,
                     ]);
-                } catch (Throwable $eIdem) {}
+                } catch (\Throwable $eIdem) {}
             }
 
             return response()->json($responseData);
 
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['error' => 'Thanh toán POS thất bại: ' . $e->getMessage()], 500);
         }

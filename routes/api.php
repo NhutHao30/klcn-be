@@ -209,12 +209,14 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
         Route::post('/chat/staff-clear-presence', [\App\Http\Controllers\Api\ChatController::class, 'clearStaffPresence']);
     });
 
+    // Danh sách cửa hàng cho các trang quản trị (Admin, Quản lý chi nhánh, POS, Kho, CSKH...)
+    Route::get('/admin/stores', [\App\Http\Controllers\Api\StoreController::class, 'index']);
+
     // ==========================================
     // 👑 API DÀNH CHO ADMIN (Quyền = 0)
     // ==========================================
     Route::middleware(['role:0', 'log.activity'])->group(function () {
-        // Quản lý Cửa hàng (Multi-store) (Chỉ Admin)
-        Route::get('/admin/stores', [\App\Http\Controllers\Api\StoreController::class, 'index']);
+        // Quản lý Cửa hàng (Multi-store) (Chỉ Admin thêm/sửa/đổi trạng thái)
         Route::post('/admin/stores', [\App\Http\Controllers\Api\StoreController::class, 'store'])->middleware(['feature.lock:STORE_MGMT']);
         Route::put('/admin/stores/{id}', [\App\Http\Controllers\Api\StoreController::class, 'update'])->middleware(['feature.lock:STORE_MGMT']);
         Route::put('/admin/stores/{id}/status', [\App\Http\Controllers\Api\StoreController::class, 'updateStatus'])->middleware(['feature.lock:STORE_MGMT']);

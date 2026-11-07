@@ -1,8 +1,8 @@
 <?php
 
-namespace AppModels;
+namespace App\Models;
 
-use IlluminateDatabaseEloquentModel;
+use Illuminate\Database\Eloquent\Model;
 
 class PosShift extends Model
 {

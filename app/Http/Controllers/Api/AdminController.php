@@ -77,7 +77,7 @@ class AdminController extends Controller
         self::ensureRolesAndColumnsExist();
 
         $user = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $query = TaiKhoan::with(['nguoidung.cuahang', 'vaitro']);
+        $query = TaiKhoan::with(['nguoidung.cuahang', 'nguoidung.diachi', 'vaitro']);
 
         if ($user && (int)$user->vaiTroId === 2) {
             $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first();
@@ -133,19 +133,24 @@ class AdminController extends Controller
         DB::beginTransaction();
         try {
             $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-            $cccd = trim($request->CCCD ?? '');
-            $username = trim($request->USERNAME ?? '') ?: ($cccd ?: 'NV' . sprintf('%06d', rand(1, 999999)));
-            $password = trim($request->PASSWORD ?? '') ?: ($cccd ?: $username);
-            $email = trim($request->EMAIL ?? '') ?: ($username . '@dolabakery.com');
-            $marole = (int)($request->MAROLE ?? 3); // 3 = Thu ngân/Bán hàng mặc định
+            $cccd = trim($request->CCCD ?? $request->cccd ?? '');
+            $username = trim($request->USERNAME ?? $request->userName ?? '') ?: ($cccd ?: 'NV' . sprintf('%06d', rand(1, 999999)));
+            $password = trim($request->PASSWORD ?? $request->password ?? '') ?: ($cccd ?: $username);
+            $email = trim($request->EMAIL ?? $request->email ?? '') ?: ($username . '@dolabakery.com');
+            $marole = (int)($request->MAROLE ?? $request->maRole ?? $request->vaiTroId ?? 3); // 3 = Thu ngân/Bán hàng mặc định
 
-            if ($userLogin && (int)$userLogin->MAROLE === 2) {
-                // Store manager creating staff gets assigned to store 2 or staff default role
+            $isBranchManager = $userLogin && ((int)$userLogin->vaiTroId === 2 || (int)$userLogin->MAROLE === 1);
+            if ($isBranchManager && !in_array($marole, [3, 4, 5, 7], true)) {
                 $marole = 3;
             }
 
+            // Nếu username đã tồn tại (ví dụ quét lại cùng thẻ CCCD demo), tự động tạo username duy nhất
             if (TaiKhoan::where('username', $username)->exists()) {
-                return response()->json(['message' => "Tài khoản hoặc mã CCCD [{$username}] đã tồn tại trong hệ thống!"], 400);
+                $username = $username . '_' . rand(10, 99);
+            }
+
+            if (TaiKhoan::where('email', $email)->exists()) {
+                $email = $username . '_' . rand(100, 999) . '@dolabakery.com';
             }
 
             $tk = TaiKhoan::create([
@@ -156,8 +161,8 @@ class AdminController extends Controller
                 'trangThai' => 1,
             ]);
 
-            $macuahang = $request->MACUAHANG ?? 1;
-            if ($userLogin && (int)$userLogin->MAROLE === 2) {
+            $macuahang = $request->MACUAHANG ?? $request->macuahang ?? 1;
+            if ($isBranchManager) {
                 $profileLogin = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
                 if ($profileLogin && $profileLogin->cuaHangId) {
                     $macuahang = $profileLogin->cuaHangId;
@@ -166,19 +171,56 @@ class AdminController extends Controller
 
             $caLamViec = $request->input('CALAMVIEC', $request->input('caLamViec', 'Ca Sáng'));
             $luong = (float)$request->input('LUONG', $request->input('luong', 0));
+            $gioiTinhInput = $request->input('GioiTinh', $request->input('gioiTinh', 'Nam'));
+            $gioiTinhVal = ($gioiTinhInput === 'Nữ' || $gioiTinhInput === 0 || $gioiTinhInput === '0') ? 0 : 1;
 
-            \App\Models\NguoiDung::create([
+            // Tránh lỗi unique constraint trên cột cccdNumber nếu thẻ CCCD đã được quét trước đó
+            $cccdToSave = $cccd ?: null;
+            if ($cccdToSave && \App\Models\NguoiDung::where('cccdNumber', $cccdToSave)->exists()) {
+                $cccdToSave = $cccdToSave . '_' . rand(10, 99);
+            }
+
+            $cccdImageUrl = null;
+            if ($request->hasFile('CCCD_TRUOC') && $request->file('CCCD_TRUOC')->isValid()) {
+                $file = $request->file('CCCD_TRUOC');
+                $ext = $file->getClientOriginalExtension() ?: 'jpg';
+                $fname = 'cccd_' . $tk->id . '_' . time() . '.' . $ext;
+                $dest = public_path('assets/cccd');
+                if (!file_exists($dest)) {
+                    @mkdir($dest, 0755, true);
+                }
+                $file->move($dest, $fname);
+                $cccdImageUrl = '/assets/cccd/' . $fname;
+            }
+
+            $nd = \App\Models\NguoiDung::create([
                 'taiKhoanId' => $tk->id,
                 'cuaHangId'  => $macuahang,
-                'hoTen'      => $request->HOTEN,
-                'soDienThoai' => $request->SDT ?? null,
-                'gioiTinh'   => $request->GioiTinh === 'Nam' ? 1 : ($request->GioiTinh === 'Nữ' ? 0 : null),
-                'ngaySinh'   => $request->NGAYSINH ?: null,
-                'cccdNumber' => $cccd ?: null,
+                'hoTen'      => $request->HOTEN ?? $request->hoTen,
+                'soDienThoai' => $request->SDT ?? $request->sdt ?? null,
+                'gioiTinh'   => $gioiTinhVal,
+                'ngaySinh'   => ($request->NGAYSINH ?? $request->ngaySinh) ?: null,
+                'cccdNumber' => $cccdToSave,
+                'cccdImageUrl' => $cccdImageUrl,
                 'loaiNguoiDung' => 1, // Staff
                 'caLamViec'  => $caLamViec,
                 'luong'      => $luong,
             ]);
+
+            $diaChiText = trim((string)($request->input('DIACHI') ?? $request->input('diaChi') ?? ''));
+            if ($diaChiText !== '' && $nd) {
+                try {
+                    $nd->diachi()->create([
+                        'hoTenNguoiNhan' => $nd->hoTen,
+                        'soDienThoai' => $nd->soDienThoai ?: '0900000000',
+                        'diaChiChiTiet' => $diaChiText,
+                        'maTinh' => 202,
+                        'maHuyen' => 1442,
+                        'maXa' => '20101',
+                        'isDefault' => 1,
+                    ]);
+                } catch (\Throwable $eAddr) {}
+            }
 
             DB::commit();
             return response()->json(['message' => 'Tạo tài khoản và thông tin nhân viên thành công!'], 201);
