@@ -501,6 +501,7 @@ class SignatureController extends Controller
             ]);
 
         try {
+            \App\Services\InventoryLedgerService::ensureSchema();
             $isFullySigned = false;
             try {
                 DB::statement('CALL sp_sign_role(?, ?, ?, ?, ?, @is_fully_signed, @error)', [

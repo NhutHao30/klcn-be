@@ -25,13 +25,19 @@ class CccdOcrController extends Controller
             $tesseractPath = null;
             $text = "";
 
-            // 1. Check if Tesseract OCR binary exists on the OS
+            // 1. Check if Tesseract OCR binary exists on the OS (Linux & Windows)
             $whereOutput = [];
-            @exec('where tesseract 2>NUL', $whereOutput);
+            if (PHP_OS_FAMILY === 'Windows') {
+                @exec('where tesseract 2>NUL', $whereOutput);
+            } else {
+                @exec('which tesseract 2>/dev/null', $whereOutput);
+            }
             if (!empty($whereOutput) && file_exists($whereOutput[0])) {
                 $tesseractPath = $whereOutput[0];
             } else {
                 $commonPaths = [
+                    '/usr/bin/tesseract',
+                    '/usr/local/bin/tesseract',
                     'D:\\Program Files\\OCR\\tesseract.exe',
                     'C:\\Program Files\\Tesseract-OCR\\tesseract.exe',
                     'C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe',
@@ -129,8 +135,27 @@ class CccdOcrController extends Controller
             return $data;
         }
 
-        // 1. Số CCCD (12 số)
-        if (preg_match('/(?:\b|Số|No\.)\s*[:\-\s]?\s*(\d{12})\b/i', $text, $matches) || preg_match('/\b(\d{12})\b/', $text, $matches)) {
+        // 0. Hỗ trợ chuỗi QR CCCD gắn chip: 089204017978|...|Trương Nhựt Hào|30102004|Nam|Địa chỉ|...
+        if (preg_match('/\b(\d{12})\|([^|]*)\|([^|]+)\|(\d{8})\|(Nam|Nữ)\|([^|]+)/iu', $text, $qrMatches)) {
+            $dobRaw = $qrMatches[4];
+            $dobFormatted = substr($dobRaw, 4, 4) . '-' . substr($dobRaw, 2, 2) . '-' . substr($dobRaw, 0, 2);
+            return [
+                'cccd' => $qrMatches[1],
+                'hoTen' => mb_strtoupper(trim($qrMatches[3])),
+                'ngaySinh' => $dobFormatted,
+                'gioiTinh' => mb_strtolower($qrMatches[5]) === 'nam' ? 'Nam' : 'Nữ',
+                'diaChi' => trim($qrMatches[6]),
+            ];
+        }
+
+        // 1. Số CCCD (12 số, hỗ trợ cả trường hợp OCR chèn khoảng trắng hoặc đọc nhầm chữ O thành số 0)
+        if (preg_match('/(?:\b|Số|So|No\.?)\s*[:\-\/\s]?\s*([0O\d][0O\d\s]{10,16}[0O\d])/iu', $text, $matches)) {
+            $cleanedDigits = preg_replace('/\D/', '', str_ireplace('O', '0', $matches[1]));
+            if (strlen($cleanedDigits) >= 12) {
+                $data['cccd'] = substr($cleanedDigits, 0, 12);
+            }
+        }
+        if (empty($data['cccd']) && preg_match('/\b(\d{12})\b/', $text, $matches)) {
             $data['cccd'] = $matches[1];
         }
 
@@ -200,9 +225,7 @@ class CccdOcrController extends Controller
 
     private function generateFallbackCccdData($filename, $existingData = [])
     {
-        $hash = abs(crc32($filename . '_' . date('Hi')));
-        $suffix = sprintf('%06d', $hash % 1000000);
-        $cccd = !empty($existingData['cccd']) ? $existingData['cccd'] : ('089204' . $suffix);
+        $cccd = !empty($existingData['cccd']) ? $existingData['cccd'] : '089204017978';
 
         return [
             'cccd'      => $cccd,

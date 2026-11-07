@@ -16,6 +16,7 @@ class InventoryLedgerController extends Controller
 
     public function getMovements(Request $request)
     {
+        \App\Services\InventoryLedgerService::ensureSchema();
         $user = Auth::guard('api')->user();
         if (!$user) {
             $token = $request->bearerToken();
