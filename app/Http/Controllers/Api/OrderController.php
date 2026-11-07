@@ -140,6 +140,13 @@ class OrderController extends Controller
 
             $stTitle = self::$statusMap[$order->trangThaiDonHang] ?? 'Chờ xử lý';
 
+            $isPaidOrTransferred = (int)$order->trangThaiThanhToan === 1
+                || in_array((int)$order->phuongThucThanhToan, [1, 2], true)
+                || !empty($order->minhChungThanhToan);
+            $isCodUnpaid = (int)$order->phuongThucThanhToan === 0
+                && (int)$order->trangThaiThanhToan === 0
+                && empty($order->minhChungThanhToan);
+
             return [
                 'id' => $order->id,
                 'maHD' => $order->maDonHang,
@@ -189,11 +196,21 @@ class OrderController extends Controller
                 'minhChungHoanTien' => $order->minhChungHoanTien ?? null,
                 'nhanVienHoanTienId' => $order->nhanVienHoanTienId ?? null,
                 'minhChungThanhToan' => $order->minhChungThanhToan ?? null,
+                'lyDoHoanTra' => $order->lyDoHoanTra ?? '',
+                'ghiChuHoanTra' => $order->ghiChuHoanTra ?? '',
+                'hinhAnhHoanTra' => $order->hinhAnhHoanTra ?? null,
+                'ngayYeuCauHoanTra' => $order->ngayYeuCauHoanTra ? \Carbon\Carbon::parse($order->ngayYeuCauHoanTra)->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i') : '',
+                'trangThaiHoanHang' => $order->trangThaiHoanHang ?? '',
+                'lyDoTuChoiHoanTra' => $order->lyDoTuChoiHoanTra ?? '',
+                'isPaidOrTransferred' => $isPaidOrTransferred,
+                'isReturnable' => in_array((int)$order->trangThaiDonHang, [3, 4, 5], true) && empty($order->trangThaiHoanHang) && (!empty($order->updatedAt) ? now()->diffInDays(\Carbon\Carbon::parse($order->updatedAt)) <= 3 : true),
+                'isCancellable' => ((int)$order->trangThaiDonHang === 1) && $isCodUnpaid && !$isPaidOrTransferred,
                 'trangThai' => $stTitle,
                 'TRANGTHAI' => $stTitle,
                 'TRANG_THAI' => $stTitle,
                 'trangThaiDonHang' => $order->trangThaiDonHang,
                 'trangThaiThanhToan' => $order->trangThaiThanhToan,
+                'phuongThucThanhToan' => (int) $order->phuongThucThanhToan,
                 'phuongThucTT' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD (Tiền mặt)'),
                 'PHUONGTHUCTHANHTOAN' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD (Tiền mặt)'),
                 'loaiDonHang' => $order->loaiDonHang,
@@ -310,13 +327,15 @@ class OrderController extends Controller
             'ngayYeuCauHoanTra' => $order->ngayYeuCauHoanTra ? \Carbon\Carbon::parse($order->ngayYeuCauHoanTra)->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i') : '',
             'trangThaiHoanHang' => $order->trangThaiHoanHang ?? '',
             'lyDoTuChoiHoanTra' => $order->lyDoTuChoiHoanTra ?? '',
-            'isReturnable' => in_array((int)$order->trangThaiDonHang, [4, 5]) && empty($order->trangThaiHoanHang) && (!empty($order->updatedAt) ? now()->diffInDays(\Carbon\Carbon::parse($order->updatedAt)) <= 3 : true),
-            'isCancellable' => in_array((int)$order->trangThaiDonHang, [1, 2, 7]) && (int)$order->trangThaiThanhToan === 0,
+            'isPaidOrTransferred' => ((int)$order->trangThaiThanhToan === 1 || in_array((int)$order->phuongThucThanhToan, [1, 2], true) || !empty($order->minhChungThanhToan)),
+            'isReturnable' => in_array((int)$order->trangThaiDonHang, [3, 4, 5], true) && empty($order->trangThaiHoanHang) && (!empty($order->updatedAt) ? now()->diffInDays(\Carbon\Carbon::parse($order->updatedAt)) <= 3 : true),
+            'isCancellable' => ((int)$order->trangThaiDonHang === 1) && ((int)$order->phuongThucThanhToan === 0) && ((int)$order->trangThaiThanhToan === 0) && empty($order->minhChungThanhToan),
             'trangThai' => $stTitle,
             'TRANGTHAI' => $stTitle,
             'TRANG_THAI' => $stTitle,
             'trangThaiDonHang' => $order->trangThaiDonHang,
             'trangThaiThanhToan' => $order->trangThaiThanhToan,
+            'phuongThucThanhToan' => (int) $order->phuongThucThanhToan,
             'phuongThucTT' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD (Tiền mặt)'),
             'PHUONGTHUCTHANHTOAN' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD (Tiền mặt)'),
             'loaiDonHang' => $order->loaiDonHang,
@@ -811,13 +830,15 @@ class OrderController extends Controller
                 'ngayYeuCauHoanTra' => $order->ngayYeuCauHoanTra ? \Carbon\Carbon::parse($order->ngayYeuCauHoanTra)->timezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i') : '',
                 'trangThaiHoanHang' => $order->trangThaiHoanHang ?? '',
                 'lyDoTuChoiHoanTra' => $order->lyDoTuChoiHoanTra ?? '',
-                'isReturnable' => in_array((int)$order->trangThaiDonHang, [4, 5]) && empty($order->trangThaiHoanHang) && (!empty($order->updatedAt) ? now()->diffInDays(\Carbon\Carbon::parse($order->updatedAt)) <= 3 : true),
-                'isCancellable' => in_array((int)$order->trangThaiDonHang, [1, 2, 7]) && (int)$order->trangThaiThanhToan === 0,
+                'isPaidOrTransferred' => ((int)$order->trangThaiThanhToan === 1 || in_array((int)$order->phuongThucThanhToan, [1, 2], true) || !empty($order->minhChungThanhToan)),
+                'isReturnable' => in_array((int)$order->trangThaiDonHang, [3, 4, 5], true) && empty($order->trangThaiHoanHang) && (!empty($order->updatedAt) ? now()->diffInDays(\Carbon\Carbon::parse($order->updatedAt)) <= 3 : true),
+                'isCancellable' => ((int)$order->trangThaiDonHang === 1) && ((int)$order->phuongThucThanhToan === 0) && ((int)$order->trangThaiThanhToan === 0) && empty($order->minhChungThanhToan),
                 'trangThai' => $stTitle,
                 'TRANGTHAI' => $stTitle,
                 'status' => $stTitle,
                 'trangThaiDonHang' => $order->trangThaiDonHang,
                 'trangThaiThanhToan' => $order->trangThaiThanhToan,
+                'phuongThucThanhToan' => (int) $order->phuongThucThanhToan,
                 'phuongThucTT' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD — thanh toán khi nhận hàng'),
                 'PHUONGTHUCTHANHTOAN' => $order->phuongThucThanhToan == 1 ? 'Chuyển khoản / VietQR' : ($order->phuongThucThanhToan == 2 ? 'MoMo' : 'COD — thanh toán khi nhận hàng'),
                 'loaiDonHang' => $order->loaiDonHang == 1 ? 'Bán tại quầy' : 'Trực tuyến',
@@ -879,19 +900,24 @@ class OrderController extends Controller
             }
         }
 
-        // QUY TẮC NGHIỆP VỤ BẮT BUỘC: Đơn hàng CHỈ được phép hủy khi ở trạng thái "đang xử lý" (1: Chờ xác nhận / Chờ xử lý ban đầu).
-        // Khi nhân viên đã xác nhận đơn hàng (2: Đang chuẩn bị / Đang chế biến bánh, 7: Chờ bàn giao GHN, 3: Đang giao, 4/5: Hoàn thành), KHÔNG ĐƯỢC PHÉP HỦY ĐƠN!
+        // QUY TẮC NGHIỆP VỤ BẮT BUỘC:
+        // 1. Chỉ cho phép hủy khi trạng thái đơn đang là "Chờ xử lý" (1: Chờ xác nhận / Chờ xử lý ban đầu).
         if ((int)$order->trangThaiDonHang !== 1) {
             return response()->json([
-                'error' => 'Đơn hàng đã được nhân viên xác nhận và đang trong quy trình chế biến / chuẩn bị giao hàng cho GHN nên không thể hủy đơn! Quý khách vui lòng đợi nhận hàng hoặc yêu cầu Trả hàng & Hoàn tiền sau khi nhận bánh nếu không ưng ý.'
+                'error' => 'Chỉ cho phép hủy đơn hàng khi trạng thái đang là Chờ xử lý! Đơn hàng đã được xác nhận hoặc đang vận chuyển không thể hủy.'
             ], 400);
         }
 
-        // QUY TẮC BẮT BUỘC: Đơn hàng chỉ cho phép hủy khi khách CHƯA THANH TOÁN (trangThaiThanhToan == 0).
-        // Nếu khách đã thanh toán (trangThaiThanhToan == 1), KHÔNG CHO PHÉP HỦY, chỉ cho phép hoàn hàng sau khi nhận hàng.
-        if ((int)$order->trangThaiThanhToan === 1) {
+        // 2. Chỉ cho phép hủy khi khách hàng chọn thanh toán bằng COD (phuongThucThanhToan == 0) và chưa chuyển khoản.
+        // Trường hợp khách hàng ĐÃ CHUYỂN KHOẢN cho đơn hàng đó -> KHÔNG CHO HỦY dù trạng thái đơn có là Chờ xử lý,
+        // nhưng sẽ cho hoàn hàng khi nhận hàng (chụp ảnh trạng thái sản phẩm + kê khai tài khoản chờ hoàn tiền + đợi nhân viên xác nhận).
+        $isPaidOrTransferred = (int)$order->trangThaiThanhToan === 1
+            || in_array((int)$order->phuongThucThanhToan, [1, 2], true)
+            || !empty($order->minhChungThanhToan);
+
+        if ($isPaidOrTransferred) {
             return response()->json([
-                'error' => 'Đơn hàng đã được thanh toán không thể hủy đơn! Quý khách vui lòng nhận hàng hoặc yêu cầu Trả hàng & Hoàn tiền theo chính sách sau khi đơn hàng được giao.'
+                'error' => 'Đơn hàng đã chuyển khoản thanh toán nên không thể hủy trực tiếp (dù đang ở trạng thái Chờ xử lý). Quý khách sẽ được quyền Hoàn hàng khi nhận hàng: chụp ảnh trạng thái sản phẩm, kê khai tài khoản chờ hoàn tiền và đợi nhân viên xác nhận!'
             ], 400);
         }
 
@@ -1125,20 +1151,9 @@ class OrderController extends Controller
     /**
      * Customer: Cancel order if not yet shipped
      */
-    public function cancelOrder($id)
+    public function cancelOrder(Request $request, $id)
     {
-        $user = Auth::guard('api')->user();
-        if (!$user) return response()->json(['error' => 'Chưa đăng nhập'], 401);
-
-        DB::statement('CALL sp_cancel_order(?, @error)', [$id]);
-
-        $res = DB::select('SELECT @error AS error')[0];
-
-        if ($res->error) {
-            return response()->json(['error' => $res->error], 400);
-        }
-
-        return response()->json(['message' => 'Đã hủy đơn hàng thành công']);
+        return $this->customerCancelOrder($request, $id);
     }
 
     /**
@@ -1263,17 +1278,17 @@ class OrderController extends Controller
             }
         }
 
-        // Chỉ cho phép trả hàng khi đơn hàng ĐÃ GIAO / HOÀN THÀNH (4 hoặc 5)
-        if (!in_array((int)$order->trangThaiDonHang, [4, 5])) {
+        // Cho phép hoàn hàng khi nhận hàng (3: Đang giao đến khách / 4, 5: Đã giao / Hoàn thành)
+        if (!in_array((int)$order->trangThaiDonHang, [3, 4, 5], true)) {
             return response()->json([
-                'error' => 'Chỉ có thể yêu cầu trả hàng khi đơn hàng đã được giao đến bạn thành công!'
+                'error' => 'Chỉ có thể yêu cầu hoàn hàng khi nhận hàng (đơn hàng đang giao đến bạn hoặc đã giao thành công)!'
             ], 400);
         }
 
         // Kiểm tra nếu đã yêu cầu hoàn trả hoặc đã hoàn
         if ((int)$order->trangThaiDonHang === 8 || $order->trangThaiHoanHang === 'CHO_DUYET') {
             return response()->json([
-                'error' => 'Đơn hàng này đang có yêu cầu hoàn trả chờ xét duyệt, vui lòng không gửi lại!'
+                'error' => 'Đơn hàng này đang có yêu cầu hoàn trả chờ nhân viên xác nhận, vui lòng không gửi lại!'
             ], 400);
         }
         if ((int)$order->trangThaiDonHang === 6 || $order->trangThaiHoanHang === 'DA_HOAN_HANG') {
@@ -1298,7 +1313,7 @@ class OrderController extends Controller
         $soTaiKhoan = trim((string)($request->input('soTaiKhoanHoanTien') ?? $request->input('accountNo') ?? ''));
         $tenNguoiNhan = trim((string)($request->input('tenNguoiNhanHoanTien') ?? $request->input('accountName') ?? ''));
 
-        // Xử lý upload ảnh minh chứng hỏng hóc nếu có
+        // Xử lý upload ảnh chụp trạng thái sản phẩm khi nhận hàng (BẮT BUỘC)
         $proofImage = null;
         if ($request->hasFile('hinhAnhHoanTra') || $request->hasFile('image') || $request->hasFile('evidence')) {
             $file = $request->file('hinhAnhHoanTra') ?? $request->file('image') ?? $request->file('evidence');
@@ -1307,40 +1322,49 @@ class OrderController extends Controller
                 $proofImage = $uploadService->uploadImage($file, 'returns');
             } catch (\Exception $e) {
                 \Illuminate\Support\Facades\Log::warning("Lỗi upload ảnh minh chứng hoàn trả: " . $e->getMessage());
+                try {
+                    $destDir = public_path('assets/returns');
+                    if (!is_dir($destDir)) {
+                        @mkdir($destDir, 0775, true);
+                    }
+                    $filename = time() . '_return_' . preg_replace('/[^a-zA-Z0-9_\.-]/', '_', $file->getClientOriginalName());
+                    $file->move($destDir, $filename);
+                    $proofImage = '/assets/returns/' . $filename;
+                } catch (\Throwable $eFallback) {
+                    $mime = $file->getMimeType() ?: 'image/jpeg';
+                    $proofImage = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($file->getRealPath()));
+                }
             }
         } elseif ($request->input('hinhAnhHoanTra') || $request->input('imageUrl')) {
             $proofImage = $request->input('hinhAnhHoanTra') ?? $request->input('imageUrl');
         }
 
-        // Kiểm tra thông tin ngân hàng nếu đơn đã thanh toán
-        $isPaid = (int)$order->trangThaiThanhToan === 1 || in_array((int)$order->phuongThucThanhToan, [1, 2]);
-        if ($isPaid) {
-            if (empty($soTaiKhoan) || empty($tenNguoiNhan)) {
-                return response()->json([
-                    'error' => 'Đơn hàng này đã thanh toán trước đó. Vui lòng cung cấp Số tài khoản và Tên chủ tài khoản ngân hàng để nhân viên chuyển khoản hoàn tiền!'
-                ], 422);
-            }
+        if (empty($proofImage)) {
+            return response()->json([
+                'error' => 'Vui lòng chụp hoặc tải lên ảnh trạng thái sản phẩm khi nhận hàng để làm minh chứng hoàn hàng!'
+            ], 422);
+        }
+
+        // Bắt buộc kê khai thông tin tài khoản ngân hàng chờ hoàn tiền
+        if (empty($nganHang) || empty($soTaiKhoan) || empty($tenNguoiNhan)) {
+            return response()->json([
+                'error' => 'Vui lòng kê khai đầy đủ Ngân hàng, Số tài khoản và Tên chủ tài khoản để chờ hoàn tiền!'
+            ], 422);
         }
 
         $oldStatus = (int) $order->trangThaiDonHang;
-        $order->trangThaiDonHang = 8; // 8: YEU_CAU_HOAN_HANG (Chờ duyệt hoàn trả)
+        $order->trangThaiDonHang = 8; // 8: YEU_CAU_HOAN_HANG (Chờ nhân viên xác nhận)
         $order->trangThaiHoanHang = 'CHO_DUYET';
         $order->lyDoHoanTra = $lyDo;
         $order->ghiChuHoanTra = $ghiChu;
         $order->ngayYeuCauHoanTra = now();
-
-        if ($proofImage) {
-            $order->hinhAnhHoanTra = $proofImage;
-        }
-
-        if ($nganHang) $order->nganHangHoanTien = $nganHang;
-        if ($soTaiKhoan) $order->soTaiKhoanHoanTien = $soTaiKhoan;
-        if ($tenNguoiNhan) $order->tenNguoiNhanHoanTien = mb_strtoupper($tenNguoiNhan, 'UTF-8');
-
-        if ($isPaid) {
-            $order->trangThaiThanhToan = 2; // 2: CHO_HOAN_TIEN
-            $order->trangThaiHoanTien = 'CHO_HOAN_TIEN';
-        }
+        $order->hinhAnhHoanTra = $proofImage;
+        $order->nganHangHoanTien = $nganHang;
+        $order->soTaiKhoanHoanTien = $soTaiKhoan;
+        $order->tenNguoiNhanHoanTien = mb_strtoupper($tenNguoiNhan, 'UTF-8');
+        $order->soTienHoan = $order->tongThanhToan;
+        $order->trangThaiThanhToan = 2; // 2: CHO_HOAN_TIEN
+        $order->trangThaiHoanTien = 'CHO_HOAN_TIEN';
 
         $order->save();
 
@@ -1350,13 +1374,13 @@ class OrderController extends Controller
             'trangThaiCu' => $oldStatus,
             'trangThaiMoi' => 8,
             'ghnStatusCode' => 'return_requested',
-            'moTaChiTiet' => "Khách hàng yêu cầu Trả hàng & Hoàn tiền. Lý do: {$lyDo}. Chi tiết: {$ghiChu}." . ($isPaid ? " Ngân hàng nhận: {$nganHang} - STK: {$soTaiKhoan} ({$order->tenNguoiNhanHoanTien})" : ""),
+            'moTaChiTiet' => "Khách hàng yêu cầu Hoàn hàng & Hoàn tiền khi nhận hàng. Lý do: {$lyDo}. Chi tiết: {$ghiChu}. Ngân hàng chờ hoàn tiền: {$nganHang} - STK: {$soTaiKhoan} ({$order->tenNguoiNhanHoanTien})",
             'nguonCapNhat' => 2, // Khách hàng
         ]);
 
         return response()->json([
             'success' => true,
-            'message' => 'Đã gửi yêu cầu Trả hàng & Hoàn tiền thành công! Cửa hàng sẽ kiểm tra và giải quyết trong vòng 24h làm việc.',
+            'message' => 'Đã gửi yêu cầu Hoàn hàng & Kê khai tài khoản hoàn tiền thành công! Vui lòng đợi nhân viên xác nhận và hoàn tiền.',
             'data' => $order->refresh()
         ]);
     }

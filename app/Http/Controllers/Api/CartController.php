@@ -389,7 +389,7 @@ class CartController extends Controller
                 'phiVanChuyen' => $shippingFee,
                 'tongThanhToan' => $totalPayment,
                 'phuongThucThanhToan' => $pmCode,
-                'trangThaiThanhToan' => ($pmCode == 0 ? 0 : ($receiptUrl ? 1 : ($pmCode == 1 ? 0 : 1))),
+                'trangThaiThanhToan' => ($pmCode == 0 ? 0 : 1),
                 'trangThaiDonHang' => 1, // 1: Chờ xác nhận
                 'diaChiGiaoHang' => $address,
                 'ghiChu' => $note,
