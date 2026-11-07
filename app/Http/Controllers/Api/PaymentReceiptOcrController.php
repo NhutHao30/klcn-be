@@ -37,8 +37,8 @@ class PaymentReceiptOcrController extends Controller
 
         // Thông tin kỳ vọng cần đối soát
         $orderCode = trim((string)($request->input('orderCode') ?? $request->input('maDonHang') ?? $request->input('maHD') ?? ''));
-        $expectedAccount = trim((string)($request->input('expectedAccount') ?? '0353144481'));
-        $expectedName = trim((string)($request->input('expectedName') ?? 'TRUONG NHUT HAO'));
+        $expectedAccount = trim((string)($request->input('expectedAccount') ?? '0338052164'));
+        $expectedName = trim((string)($request->input('expectedName') ?? 'NGUYEN HUU THIEN'));
         $expectedAmount = (float)($request->input('expectedAmount') ?? $request->input('amount') ?? 0);
 
         // Kiểm tra định dạng ảnh
