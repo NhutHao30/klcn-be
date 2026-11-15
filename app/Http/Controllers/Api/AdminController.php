@@ -1359,10 +1359,18 @@ class AdminController extends Controller
 
             $doanhThu = (float) $doanhThuQuery->sum('tongThanhToan');
 
-            // ── Chi phí nhập: tổng (SL bán × đơn giá bán) theo tháng ───
+            // ── Giá nhập trung bình theo sản phẩm (tránh nhân bản dòng khi join nhiều lô hàng) ──
+            $avgGiaNhapSub = DB::table('loHang')
+                ->select('sanPhamId', DB::raw('AVG(giaNhap) as avgGiaNhap'))
+                ->where('giaNhap', '>', 0)
+                ->groupBy('sanPhamId');
+
+            // ── Chi phí giá vốn: tổng (SL bán × giá nhập TB) theo tháng ───
             $chiPhiQuery = DB::table('chiTietDonHang')
                 ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
-                ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
+                ->leftJoinSub($avgGiaNhapSub, 'lh_avg', function ($join) {
+                    $join->on('chiTietDonHang.sanPhamId', '=', 'lh_avg.sanPhamId');
+                })
                 ->where(function($q) {
                     $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
                 })
@@ -1373,7 +1381,7 @@ class AdminController extends Controller
                 $chiPhiQuery->where('donHang.cuaHangId', $macuahang);
             }
 
-            $chiPhi = (float) $chiPhiQuery->sum(DB::raw('chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)'));
+            $chiPhi = (float) $chiPhiQuery->sum(DB::raw('chiTietDonHang.soLuong * COALESCE(lh_avg.avgGiaNhap, 0)'));
 
             // ── Chi phí hủy hàng (hết hạn, hỏng) trong tháng ──────────────
             $chiPhiHuy = 0;
@@ -1403,7 +1411,9 @@ class AdminController extends Controller
             $loiNhuanTheoSP = DB::table('chiTietDonHang')
                 ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
                 ->join('sanPham', 'chiTietDonHang.sanPhamId', '=', 'sanPham.id')
-                ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
+                ->leftJoinSub($avgGiaNhapSub, 'lh_avg', function ($join) {
+                    $join->on('chiTietDonHang.sanPhamId', '=', 'lh_avg.sanPhamId');
+                })
                 ->where(function($q) {
                     $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
                 })
@@ -1415,8 +1425,8 @@ class AdminController extends Controller
                     sanPham.tenSanPham as TENSP,
                     SUM(chiTietDonHang.soLuong) as tong_ban,
                     SUM(chiTietDonHang.thanhTien) as doanh_thu,
-                    SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as chi_phi,
-                    SUM(chiTietDonHang.thanhTien) - SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as loi_nhuan
+                    SUM(chiTietDonHang.soLuong * COALESCE(lh_avg.avgGiaNhap, 0)) as chi_phi,
+                    SUM(chiTietDonHang.thanhTien) - SUM(chiTietDonHang.soLuong * COALESCE(lh_avg.avgGiaNhap, 0)) as loi_nhuan
                 ")
                 ->groupBy('sanPham.id', 'sanPham.tenSanPham')
                 ->orderByDesc('loi_nhuan')
@@ -1426,7 +1436,9 @@ class AdminController extends Controller
             // ── Lợi nhuận theo ngày trong tháng ────────────────────────────
             $loiNhuanTheoNgay = DB::table('chiTietDonHang')
                 ->join('donHang', 'chiTietDonHang.donHangId', '=', 'donHang.id')
-                ->leftJoin('loHang', 'chiTietDonHang.sanPhamId', '=', 'loHang.sanPhamId')
+                ->leftJoinSub($avgGiaNhapSub, 'lh_avg', function ($join) {
+                    $join->on('chiTietDonHang.sanPhamId', '=', 'lh_avg.sanPhamId');
+                })
                 ->where(function($q) {
                     $q->where('donHang.trangThaiThanhToan', 1)->orWhereIn('donHang.trangThaiDonHang', [4, 5]);
                 })
@@ -1436,8 +1448,8 @@ class AdminController extends Controller
                 ->selectRaw("
                     DATE(donHang.createdAt) as ngay,
                     SUM(chiTietDonHang.thanhTien) as doanh_thu,
-                    SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as chi_phi,
-                    SUM(chiTietDonHang.thanhTien) - SUM(chiTietDonHang.soLuong * COALESCE(loHang.giaNhap, 0)) as loi_nhuan
+                    SUM(chiTietDonHang.soLuong * COALESCE(lh_avg.avgGiaNhap, 0)) as chi_phi,
+                    SUM(chiTietDonHang.thanhTien) - SUM(chiTietDonHang.soLuong * COALESCE(lh_avg.avgGiaNhap, 0)) as loi_nhuan
                 ")
                 ->groupBy('ngay')
                 ->orderBy('ngay')
