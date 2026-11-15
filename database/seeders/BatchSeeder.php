@@ -67,6 +67,7 @@ class BatchSeeder extends Seeder
         }
 
         // 2. Tạo các lô hàng (LoHang) & ChiTietHoaDonNhap
+        $cost0 = (int) round(($products[0]->giaBan ?? 35000) * 0.6, -2);
         $batch1 = LoHang::create([
             'maLoHang' => 'LH-MOUSSE-202609A',
             'sanPhamId' => $products[0]->id,
@@ -76,7 +77,7 @@ class BatchSeeder extends Seeder
             'soLuongCon' => 42,
             'ngaySanXuat' => now()->subDays(5)->toDateString(),
             'hsd' => now()->addDays(25)->toDateString(),
-            'giaNhap' => 120000,
+            'giaNhap' => $cost0,
             'trangThai' => 0, // Con_hang
         ]);
         ChiTietHoaDonNhap::create([
@@ -84,11 +85,12 @@ class BatchSeeder extends Seeder
             'loHangId' => $batch1->id,
             'sanPhamId' => $products[0]->id,
             'soLuong' => 50,
-            'donGiaNhap' => 120000,
-            'thanhTien' => 6000000,
+            'donGiaNhap' => $cost0,
+            'thanhTien' => 50 * $cost0,
         ]);
 
         if (isset($products[1])) {
+            $cost1 = (int) round(($products[1]->giaBan ?? 20000) * 0.6, -2);
             $batch2 = LoHang::create([
                 'maLoHang' => 'LH-TIRAMISU-202609B',
                 'sanPhamId' => $products[1]->id,
@@ -98,7 +100,7 @@ class BatchSeeder extends Seeder
                 'soLuongCon' => 10,
                 'ngaySanXuat' => now()->subDays(7)->toDateString(),
                 'hsd' => now()->addDays(2)->toDateString(),
-                'giaNhap' => 150000,
+                'giaNhap' => $cost1,
                 'trangThai' => 0,
             ]);
             ChiTietHoaDonNhap::create([
@@ -106,13 +108,14 @@ class BatchSeeder extends Seeder
                 'loHangId' => $batch2->id,
                 'sanPhamId' => $products[1]->id,
                 'soLuong' => 30,
-                'donGiaNhap' => 150000,
-                'thanhTien' => 4500000,
+                'donGiaNhap' => $cost1,
+                'thanhTien' => 30 * $cost1,
             ]);
         }
 
         // 3. Tạo Lô hàng hết hạn & Biên bản hủy
         if (isset($products[2])) {
+            $cost2 = (int) round(($products[2]->giaBan ?? 24000) * 0.6, -2);
             $batchExpired = LoHang::create([
                 'maLoHang' => 'LH-EXPIRED-202608X',
                 'sanPhamId' => $products[2]->id,
@@ -122,7 +125,7 @@ class BatchSeeder extends Seeder
                 'soLuongCon' => 0,
                 'ngaySanXuat' => now()->subDays(30)->toDateString(),
                 'hsd' => now()->subDays(2)->toDateString(),
-                'giaNhap' => 200000,
+                'giaNhap' => $cost2,
                 'trangThai' => 3, // Da_huy
             ]);
 
