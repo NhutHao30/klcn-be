@@ -82,6 +82,15 @@ class HistoricalSalesAndImportSeeder extends Seeder
                 }
             }
             DB::table($loHangTable)->where('maLoHang', 'like', 'LH-SEED-%')->delete();
+            $nhatKyKhoTable = Schema::hasTable('nhatKyKho') ? 'nhatKyKho' : (Schema::hasTable('nhatkykho') ? 'nhatkykho' : null);
+            if ($nhatKyKhoTable) {
+                DB::table($nhatKyKhoTable)
+                    ->where(function ($q) {
+                        $q->where('maThamChieu', 'like', 'SEED-%')
+                          ->orWhere('maThamChieu', 'like', 'HDN-SEED-%');
+                    })
+                    ->delete();
+            }
 
             $today = Carbon::today();
             $startDate = $today->copy()->subMonths(11)->startOfMonth();
@@ -93,6 +102,7 @@ class HistoricalSalesAndImportSeeder extends Seeder
 
             $orderDetailsBuffer = [];
             $importDetailsBuffer = [];
+            $ledgerEvents = [];
 
             // 1. TẠO DỮ LIỆU NHẬP HÀNG (trải đều các ngày trong tháng, tối đa 50 mỗi sản phẩm)
             $cursorMonth = $startDate->copy()->startOfMonth();
@@ -175,6 +185,15 @@ class HistoricalSalesAndImportSeeder extends Seeder
                                 'soLuong' => $b['qty'],
                                 'donGiaNhap' => $b['unitCost'],
                                 'thanhTien' => $b['lineTotal'],
+                            ];
+
+                            $ledgerEvents[] = [
+                                'cuaHangId' => $store->id,
+                                'sanPhamId' => $b['sanPhamId'],
+                                'loaiBienDong' => 4, // Nhập lô mới
+                                'soLuongThayDoi' => $b['qty'],
+                                'maThamChieu' => $maHdn,
+                                'ts' => $importDate->toDateTimeString(),
                             ];
                         }
                     }
@@ -282,6 +301,15 @@ class HistoricalSalesAndImportSeeder extends Seeder
                         foreach ($linesForOrder as $line) {
                             $line['donHangId'] = $orderId;
                             $orderDetailsBuffer[] = $line;
+
+                            $ledgerEvents[] = [
+                                'cuaHangId' => $store->id,
+                                'sanPhamId' => $line['sanPhamId'],
+                                'loaiBienDong' => $loaiDonHang === 1 ? 0 : 1, // 0: POS, 1: Online
+                                'soLuongThayDoi' => -$line['soLuong'],
+                                'maThamChieu' => $maDonHang,
+                                'ts' => $orderTime->toDateTimeString(),
+                            ];
                         }
 
                         $accumulated += $tongTienHang;
@@ -299,11 +327,44 @@ class HistoricalSalesAndImportSeeder extends Seeder
                 }
             }
 
+            // 3. GHI SỔ CÁI TỒN KHO (nhatKyKho) cho toàn bộ giao dịch nhập & bán mẫu
+            $ledgerCount = 0;
+            if ($nhatKyKhoTable && !empty($ledgerEvents)) {
+                usort($ledgerEvents, fn($a, $b) => strcmp($a['ts'], $b['ts']));
+                $runningStock = [];
+                $ledgerBuffer = [];
+
+                foreach ($ledgerEvents as $ev) {
+                    $key = $ev['cuaHangId'] . '_' . $ev['sanPhamId'];
+                    if (!isset($runningStock[$key])) {
+                        $runningStock[$key] = 20;
+                    }
+                    $runningStock[$key] = max(0, $runningStock[$key] + $ev['soLuongThayDoi']);
+
+                    $ledgerBuffer[] = [
+                        'cuaHangId' => $ev['cuaHangId'],
+                        'sanPhamId' => $ev['sanPhamId'],
+                        'loaiBienDong' => $ev['loaiBienDong'],
+                        'soLuongThayDoi' => $ev['soLuongThayDoi'],
+                        'soLuongTonSau' => $runningStock[$key],
+                        'maThamChieu' => $ev['maThamChieu'],
+                        'createdAt' => $ev['ts'],
+                        'updatedAt' => $ev['ts'],
+                    ];
+                    $ledgerCount++;
+                }
+
+                foreach (array_chunk($ledgerBuffer, 500) as $chunk) {
+                    DB::table($nhatKyKhoTable)->insert($chunk);
+                }
+            }
+
             $this->command?->info(sprintf(
-                'HistoricalSalesAndImportSeeder hoàn tất: %d phiếu nhập (%d lô hàng, SL <= 50/SP), %d đơn hàng, tổng doanh thu mẫu %s đ.',
+                'HistoricalSalesAndImportSeeder hoàn tất: %d phiếu nhập (%d lô hàng, SL <= 50/SP), %d đơn hàng, %d dòng sổ cái tồn kho, tổng doanh thu mẫu %s đ.',
                 $importInvoiceCount,
                 $importBatchCount,
                 $orderCount,
+                $ledgerCount,
                 number_format($totalRevenueSeeded, 0, ',', '.')
             ));
         });
