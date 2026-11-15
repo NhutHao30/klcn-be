@@ -313,8 +313,10 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
     // 💼 BÁN HÀNG, XỬ LÝ ĐƠN HÀNG, POS & KHÁCH HÀNG (Admin, Quản lý, Bán hàng, CSKH, Giám đốc)
     // ==========================================
     Route::middleware(['role:0,1,2,3,4,5,8', 'log.activity'])->group(function () {
-        // POS Bán hàng
+        // POS Bán hàng & Hoàn tiền hóa đơn tại quầy
         Route::post('/admin/pos/checkout', [\App\Http\Controllers\Api\OrderController::class, 'storePOS'])->middleware(['throttle:orders', 'idempotency', 'feature.lock:POS']);
+        Route::get('/admin/pos/orders/lookup', [\App\Http\Controllers\Api\PosShiftController::class, 'lookupPosOrder']);
+        Route::post('/admin/pos/orders/{id}/refund', [\App\Http\Controllers\Api\PosShiftController::class, 'refundPosOrder']);
 
         // POS Shifts
         Route::get('/admin/pos/shifts', [\App\Http\Controllers\Api\PosShiftController::class, 'getShiftHistory']);

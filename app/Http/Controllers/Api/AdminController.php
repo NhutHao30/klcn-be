@@ -962,19 +962,63 @@ class AdminController extends Controller
     }
 
     /**
+     * Xác định quyền và phạm vi chi nhánh cho các API Báo cáo thống kê:
+     * - Chỉ Giám đốc (vaiTroId = 8) hoặc Admin (vaiTroId = 1) được xem tất cả chi nhánh (hoặc lọc theo cuaHangId gửi lên).
+     * - Quản lý chi nhánh (vaiTroId = 2) CHỈ được xem dữ liệu của chi nhánh mình quản lý.
+     * - Các role khác không được phép truy cập.
+     */
+    private function resolveReportScope(Request $request): array
+    {
+        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
+        if (!$userLogin) {
+            return ['allowed' => false, 'cuaHangId' => null, 'isDirector' => false];
+        }
+
+        $vtId = (int)($userLogin->vaiTroId ?? 0);
+        $isDirector = in_array($vtId, [1, 8], true); // 1: Admin hệ thống, 8: Ban Giám đốc
+        $isManager = ($vtId === 2);                   // 2: Quản lý chi nhánh
+
+        if (!$isDirector && !$isManager) {
+            return ['allowed' => false, 'cuaHangId' => null, 'isDirector' => false];
+        }
+
+        if ($isManager) {
+            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
+            $myStoreId = $staffProfile && $staffProfile->cuaHangId ? (int)$staffProfile->cuaHangId : -1;
+            return [
+                'allowed' => true,
+                'cuaHangId' => $myStoreId,
+                'isDirector' => false,
+            ];
+        }
+
+        $reqStoreId = $request->input('cuaHangId', $request->input('macuahang'));
+        $filterStoreId = ($reqStoreId !== null && $reqStoreId !== '' && $reqStoreId !== 'all' && (int)$reqStoreId > 0)
+            ? (int)$reqStoreId
+            : null;
+
+        return [
+            'allowed' => true,
+            'cuaHangId' => $filterStoreId,
+            'isDirector' => true,
+        ];
+    }
+
+    /**
      * Báo cáo doanh thu (theo ngày hoặc tháng cho Biểu đồ) - Query từ SQL VIEW v_thong_ke_doanh_thu
      */
     public function revenueReport(Request $request)
     {
+        $scope = $this->resolveReportScope($request);
+        if (!$scope['allowed']) {
+            return response()->json(['error' => 'Chỉ Ban Giám đốc hoặc Quản lý chi nhánh mới có quyền xem báo cáo thống kê.'], 403);
+        }
+
         $type = $request->query('type', 'month'); // 'day' or 'month'
 
         $baseQuery = DB::table('v_thong_ke_doanh_thu');
-
-        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        if ($userLogin && $userLogin->vaiTroId == 2) { // MANAGER
-            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
-            $baseQuery->where('cuaHangId', $macuahang);
+        if ($scope['cuaHangId']) {
+            $baseQuery->where('cuaHangId', $scope['cuaHangId']);
         }
 
         $result = [];
@@ -1016,12 +1060,11 @@ class AdminController extends Controller
 
     public function biDashboard(Request $request)
     {
-        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $macuahang = null;
-        if ($userLogin && $userLogin->vaiTroId == 2) { // MANAGER
-            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+        $scope = $this->resolveReportScope($request);
+        if (!$scope['allowed']) {
+            return response()->json(['error' => 'Chỉ Ban Giám đốc hoặc Quản lý chi nhánh mới có quyền xem báo cáo thống kê.'], 403);
         }
+        $macuahang = $scope['cuaHangId'];
 
         $makeQuery = function() use ($macuahang) {
             $q = DB::table('v_thong_ke_doanh_thu');
@@ -1177,14 +1220,13 @@ class AdminController extends Controller
     /**
      * Top 5 sản phẩm bán chạy nhất (Query từ SQL VIEW v_top_san_pham_ban_chay)
      */
-    public function topProducts()
+    public function topProducts(Request $request)
     {
-        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $macuahang = null;
-        if ($userLogin && $userLogin->vaiTroId == 2) { // MANAGER
-            $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-            $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+        $scope = $this->resolveReportScope($request);
+        if (!$scope['allowed']) {
+            return response()->json(['error' => 'Chỉ Ban Giám đốc hoặc Quản lý chi nhánh mới có quyền xem báo cáo thống kê.'], 403);
         }
+        $macuahang = $scope['cuaHangId'];
 
         $query = DB::table('v_top_san_pham_ban_chay');
         if ($macuahang) {
@@ -1294,15 +1336,11 @@ class AdminController extends Controller
     public function thongKeLoiNhuan(Request $request)
     {
         try {
-            $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-            $macuahang = null;
-            if ($userLogin && $userLogin->vaiTroId == 2) {
-                $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-                $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+            $scope = $this->resolveReportScope($request);
+            if (!$scope['allowed']) {
+                return response()->json(['error' => 'Chỉ Ban Giám đốc hoặc Quản lý chi nhánh mới có quyền xem báo cáo thống kê.'], 403);
             }
-            if (!$macuahang && $request->filled('macuahang')) {
-                $macuahang = (int) $request->macuahang;
-            }
+            $macuahang = $scope['cuaHangId'];
 
             $thang = (int) $request->input('thang', now()->month);
             $nam   = (int) $request->input('nam', now()->year);
@@ -1454,12 +1492,11 @@ class AdminController extends Controller
     public function thongKeNhapHang(Request $request)
     {
         try {
-            $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-            $macuahang = null;
-            if ($userLogin && $userLogin->vaiTroId == 2) {
-                $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-                $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+            $scope = $this->resolveReportScope($request);
+            if (!$scope['allowed']) {
+                return response()->json(['error' => 'Chỉ Ban Giám đốc hoặc Quản lý chi nhánh mới có quyền xem báo cáo thống kê.'], 403);
             }
+            $macuahang = $scope['cuaHangId'];
 
             $thang = (int) $request->input('thang', now()->month);
             $nam   = (int) $request->input('nam', now()->year);
@@ -1551,12 +1588,11 @@ class AdminController extends Controller
     public function thongKeHaoHut(Request $request)
     {
         try {
-            $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-            $macuahang = null;
-            if ($userLogin && $userLogin->vaiTroId == 2) {
-                $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $userLogin->id)->first();
-                $macuahang = $staffProfile ? $staffProfile->cuaHangId : 1;
+            $scope = $this->resolveReportScope($request);
+            if (!$scope['allowed']) {
+                return response()->json(['error' => 'Chỉ Ban Giám đốc hoặc Quản lý chi nhánh mới có quyền xem báo cáo thống kê.'], 403);
             }
+            $macuahang = $scope['cuaHangId'];
 
             $thang = (int) $request->input('thang', now()->month);
             $nam   = (int) $request->input('nam', now()->year);
@@ -1707,12 +1743,11 @@ class AdminController extends Controller
      */
     public function canhBaoHSD(Request $request)
     {
-        $userLogin = \Illuminate\Support\Facades\Auth::guard('api')->user();
-        $macuahang = null;
-        if ($userLogin && ((int)$userLogin->MAROLE === 2 || (int)$userLogin->vaiTroId === 2)) {
-            $nhanVienLogin = \App\Models\NhanVien::findByUsername($userLogin->username);
-            $macuahang = $nhanVienLogin ? $nhanVienLogin->MACUAHANG : 1;
+        $scope = $this->resolveReportScope($request);
+        if (!$scope['allowed']) {
+            return response()->json(['error' => 'Chỉ Ban Giám đốc hoặc Quản lý chi nhánh mới có quyền xem báo cáo thống kê.'], 403);
         }
+        $macuahang = $scope['cuaHangId'];
 
         $loHangService = app(\App\Services\LoHangService::class);
         return response()->json($loHangService->getExpiryAlerts($macuahang));
@@ -1720,9 +1755,14 @@ class AdminController extends Controller
 
     public function thongKeDonHuy(Request $request)
     {
+        $scope = $this->resolveReportScope($request);
+        if (!$scope['allowed']) {
+            return response()->json(['error' => 'Chỉ Ban Giám đốc hoặc Quản lý chi nhánh mới có quyền xem báo cáo thống kê.'], 403);
+        }
+
         $tuNgay = $request->input('tuNgay', now()->subDays(30)->format('Y-m-d'));
         $denNgay = $request->input('denNgay', now()->format('Y-m-d'));
-        $cuaHangId = $request->input('cuaHangId');
+        $cuaHangId = $scope['cuaHangId'];
         $lyDoFilter = $request->input('lyDoHuy');
 
         $startDate = $tuNgay . ' 00:00:00';

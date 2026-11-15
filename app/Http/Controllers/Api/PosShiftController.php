@@ -12,11 +12,59 @@ use App\Models\IdempotencyKey;
 use App\Models\SanPham;
 use App\Models\NguoiDung;
 use App\Models\TonKhoChiNhanh;
+use App\Models\LichSuTrangThaiDonHang;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 class PosShiftController extends Controller
 {
+    /**
+     * Tính toán doanh thu & tiền mặt két trong ca làm việc (đã trừ hoàn tiền mặt POS trong ca)
+     */
+    private function computeShiftMetrics(PosShift $shift): array
+    {
+        $cuahangId = $shift->cuaHangId;
+        $moCa = $shift->thoiGianMoCa;
+        $endAt = $shift->thoiGianDongCa;
+
+        $baseSales = DonHang::where('cuaHangId', $cuahangId)
+            ->where('loaiDonHang', 1)
+            ->whereIn('trangThaiThanhToan', [1, 3])
+            ->where('createdAt', '>=', $moCa);
+
+        if ($endAt) {
+            $baseSales->where('createdAt', '<=', $endAt);
+        }
+
+        $cashSales = (float) (clone $baseSales)->where('phuongThucThanhToan', 0)->sum('tongThanhToan');
+        $bankSales = (float) (clone $baseSales)->where('phuongThucThanhToan', 1)->sum('tongThanhToan');
+        $momoSales = (float) (clone $baseSales)->where('phuongThucThanhToan', 2)->sum('tongThanhToan');
+
+        $refundQuery = DonHang::where('cuaHangId', $cuahangId)
+            ->where('loaiDonHang', 1)
+            ->where('trangThaiThanhToan', 3)
+            ->where('ngayHoanTien', '>=', $moCa);
+
+        if ($endAt) {
+            $refundQuery->where('ngayHoanTien', '<=', $endAt);
+        }
+
+        $cashRefunds = (float) $refundQuery->sum('soTienHoan');
+        $grossSales = $cashSales + $bankSales + $momoSales;
+        $totalSales = max(0, $grossSales - $cashRefunds);
+        $expectedCash = (float) $shift->tienMatDauCa + $cashSales - $cashRefunds;
+
+        return [
+            'cash_sales' => $cashSales,
+            'bank_sales' => $bankSales,
+            'momo_sales' => $momoSales,
+            'cash_refunds' => $cashRefunds,
+            'gross_sales' => $grossSales,
+            'total_sales' => $totalSales,
+            'expected_cash' => $expectedCash,
+        ];
+    }
+
     /**
      * Lấy thông tin ca làm việc đang mở của nhân viên hiện tại
      */
@@ -36,33 +84,7 @@ class PosShiftController extends Controller
             return response()->json(['error' => 'Không có ca làm việc nào đang mở'], 404);
         }
 
-        $cuahangId = $shift->cuaHangId;
-        $moCa = $shift->thoiGianMoCa;
-
-        // Doanh thu theo phương thức thanh toán trong ca đang mở (loaiDonHang = 1 là POS quầy)
-        $cashSales = (float) DonHang::where('cuaHangId', $cuahangId)
-            ->where('loaiDonHang', 1)
-            ->where('phuongThucThanhToan', 0)
-            ->where('trangThaiThanhToan', 1)
-            ->where('createdAt', '>=', $moCa)
-            ->sum('tongThanhToan');
-
-        $bankSales = (float) DonHang::where('cuaHangId', $cuahangId)
-            ->where('loaiDonHang', 1)
-            ->where('phuongThucThanhToan', 1)
-            ->where('trangThaiThanhToan', 1)
-            ->where('createdAt', '>=', $moCa)
-            ->sum('tongThanhToan');
-
-        $momoSales = (float) DonHang::where('cuaHangId', $cuahangId)
-            ->where('loaiDonHang', 1)
-            ->where('phuongThucThanhToan', 2)
-            ->where('trangThaiThanhToan', 1)
-            ->where('createdAt', '>=', $moCa)
-            ->sum('tongThanhToan');
-
-        $totalSales = $cashSales + $bankSales + $momoSales;
-        $expectedCash = (float) $shift->tienMatDauCa + $cashSales;
+        $metrics = $this->computeShiftMetrics($shift);
 
         return response()->json([
             'id' => $shift->id,
@@ -72,11 +94,12 @@ class PosShiftController extends Controller
             'opened_at' => $shift->thoiGianMoCa,
             'tienMatDauCa' => (float) $shift->tienMatDauCa,
             'opening_cash' => (float) $shift->tienMatDauCa,
-            'cash_sales' => $cashSales,
-            'bank_sales' => $bankSales,
-            'momo_sales' => $momoSales,
-            'total_sales' => $totalSales,
-            'expected_cash' => $expectedCash,
+            'cash_sales' => $metrics['cash_sales'],
+            'bank_sales' => $metrics['bank_sales'],
+            'momo_sales' => $metrics['momo_sales'],
+            'cash_refunds' => $metrics['cash_refunds'],
+            'total_sales' => $metrics['total_sales'],
+            'expected_cash' => $metrics['expected_cash'],
             'trangThai' => $shift->trangThai,
         ]);
     }
@@ -202,33 +225,13 @@ class PosShiftController extends Controller
         }
 
         $openingCash = (float) $activeShift->tienMatDauCa;
-        $cuahangId = $activeShift->cuaHangId;
-        $moCa = $activeShift->thoiGianMoCa;
-
-        // Thống kê doanh thu ca theo từng phương thức thanh toán
-        $cashSales = (float) DonHang::where('cuaHangId', $cuahangId)
-            ->where('loaiDonHang', 1)
-            ->where('phuongThucThanhToan', 0)
-            ->where('trangThaiThanhToan', 1)
-            ->where('createdAt', '>=', $moCa)
-            ->sum('tongThanhToan');
-
-        $bankSales = (float) DonHang::where('cuaHangId', $cuahangId)
-            ->where('loaiDonHang', 1)
-            ->where('phuongThucThanhToan', 1)
-            ->where('trangThaiThanhToan', 1)
-            ->where('createdAt', '>=', $moCa)
-            ->sum('tongThanhToan');
-
-        $momoSales = (float) DonHang::where('cuaHangId', $cuahangId)
-            ->where('loaiDonHang', 1)
-            ->where('phuongThucThanhToan', 2)
-            ->where('trangThaiThanhToan', 1)
-            ->where('createdAt', '>=', $moCa)
-            ->sum('tongThanhToan');
-
-        $totalSales = $cashSales + $bankSales + $momoSales;
-        $expectedCash = $openingCash + $cashSales;
+        $metrics = $this->computeShiftMetrics($activeShift);
+        $cashSales = $metrics['cash_sales'];
+        $bankSales = $metrics['bank_sales'];
+        $momoSales = $metrics['momo_sales'];
+        $cashRefunds = $metrics['cash_refunds'];
+        $totalSales = $metrics['total_sales'];
+        $expectedCash = $metrics['expected_cash'];
         $difference = (float) $actualCash - $expectedCash;
 
         $confirmDiscrepancy = $request->boolean('confirm_discrepancy') || $request->boolean('force_close');
@@ -240,6 +243,7 @@ class PosShiftController extends Controller
                 'cash_sales' => $cashSales,
                 'bank_sales' => $bankSales,
                 'momo_sales' => $momoSales,
+                'cash_refunds' => $cashRefunds,
                 'total_sales' => $totalSales,
                 'expected_cash' => $expectedCash,
                 'actual_cash' => (float) $actualCash,
@@ -279,6 +283,7 @@ class PosShiftController extends Controller
                 'cash_sales' => $cashSales,
                 'bank_sales' => $bankSales,
                 'momo_sales' => $momoSales,
+                'cash_refunds' => $cashRefunds,
                 'total_sales' => $totalSales,
                 'actual_cash' => (float) $activeShift->tienMatThucTe,
                 'expected_cash' => (float) $activeShift->tienMatSach,
@@ -516,5 +521,215 @@ class PosShiftController extends Controller
         $shifts = $query->paginate($perPage);
 
         return response()->json($shifts);
+    }
+
+    /**
+     * Tra cứu hóa đơn POS theo mã hóa đơn để kiểm tra sản phẩm trước khi hoàn tiền mặt
+     */
+    public function lookupPosOrder(Request $request)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) return response()->json(['error' => 'Chưa đăng nhập'], 401);
+
+        $rawCode = trim((string)($request->input('maDonHang', $request->input('code', ''))));
+        $code = ltrim(strtoupper($rawCode), '#');
+
+        if ($code === '') {
+            return response()->json(['error' => 'Vui lòng nhập mã hóa đơn cần tra cứu.'], 422);
+        }
+
+        $query = DonHang::with(['chitiet.sanpham', 'nguoidung', 'cuahang'])
+            ->where('loaiDonHang', 1)
+            ->where(function ($q) use ($code) {
+                $q->whereRaw('UPPER(maDonHang) = ?', [$code]);
+                if (is_numeric($code)) {
+                    $q->orWhere('id', (int)$code);
+                }
+            });
+
+        $order = $query->first();
+        if (!$order) {
+            return response()->json(['error' => "Không tìm thấy hóa đơn bán tại quầy với mã '{$rawCode}'."], 404);
+        }
+
+        $vtId = (int)($user->vaiTroId ?? 0);
+        $nguoidung = $user->nguoidung;
+        if (!in_array($vtId, [1, 8], true) && $nguoidung && $nguoidung->cuaHangId) {
+            if ((int)$order->cuaHangId !== (int)$nguoidung->cuaHangId) {
+                return response()->json(['error' => 'Hóa đơn này thuộc chi nhánh khác, bạn không có quyền hoàn tiền tại quầy này.'], 403);
+            }
+        }
+
+        $canRefund = true;
+        $blockedReason = null;
+        if ((int)$order->trangThaiThanhToan === 3 || (int)$order->trangThaiDonHang === 6) {
+            $canRefund = false;
+            $blockedReason = 'Hóa đơn này đã được hoàn tiền trước đó.';
+        } elseif ((int)$order->trangThaiThanhToan !== 1) {
+            $canRefund = false;
+            $blockedReason = 'Hóa đơn chưa ở trạng thái đã thanh toán.';
+        }
+
+        return response()->json([
+            'data' => $order,
+            'can_refund' => $canRefund,
+            'blocked_reason' => $blockedReason,
+        ]);
+    }
+
+    /**
+     * Hoàn tiền mặt cho hóa đơn đã thanh toán tại quầy POS:
+     * - Bắt buộc có ca làm việc đang mở tại chi nhánh
+     * - Cộng lại số lượng sản phẩm vào tồn kho chi nhánh & ghi sổ cái kho
+     * - Cập nhật hóa đơn sang Đã hoàn tiền (bằng tiền mặt)
+     * - Cập nhật két tiền & doanh thu ca hiện tại
+     */
+    public function refundPosOrder(Request $request, $id)
+    {
+        $user = Auth::guard('api')->user();
+        if (!$user) return response()->json(['error' => 'Chưa đăng nhập'], 401);
+
+        $lyDo = trim((string)($request->input('lyDo', $request->input('reason', ''))));
+        if ($lyDo === '') {
+            return response()->json(['error' => 'Vui lòng nhập lý do hoàn tiền / trả hàng.'], 422);
+        }
+
+        $nguoidung = $user->nguoidung;
+        $nhanvienId = $nguoidung ? $nguoidung->id : $user->id;
+        $vtId = (int)($user->vaiTroId ?? 0);
+
+        DB::beginTransaction();
+        try {
+            $order = DonHang::lockForUpdate()->with(['chitiet.sanpham', 'cuahang'])->find($id);
+            if (!$order) {
+                DB::rollBack();
+                return response()->json(['error' => 'Không tìm thấy hóa đơn.'], 404);
+            }
+
+            if ((int)$order->loaiDonHang !== 1) {
+                DB::rollBack();
+                return response()->json(['error' => 'Chỉ hỗ trợ hoàn tiền tại quầy cho hóa đơn POS.'], 400);
+            }
+
+            if (!in_array($vtId, [1, 8], true) && $nguoidung && $nguoidung->cuaHangId) {
+                if ((int)$order->cuaHangId !== (int)$nguoidung->cuaHangId) {
+                    DB::rollBack();
+                    return response()->json(['error' => 'Bạn chỉ có quyền hoàn tiền hóa đơn thuộc chi nhánh mình.'], 403);
+                }
+            }
+
+            if ((int)$order->trangThaiThanhToan === 3 || (int)$order->trangThaiDonHang === 6) {
+                DB::rollBack();
+                return response()->json(['error' => 'Hóa đơn này đã được hoàn tiền trước đó!'], 400);
+            }
+
+            if ((int)$order->trangThaiThanhToan !== 1) {
+                DB::rollBack();
+                return response()->json(['error' => 'Chỉ có thể hoàn tiền cho hóa đơn đã thanh toán.'], 400);
+            }
+
+            // Tìm ca làm việc đang mở để trừ tiền mặt trong két
+            $activeShift = PosShift::lockForUpdate()
+                ->where('cuaHangId', $order->cuaHangId)
+                ->where('nhanVienId', $nhanvienId)
+                ->where('trangThai', 0)
+                ->first();
+
+            if (!$activeShift && in_array($vtId, [1, 2, 8], true)) {
+                $activeShift = PosShift::lockForUpdate()
+                    ->where('cuaHangId', $order->cuaHangId)
+                    ->where('trangThai', 0)
+                    ->latest('id')
+                    ->first();
+            }
+
+            if (!$activeShift) {
+                DB::rollBack();
+                return response()->json(['error' => 'Chưa có ca làm việc nào đang mở tại chi nhánh này. Vui lòng mở ca trước khi hoàn tiền mặt!'], 400);
+            }
+
+            $oldStatus = (int)$order->trangThaiDonHang;
+            $refundAmount = (float)$order->tongThanhToan;
+
+            // Cộng lại số lượng từng sản phẩm vào tồn kho chi nhánh & ghi sổ cái
+            foreach ($order->chitiet as $item) {
+                $qty = (int)$item->soLuong;
+                if ($qty <= 0) continue;
+
+                $tonKho = TonKhoChiNhanh::firstOrCreate(
+                    ['cuaHangId' => $order->cuaHangId, 'sanPhamId' => $item->sanPhamId],
+                    ['soLuongTon' => 0]
+                );
+                $tonKho->increment('soLuongTon', $qty);
+
+                \App\Services\InventoryLedgerService::record(
+                    (int)$order->cuaHangId,
+                    (int)$item->sanPhamId,
+                    1, // Nhập lại kho do hoàn trả POS
+                    $qty,
+                    ($order->maDonHang ?? ('POS_' . $order->id)) . ' (Hoàn POS)',
+                    (int)$tonKho->fresh()->soLuongTon
+                );
+            }
+
+            $order->trangThaiDonHang = 6; // Đã hủy / Hoàn trả
+            $order->trangThaiThanhToan = 3; // Đã hoàn tiền
+            $order->trangThaiHoanHang = 'DA_DUYET';
+            $order->trangThaiHoanTien = 'DA_HOAN_TIEN';
+            $order->lyDoHoanTra = $lyDo;
+            $order->ghiChuHoanTien = "Hoàn tiền mặt tại quầy POS (Ca #{$activeShift->id}). Lý do: {$lyDo}";
+            $order->soTienHoan = $refundAmount;
+            $order->ngayHoanTien = now();
+            $order->nhanVienHoanTienId = $nhanvienId;
+            $order->maGiaoDichHoanTien = 'REFUND-POS-' . ($order->maDonHang ?? $order->id) . '-S' . $activeShift->id;
+            $order->save();
+
+            LichSuTrangThaiDonHang::create([
+                'donHangId' => $order->id,
+                'trangThaiCu' => $oldStatus,
+                'trangThaiMoi' => 6,
+                'moTa' => "Hoàn tiền mặt tại quầy POS: " . number_format($refundAmount, 0, ',', '.') . " ₫ (Ca #{$activeShift->id}). Lý do: {$lyDo}",
+            ]);
+
+            // Cập nhật lại số liệu két tiền & doanh thu của ca hiện tại
+            $metrics = $this->computeShiftMetrics($activeShift);
+            $activeShift->update([
+                'doanhThuTienMat' => $metrics['cash_sales'],
+                'doanhThuChuyenKhoan' => $metrics['bank_sales'],
+                'doanhThuMomo' => $metrics['momo_sales'],
+                'tongDoanhThu' => $metrics['total_sales'],
+                'tienMatSach' => $metrics['expected_cash'],
+            ]);
+
+            DB::commit();
+
+            try {
+                ProductController::clearProductCache();
+            } catch (\Throwable $eCache) {}
+
+            return response()->json([
+                'message' => 'Hoàn tiền mặt hóa đơn ' . $order->maDonHang . ' thành công! Đã cộng lại tồn kho và trừ két tiền mặt ca #' . $activeShift->id . '.',
+                'data' => $order->fresh(['chitiet.sanpham', 'cuahang']),
+                'shift' => [
+                    'id' => $activeShift->id,
+                    'cuaHangId' => $activeShift->cuaHangId,
+                    'nhanVienId' => $activeShift->nhanVienId,
+                    'thoiGianMoCa' => $activeShift->thoiGianMoCa,
+                    'opened_at' => $activeShift->thoiGianMoCa,
+                    'tienMatDauCa' => (float)$activeShift->tienMatDauCa,
+                    'opening_cash' => (float)$activeShift->tienMatDauCa,
+                    'cash_sales' => $metrics['cash_sales'],
+                    'bank_sales' => $metrics['bank_sales'],
+                    'momo_sales' => $metrics['momo_sales'],
+                    'cash_refunds' => $metrics['cash_refunds'],
+                    'total_sales' => $metrics['total_sales'],
+                    'expected_cash' => $metrics['expected_cash'],
+                    'trangThai' => $activeShift->trangThai,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Hoàn tiền POS thất bại: ' . $e->getMessage()], 500);
+        }
     }
 }
