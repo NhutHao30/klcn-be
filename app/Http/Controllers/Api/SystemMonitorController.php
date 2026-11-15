@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use App\Models\SystemAlertSetting;
@@ -394,16 +395,25 @@ class SystemMonitorController extends Controller
     }
 
     /**
-     * Gửi cảnh báo thử nghiệm
+     * Gửi cảnh báo thử nghiệm thực tế cho Email, Telegram Bot, Slack Webhook & SMS
      */
     public function testAlert(Request $request)
     {
-        $channel = $request->input('channel', 'email');
-        $email = $request->input('email', 'haotruong01007@gmail.com');
+        $channel = strtolower((string) $request->input('channel', 'email'));
+        $saved = null;
+        try {
+            $saved = SystemAlertSetting::find(1);
+        } catch (\Throwable $e) {
+            // Bỏ qua nếu DB chưa sẵn sàng
+        }
 
         $message = "⚠️ [CẢNH BÁO THỬ NGHIỆM GIVRAL BAKERY]\nHệ thống cảnh báo tự động hoạt động bình thường lúc " . date('d/m/Y H:i:s') . ".\nTình trạng: Kiểm tra ngưỡng cảnh báo CPU & RAM.";
 
-        if ($channel === 'email' && $email) {
+        if ($channel === 'email') {
+            $email = trim((string) ($request->input('email') ?: ($saved->alertEmail ?? 'haotruong01007@gmail.com')));
+            if (!$email) {
+                return response()->json(['success' => false, 'message' => 'Vui lòng nhập địa chỉ Email quản trị.'], 422);
+            }
             try {
                 Mail::raw($message, function ($m) use ($email) {
                     $m->to($email)
@@ -411,14 +421,147 @@ class SystemMonitorController extends Controller
                 });
                 return response()->json(['success' => true, 'message' => "Đã gửi email thử nghiệm thành công tới {$email}!"]);
             } catch (\Throwable $e) {
-                return response()->json(['success' => false, 'message' => "Lỗi gửi email: " . $e->getMessage()], 500);
+                return response()->json(['success' => false, 'message' => 'Lỗi gửi email: ' . $e->getMessage()], 500);
             }
         }
 
+        if ($channel === 'telegram') {
+            $botToken = trim((string) ($request->input('telegramBotToken') ?: ($saved->telegramBotToken ?? env('TELEGRAM_BOT_TOKEN', ''))));
+            $chatId = trim((string) ($request->input('telegramChatId') ?: ($saved->telegramChatId ?? env('TELEGRAM_CHAT_ID', ''))));
+
+            if (!$botToken || !$chatId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Vui lòng nhập đầy đủ Bot API Token và Chat / Channel ID trước khi kiểm tra Telegram Bot.',
+                ], 422);
+            }
+
+            try {
+                $resp = Http::timeout(10)->post("https://api.telegram.org/bot{$botToken}/sendMessage", [
+                    'chat_id' => $chatId,
+                    'text' => $message,
+                ]);
+                $json = $resp->json();
+                if ($resp->successful() && ($json['ok'] ?? false) === true) {
+                    return response()->json([
+                        'success' => true,
+                        'message' => "Đã gửi tin nhắn Telegram Bot thành công tới Chat ID {$chatId}!",
+                    ]);
+                }
+
+                $errDesc = $json['description'] ?? $resp->body();
+                return response()->json([
+                    'success' => false,
+                    'message' => "Telegram Bot trả về lỗi: {$errDesc}",
+                ], 400);
+            } catch (\Throwable $e) {
+                return response()->json(['success' => false, 'message' => 'Không thể kết nối Telegram API: ' . $e->getMessage()], 500);
+            }
+        }
+
+        if ($channel === 'slack') {
+            $webhookUrl = trim((string) ($request->input('slackWebhookUrl') ?: ($saved->slackWebhookUrl ?? '')));
+            if (!$webhookUrl) {
+                return response()->json(['success' => false, 'message' => 'Vui lòng nhập Slack Webhook URL.'], 422);
+            }
+            try {
+                $resp = Http::timeout(10)->post($webhookUrl, ['text' => $message]);
+                if ($resp->successful()) {
+                    return response()->json(['success' => true, 'message' => 'Đã gửi cảnh báo tới Slack Webhook thành công!']);
+                }
+                return response()->json(['success' => false, 'message' => 'Slack Webhook lỗi: ' . $resp->body()], 400);
+            } catch (\Throwable $e) {
+                return response()->json(['success' => false, 'message' => 'Lỗi kết nối Slack: ' . $e->getMessage()], 500);
+            }
+        }
+
+        if ($channel === 'sms') {
+            $rawPhone = trim((string) ($request->input('smsPhoneNumber') ?: ($saved->smsPhoneNumber ?? '')));
+            if (!$rawPhone) {
+                return response()->json(['success' => false, 'message' => 'Vui lòng nhập số điện thoại Admin nhận SMS.'], 422);
+            }
+
+            $cleanPhone = preg_replace('/[^0-9+]/', '', $rawPhone);
+            $e164Phone = str_starts_with($cleanPhone, '0')
+                ? '+84' . substr($cleanPhone, 1)
+                : (str_starts_with($cleanPhone, '+') ? $cleanPhone : '+' . $cleanPhone);
+
+            $twilioSid = env('TWILIO_SID');
+            $twilioToken = env('TWILIO_TOKEN');
+            $twilioFrom = env('TWILIO_FROM');
+            $esmsKey = env('ESMS_API_KEY');
+            $esmsSecret = env('ESMS_SECRET_KEY');
+            $speedSmsToken = env('SPEEDSMS_ACCESS_TOKEN');
+
+            if ($twilioSid && $twilioToken && $twilioFrom) {
+                try {
+                    $resp = Http::timeout(12)
+                        ->withBasicAuth($twilioSid, $twilioToken)
+                        ->asForm()
+                        ->post("https://api.twilio.com/2010-04-01/Accounts/{$twilioSid}/Messages.json", [
+                            'From' => $twilioFrom,
+                            'To' => $e164Phone,
+                            'Body' => "[Givral Bakery] Canh bao he thong thu nghiem luc " . date('H:i d/m/Y'),
+                        ]);
+                    if ($resp->successful()) {
+                        return response()->json(['success' => true, 'message' => "Đã gửi SMS qua Twilio thành công tới {$e164Phone}!"]);
+                    }
+                    $errMsg = $resp->json('message') ?? $resp->body();
+                    return response()->json(['success' => false, 'message' => "Twilio trả về lỗi: {$errMsg}"], 400);
+                } catch (\Throwable $e) {
+                    return response()->json(['success' => false, 'message' => 'Lỗi gửi SMS Twilio: ' . $e->getMessage()], 500);
+                }
+            }
+
+            if ($esmsKey && $esmsSecret) {
+                try {
+                    $resp = Http::timeout(12)->post('https://rest.esms.vn/MainService.svc/json/SendMultipleMessage_V4_post_json/', [
+                        'ApiKey' => $esmsKey,
+                        'SecretKey' => $esmsSecret,
+                        'Phone' => $cleanPhone,
+                        'Content' => "[Givral Bakery] Canh bao he thong thu nghiem luc " . date('H:i d/m/Y'),
+                        'Brandname' => env('ESMS_BRANDNAME', 'Baotrixemay'),
+                        'SmsType' => env('ESMS_TYPE', '2'),
+                    ]);
+                    $json = $resp->json();
+                    if ($resp->successful() && (string) ($json['CodeResult'] ?? '') === '100') {
+                        return response()->json(['success' => true, 'message' => "Đã gửi SMS qua eSMS thành công tới {$cleanPhone}!"]);
+                    }
+                    return response()->json(['success' => false, 'message' => 'eSMS trả về lỗi: ' . ($json['ErrorMessage'] ?? $resp->body())], 400);
+                } catch (\Throwable $e) {
+                    return response()->json(['success' => false, 'message' => 'Lỗi gửi SMS eSMS: ' . $e->getMessage()], 500);
+                }
+            }
+
+            if ($speedSmsToken) {
+                try {
+                    $resp = Http::timeout(12)
+                        ->withBasicAuth($speedSmsToken, 'x')
+                        ->post('https://api.speedsms.vn/index.php/sms/send', [
+                            'to' => [$cleanPhone],
+                            'content' => "[Givral Bakery] Canh bao he thong thu nghiem luc " . date('H:i d/m/Y'),
+                            'sms_type' => 2,
+                        ]);
+                    $json = $resp->json();
+                    if ($resp->successful() && ($json['status'] ?? '') === 'success') {
+                        return response()->json(['success' => true, 'message' => "Đã gửi SMS qua SpeedSMS thành công tới {$cleanPhone}!"]);
+                    }
+                    return response()->json(['success' => false, 'message' => 'SpeedSMS trả về lỗi: ' . ($json['message'] ?? $resp->body())], 400);
+                } catch (\Throwable $e) {
+                    return response()->json(['success' => false, 'message' => 'Lỗi gửi SMS SpeedSMS: ' . $e->getMessage()], 500);
+                }
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Chưa cấu hình cổng gửi SMS trên server (.env thiếu TWILIO_SID/TWILIO_TOKEN/TWILIO_FROM, ESMS_API_KEY/ESMS_SECRET_KEY hoặc SPEEDSMS_ACCESS_TOKEN).',
+            ], 422);
+        }
+
         return response()->json([
-            'success' => true,
-            'message' => "Đã mô phỏng gửi cảnh báo qua kênh {$channel} thành công!",
-        ]);
+            'success' => false,
+            'message' => "Kênh cảnh báo '{$channel}' không được hỗ trợ.",
+        ], 400);
     }
 
     /**
