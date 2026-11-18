@@ -42,13 +42,14 @@ class PurchaseOrderWorkflowTest extends TestCase
             'trangThai' => 1,
         ]);
 
-        $this->store2 = CuaHang::where('id', '!=', $this->store1->id)->first();
-        if (!$this->store2) {
-            $this->store2 = $this->store1->replicate();
-            $this->store2->tenCuaHang = 'Givral Test CN2';
-            $this->store2->soDienThoai = '0900000002';
-            $this->store2->save();
+        $store2 = CuaHang::where('id', '!=', $this->store1->id)->first();
+        if (!$store2) {
+            $store2 = $this->store1->replicate();
+            $store2->tenCuaHang = 'Givral Test CN2';
+            $store2->soDienThoai = '0900000002';
+            $store2->save();
         }
+        $this->store2 = $store2;
 
         $this->supplier = NhaCungCap::first() ?? NhaCungCap::create([
             'tenNcc' => 'NCC Test Givral',
