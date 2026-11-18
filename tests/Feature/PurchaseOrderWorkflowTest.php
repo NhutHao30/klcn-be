@@ -37,14 +37,14 @@ class PurchaseOrderWorkflowTest extends TestCase
 
         $this->store1 = CuaHang::first() ?? CuaHang::create([
             'tenCuaHang' => 'Givral Test CN1',
-            'diaChi' => '123 Test',
+            'diaChiChiTiet' => '123 Test',
             'soDienThoai' => '0900000001',
             'trangThai' => 1,
         ]);
 
         $this->store2 = CuaHang::where('id', '!=', $this->store1->id)->first() ?? CuaHang::create([
             'tenCuaHang' => 'Givral Test CN2',
-            'diaChi' => '456 Test',
+            'diaChiChiTiet' => '456 Test',
             'soDienThoai' => '0900000002',
             'trangThai' => 1,
         ]);
@@ -343,3 +343,4 @@ class PurchaseOrderWorkflowTest extends TestCase
             ->assertJsonPath('data.signatureProgress.isComplete', true);
     }
 }
+
