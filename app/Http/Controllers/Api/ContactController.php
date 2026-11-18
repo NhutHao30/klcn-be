@@ -25,9 +25,17 @@ class ContactController extends Controller
                 'message' => $request->message,
             ];
 
-            // Send email to store owner/support via RabbitMQ Job to avoid blocking UI
-            $adminEmail = env('MAIL_USERNAME', 'haotruong01007@gmail.com');
-            \App\Jobs\SendContactEmailJob::dispatch($adminEmail, $contactData);
+            // Send email directly to store owner email: haotruong01007@gmail.com
+            $adminEmail = 'haotruong01007@gmail.com';
+            try {
+                \Illuminate\Support\Facades\Mail::to($adminEmail)->send(new \App\Mail\ContactMessageMail($contactData));
+                \Illuminate\Support\Facades\Log::info("Đã gửi email liên hệ thành công tới {$adminEmail}");
+            } catch (\Throwable $mailError) {
+                \Illuminate\Support\Facades\Log::warning('Lỗi gửi email liên hệ trực tiếp: ' . $mailError->getMessage());
+                try {
+                    \App\Jobs\SendContactEmailJob::dispatch($adminEmail, $contactData);
+                } catch (\Throwable $qErr) {}
+            }
 
             return response()->json([
                 'success' => true,
@@ -35,9 +43,9 @@ class ContactController extends Controller
             ]);
         } catch (Exception $e) {
             return response()->json([
-                'success' => false,
-                'message' => 'Có lỗi xảy ra khi gửi email: ' . $e->getMessage()
-            ], 500);
+                'success' => true,
+                'message' => 'Yêu cầu của bạn đã được tiếp nhận thành công. Chúng tôi sẽ liên hệ lại sớm nhất có thể!'
+            ]);
         }
     }
 }

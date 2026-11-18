@@ -1,0 +1,62 @@
+{
+    "1": {
+        "id": 1,
+        "username": "admin",
+        "hoTen": "Quản Trị Viên Givral",
+        "vaiTroId": 1,
+        "device": "Máy tính (Desktop)",
+        "ip": "::1",
+        "action": "Gửi yêu cầu hệ thống",
+        "lastActive": 1793539692
+    },
+    "68": {
+        "id": 68,
+        "username": "nguoibian",
+        "hoTen": "nguoibian",
+        "vaiTroId": 6,
+        "device": "Máy tính (Desktop)",
+        "ip": "101.53.36.58",
+        "action": "Gửi yêu cầu hệ thống",
+        "lastActive": 1793412600
+    },
+    "66": {
+        "id": 66,
+        "username": "CustomerMobile",
+        "hoTen": "Test Register Mobile",
+        "vaiTroId": 6,
+        "device": "Ứng dụng Mobile",
+        "ip": "192.168.1.3",
+        "action": "Duyệt hệ thống",
+        "lastActive": 1793545548
+    },
+    "10": {
+        "id": 10,
+        "username": "kh_1d07c55a",
+        "hoTen": "Trương Nhựt Hào 13DHTH05",
+        "vaiTroId": 6,
+        "device": "Máy tính (Desktop)",
+        "ip": "::1",
+        "action": "Gửi yêu cầu hệ thống",
+        "lastActive": 1793547781
+    },
+    "57": {
+        "id": 57,
+        "username": "giamdoc",
+        "hoTen": "Nguyễn Văn Giám Đốc",
+        "vaiTroId": 8,
+        "device": "Ứng dụng Mobile",
+        "ip": "172.20.10.2",
+        "action": "Gửi yêu cầu hệ thống",
+        "lastActive": 1793413432
+    },
+    "59": {
+        "id": 59,
+        "username": "banhang_cn1",
+        "hoTen": "Lê Thu Ngân CN1",
+        "vaiTroId": 3,
+        "device": "Máy tính (Desktop)",
+        "ip": "::1",
+        "action": "Tra cứu hóa đơn & Đơn hàng",
+        "lastActive": 1793548035
+    }
+}

@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class DatHangTruoc extends Model
 {
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
     protected $table = 'dat_hang_truoc';
     protected $primaryKey = 'MADHT';
     public $incrementing = false;
