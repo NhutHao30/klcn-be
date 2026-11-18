@@ -102,6 +102,8 @@ class SignatureController extends Controller
             'nhaCungCap',
             'cuaHang',
             'nguoiNhap.taikhoan',
+            'nguoiDuyet',
+            'signatures.nguoiKy',
             'chuKySos.nguoiKy',
             'chiTiets.sanPham',
             'chiTiets.loHang'
@@ -119,27 +121,27 @@ class SignatureController extends Controller
 
         foreach ($hdNhaps as $hd) {
             $sigs = $hd->chuKySos;
+            $poSigs = $hd->signatures;
+            $statusEnum = $hd->resolvedStatus();
+
             $sigKeToan = $sigs->where('vaiTroKy', 1)->last() ?? $sigs->firstWhere('vaiTroKy', 1);
             $sigThuKho = $sigs->where('vaiTroKy', 2)->last() ?? $sigs->firstWhere('vaiTroKy', 2);
             $sigQuanLy = $sigs->where('vaiTroKy', 3)->last() ?? $sigs->firstWhere('vaiTroKy', 3);
 
-            $createdByBranchManager = (int) ($hd->nguoiNhap?->taikhoan?->vaiTroId ?? 0) === 2;
-            $quanLySigned = ($sigQuanLy && (int) $sigQuanLy->trangThai === 1) || $createdByBranchManager;
-            $khoSigned = $sigThuKho && (int) $sigThuKho->trangThai === 1;
-            $keToanSigned = $sigKeToan && (int) $sigKeToan->trangThai === 1;
+            $poSigKeToan = $poSigs->firstWhere('vaiTroKy', \App\Enums\PurchaseOrderSignatureRole::NHAN_VIEN_KE_TOAN->value);
+            $poSigThuKho = $poSigs->firstWhere('vaiTroKy', \App\Enums\PurchaseOrderSignatureRole::NHAN_VIEN_KHO->value);
+            $poSigQuanLy = $poSigs->firstWhere('vaiTroKy', \App\Enums\PurchaseOrderSignatureRole::QUAN_LY_CHI_NHANH->value);
 
-            $isFullySigned = $quanLySigned || self::checkDocumentFullySigned($sigs, (int) $hd->trangThai);
-            $hasAnySigned = $quanLySigned || $khoSigned || $keToanSigned;
+            $quanLySigned = (bool) $poSigQuanLy || ($sigQuanLy && (int) $sigQuanLy->trangThai === 1);
+            $khoSigned = (bool) $poSigThuKho || ($sigThuKho && (int) $sigThuKho->trangThai === 1);
+            $keToanSigned = (bool) $poSigKeToan || ($sigKeToan && (int) $sigKeToan->trangThai === 1);
 
-            if ($createdByBranchManager && (int) $hd->trangThai === 0) {
-                try {
-                    $hd->update(['trangThai' => 1]);
-                } catch (\Throwable $eAuto) {}
-            }
+            $isFullySigned = $statusEnum === \App\Enums\PurchaseOrderStatus::HOAN_TAT;
+            $hasAnySigned = $quanLySigned || $khoSigned || $keToanSigned || $poSigs->isNotEmpty();
 
             $chiTietMapped = $hd->chiTiets->map(function ($ct) {
                 $qty = (int) $ct->soLuong;
-                $qtyReal = (int) ($ct->loHang?->soLuongCon ?? $qty);
+                $qtyReal = $ct->soLuongThucNhan !== null ? (int) $ct->soLuongThucNhan : (int) ($ct->loHang?->soLuongCon ?? $qty);
                 $price = (float) $ct->donGiaNhap;
                 return [
                     'MASP' => $ct->sanPhamId,
@@ -147,7 +149,7 @@ class SignatureController extends Controller
                     'sanpham' => ['TENSP' => $ct->sanPham?->tenSanPham ?? 'Sản phẩm'],
                     'SOLUONG' => $qty,
                     'SOLUONGTCT' => $qty,
-                    'SOLUONGTN' => $qtyReal > 0 ? $qtyReal : $qty,
+                    'SOLUONGTN' => $qtyReal,
                     'DONGIA' => $price,
                     'DONGIANHAP' => $price,
                     'THANHTIEN' => (float) $ct->thanhTien,
@@ -157,6 +159,7 @@ class SignatureController extends Controller
                 ];
             });
 
+            $creatorRole = strtoupper((string) ($hd->nguoiTaoRole ?: 'WAREHOUSE'));
             $item = [
                 'id' => $hd->id,
                 'MAHDNHAP' => $hd->maHoaDonNhap ?: 'HDN-' . $hd->id,
@@ -167,28 +170,30 @@ class SignatureController extends Controller
                 'TONGTIEN' => (float) $hd->tongTien,
                 'TONGTIEN_NHAP' => (float) $hd->tongTien,
                 'tongTien' => (float) $hd->tongTien,
-                'TRANGTHAI' => $isFullySigned ? 1 : 0,
-                'trangThai' => $isFullySigned ? 1 : 0,
+                'TRANGTHAI' => (int) $statusEnum->toLegacyInt(),
+                'trangThai' => (int) $statusEnum->toLegacyInt(),
+                'maTrangThai' => $statusEnum->value,
+                'trangThaiLabel' => $statusEnum->label(),
                 'TRANGTHAI_KY' => $isFullySigned ? 'hoan_tat_ky' : ($hasAnySigned ? 'da_ky_mot_phan' : 'cho_ky'),
-                'PHUONG_THUC_DUYET' => $quanLySigned
-                    ? 'Quản lý chi nhánh đã ký duyệt (Không cần Kho & Kế toán ký thêm)'
-                    : (($khoSigned && $keToanSigned) ? 'Nhân viên kho & Kế toán đã ký đủ' : 'Chờ Quản lý chi nhánh ký HOẶC (Nhân viên kho + Kế toán cùng ký)'),
+                'PHUONG_THUC_DUYET' => $creatorRole === 'MANAGER'
+                    ? 'Quản lý chi nhánh tạo (cần 2 chữ ký: Quản lý CN + Nhân viên giao hàng)'
+                    : 'Nhân viên kho tạo (cần Quản lý duyệt + 3 chữ ký: Vận chuyển, Kế toán, Kho)',
                 'cuaHangId' => $hd->cuaHangId,
-                'nhanvien' => ['HOTEN' => $hd->nguoiNhap?->hoTen ?? 'Quản lý chi nhánh'],
+                'nhanvien' => ['HOTEN' => $hd->nguoiNhap?->hoTen ?? 'Nhân viên'],
                 'nhacungcap' => ['TENNCC' => $hd->nhaCungCap?->tenNcc ?? $hd->nhaCungCap?->tenNhaCungCap ?? 'Nhà cung cấp'],
                 'cuahang' => ['TENCUAHANG' => $hd->cuaHang?->tenCuaHang ?? 'Chi nhánh'],
-                'KY_THU_KHO' => $khoSigned ? ($sigThuKho->digitalSignatureHash ?: 'SIGNED') : null,
-                'KY_KE_TOAN' => $keToanSigned ? ($sigKeToan->digitalSignatureHash ?: 'SIGNED') : null,
-                'KY_QUAN_LY' => $quanLySigned ? ($sigQuanLy->digitalSignatureHash ?: 'SIGNED') : null,
-                'KY_GIAM_DOC' => $quanLySigned ? ($sigQuanLy->digitalSignatureHash ?: 'SIGNED') : null,
-                'NGUOI_KY_THU_KHO' => $khoSigned ? ($sigThuKho?->nguoiKy?->hoTen ?? $sigThuKho?->tenNguoiKy) : null,
-                'NGUOI_KY_KE_TOAN' => $keToanSigned ? ($sigKeToan?->nguoiKy?->hoTen ?? $sigKeToan?->tenNguoiKy) : null,
-                'NGUOI_KY_QUAN_LY' => $quanLySigned ? ($sigQuanLy?->nguoiKy?->hoTen ?? $sigQuanLy?->tenNguoiKy) : null,
-                'NGUOI_KY_GIAM_DOC' => $quanLySigned ? ($sigQuanLy?->nguoiKy?->hoTen ?? $sigQuanLy?->tenNguoiKy) : null,
-                'NGAY_KY_THU_KHO' => $sigThuKho?->ngayKy,
-                'NGAY_KY_KE_TOAN' => $sigKeToan?->ngayKy,
-                'NGAY_KY_QUAN_LY' => $sigQuanLy?->ngayKy,
-                'NGAY_KY_GIAM_DOC' => $sigQuanLy?->ngayKy,
+                'KY_THU_KHO' => $khoSigned ? ($poSigThuKho?->chuKyAnh ?: $sigThuKho?->digitalSignatureHash ?: 'SIGNED') : null,
+                'KY_KE_TOAN' => $keToanSigned ? ($poSigKeToan?->chuKyAnh ?: $sigKeToan?->digitalSignatureHash ?: 'SIGNED') : null,
+                'KY_QUAN_LY' => $quanLySigned ? ($poSigQuanLy?->chuKyAnh ?: $sigQuanLy?->digitalSignatureHash ?: 'SIGNED') : null,
+                'KY_GIAM_DOC' => $quanLySigned ? ($poSigQuanLy?->chuKyAnh ?: $sigQuanLy?->digitalSignatureHash ?: 'SIGNED') : null,
+                'NGUOI_KY_THU_KHO' => $khoSigned ? ($poSigThuKho?->tenNguoiKy ?? $sigThuKho?->nguoiKy?->hoTen ?? $sigThuKho?->tenNguoiKy) : null,
+                'NGUOI_KY_KE_TOAN' => $keToanSigned ? ($poSigKeToan?->tenNguoiKy ?? $sigKeToan?->nguoiKy?->hoTen ?? $sigKeToan?->tenNguoiKy) : null,
+                'NGUOI_KY_QUAN_LY' => $quanLySigned ? ($poSigQuanLy?->tenNguoiKy ?? $sigQuanLy?->nguoiKy?->hoTen ?? $sigQuanLy?->tenNguoiKy) : null,
+                'NGUOI_KY_GIAM_DOC' => $quanLySigned ? ($poSigQuanLy?->tenNguoiKy ?? $sigQuanLy?->nguoiKy?->hoTen ?? $sigQuanLy?->tenNguoiKy) : null,
+                'NGAY_KY_THU_KHO' => $poSigThuKho?->thoiGianKy ?? $sigThuKho?->ngayKy,
+                'NGAY_KY_KE_TOAN' => $poSigKeToan?->thoiGianKy ?? $sigKeToan?->ngayKy,
+                'NGAY_KY_QUAN_LY' => $poSigQuanLy?->thoiGianKy ?? $sigQuanLy?->ngayKy,
+                'NGAY_KY_GIAM_DOC' => $poSigQuanLy?->thoiGianKy ?? $sigQuanLy?->ngayKy,
                 'chi_tiet' => $chiTietMapped,
                 'chitiets' => $chiTietMapped,
                 'slots' => $sigs,
@@ -197,7 +202,7 @@ class SignatureController extends Controller
             $hdNhapAll[] = $item;
             if ($isFullySigned) {
                 $hdNhapSigned[] = $item;
-            } else {
+            } elseif ($statusEnum !== \App\Enums\PurchaseOrderStatus::TU_CHOI) {
                 $hdNhapPending[] = $item;
             }
         }
