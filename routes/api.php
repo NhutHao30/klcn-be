@@ -448,6 +448,11 @@ Route::middleware(['auth:api', 'log.activity'])->group(function () {
             Route::get('/', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'index']);
             Route::post('/', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'store']);
             Route::post('/duyet-yeu-cau/{id}', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'duyetYeuCauNhapHang']);
+            Route::post('/{id}/duyet', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'approve']);
+            Route::post('/{id}/tu-choi', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'reject']);
+            Route::put('/{id}/kiem-ke', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'inspect']);
+            Route::post('/{id}/kiem-ke', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'inspect']);
+            Route::post('/{id}/ky-nhan', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'sign']);
             Route::get('/{id}', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'show']);
             Route::post('/{id}/xac-nhan-nhap-kho', [\App\Http\Controllers\Api\HoaDonNhapController::class, 'xacNhanNhapKho']);
         });

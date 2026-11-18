@@ -19,15 +19,23 @@ class HoaDonNhap extends Model
         'nhaCungCapId',
         'cuaHangId',
         'nguoiNhapId',
+        'nguoiTaoRole',
+        'nguoiDuyetId',
+        'thoiGianDuyet',
+        'lyDoTuChoi',
         'ngayNhap',
         'tongTien',
         'ghiChu',
         'trangThai',
+        'maTrangThai',
+        'tonKhoDaCong',
     ];
 
     protected $casts = [
         'ngayNhap' => 'datetime',
+        'thoiGianDuyet' => 'datetime',
         'tongTien' => 'double',
+        'tonKhoDaCong' => 'boolean',
     ];
 
     protected $appends = [
@@ -84,9 +92,27 @@ class HoaDonNhap extends Model
         return $this->belongsTo(NguoiDung::class, 'nguoiNhapId');
     }
 
+    public function nguoiDuyet()
+    {
+        return $this->belongsTo(NguoiDung::class, 'nguoiDuyetId');
+    }
+
     public function chuKySos()
     {
         return $this->hasMany(ChuKySo::class, 'taiLieuId')->where('loaiTaiLieu', 1);
+    }
+
+    public function signatures()
+    {
+        return $this->hasMany(PurchaseOrderSignature::class, 'hoaDonNhapId');
+    }
+
+    public function resolvedStatus(): \App\Enums\PurchaseOrderStatus
+    {
+        return \App\Enums\PurchaseOrderStatus::resolve(
+            $this->attributes['maTrangThai'] ?? null,
+            isset($this->attributes['trangThai']) ? (int) $this->attributes['trangThai'] : null
+        );
     }
 
     public function chiTiets()

@@ -3,9 +3,12 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Http\Request;
 use Illuminate\Cache\RateLimiting\Limit;
+use App\Models\HoaDonNhap;
+use App\Policies\HoaDonNhapPolicy;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -22,6 +25,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Gate::policy(HoaDonNhap::class, HoaDonNhapPolicy::class);
+
         RateLimiter::for('login', function (Request $request) {
             $key = strtolower((string)($request->input('username') ?? $request->input('USERNAME') ?? $request->input('email') ?? 'guest')) . '|' . $request->ip();
             return Limit::perMinute(30)->by($key);

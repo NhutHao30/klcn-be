@@ -17,11 +17,15 @@ class ChiTietHoaDonNhap extends Model
         'loHangId',
         'sanPhamId',
         'soLuong',
+        'soLuongThucNhan',
+        'ghiChuChenhLech',
         'donGiaNhap',
         'thanhTien',
     ];
 
     protected $casts = [
+        'soLuong' => 'integer',
+        'soLuongThucNhan' => 'integer',
         'donGiaNhap' => 'double',
         'thanhTien' => 'double',
     ];

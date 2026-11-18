@@ -515,6 +515,44 @@ class SignatureController extends Controller
                 'time' => now()->toIso8601String(),
             ]);
 
+        if ($loaiTaiLieu == 1) { // HoaDonNhap: uỷ quyền về PurchaseOrderService theo quy trình mới
+            $hdn = \App\Models\HoaDonNhap::find($taiLieuId);
+            if (!$hdn) {
+                return response()->json(['status' => false, 'message' => 'Không tìm thấy phiếu nhập hàng!'], 404);
+            }
+
+            $roleMap = [
+                1 => \App\Enums\PurchaseOrderSignatureRole::NHAN_VIEN_KE_TOAN,
+                2 => \App\Enums\PurchaseOrderSignatureRole::NHAN_VIEN_KHO,
+                3 => \App\Enums\PurchaseOrderSignatureRole::QUAN_LY_CHI_NHANH,
+            ];
+            $poRole = $roleMap[$targetRole] ?? null;
+            if (!$poRole) {
+                return response()->json(['status' => false, 'message' => 'Vai trò ký không hợp lệ cho phiếu nhập hàng!'], 403);
+            }
+
+            $authCheck = \Illuminate\Support\Facades\Gate::forUser($user)->inspect('sign', [$hdn, $poRole]);
+            if ($authCheck->denied()) {
+                return response()->json(['status' => false, 'message' => $authCheck->message()], 403);
+            }
+
+            $poResult = app(\App\Services\PurchaseOrderService::class)->sign($hdn, $user, $poRole, [
+                'tenNguoiKy' => $signerName,
+                'chuKyAnh' => $signatureImage,
+                'ghiChu' => $request->input('ghi_chu', "Đã ký duyệt bởi {$signerName}"),
+            ]);
+
+            return response()->json([
+                'status' => true,
+                'success' => true,
+                'message' => $poResult['completedNow']
+                    ? 'Đã đủ chữ ký theo quy định! Phiếu nhập hàng hoàn tất và đã cộng tồn kho theo số lượng thực nhận.'
+                    : "Đã ghi nhận chữ ký của {$poRole->label()} cho phiếu nhập hàng!",
+                'is_fully_signed' => $poResult['completedNow'],
+                'data' => new \App\Http\Resources\PurchaseOrderResource($poResult['invoice']),
+            ]);
+        }
+
         try {
             \App\Services\InventoryLedgerService::ensureSchema();
 
