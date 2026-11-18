@@ -162,17 +162,18 @@ Hãy đọc ảnh Thẻ Căn cước công dân (CCCD / CMND gắn chip) và tr�
 Lưu ý: Chỉ trả về JSON duy nhất, không thêm markdown ```json hay bất kỳ chữ nào khác.
 PROMPT;
 
-        $configuredModel = env('GEMINI_MODEL', 'gemini-1.5-flash');
+        $configuredModel = env('GEMINI_MODEL', 'gemini-3.5-flash-lite');
         $modelsToTry = array_unique(array_filter([
+            'gemini-3.5-flash-lite',
+            'gemini-3-flash-preview',
+            'gemini-3.8-flash',
+            'gemini-flash-lite-latest',
             $configuredModel,
-            'gemini-1.5-flash',
-            'gemini-2.5-flash',
-            'gemini-1.5-pro',
             'gemini-flash-latest',
         ]));
 
         $client = new Client([
-            'timeout' => 15.0,
+            'timeout' => 25.0,
             'verify' => false,
         ]);
 
@@ -206,7 +207,8 @@ PROMPT;
                     $body = json_decode($response->getBody()->getContents(), true);
                     $rawJson = $body['candidates'][0]['content']['parts'][0]['text'] ?? null;
                     if ($rawJson) {
-                        $parsed = json_decode($rawJson, true);
+                        $cleanJson = trim(preg_replace('/^```(?:json)?\s*|\s*```$/m', '', trim($rawJson)));
+                        $parsed = json_decode($cleanJson, true);
                         if (!empty($parsed['cccd']) || !empty($parsed['hoTen'])) {
                             return [
                                 'cccd' => preg_replace('/\D/', '', $parsed['cccd'] ?? ''),
