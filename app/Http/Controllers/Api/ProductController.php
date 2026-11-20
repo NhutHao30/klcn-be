@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\SanPham;
 use App\Models\LichSuGiaSanPham;
 use App\Models\TonKhoChiNhanh;
+use App\Services\UploadService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
@@ -458,7 +459,12 @@ class ProductController extends Controller
         }
 
         $oldPrice = $product->giaBan;
+        $oldImage = $product->getRawOriginal('hinhAnh') ?? $product->hinhAnh;
         $product->update($validated);
+
+        if (!empty($validated['hinhAnh']) && $oldImage && $validated['hinhAnh'] !== $oldImage) {
+            $this->deleteOldProductImageIfUnused($oldImage, (int) $product->id);
+        }
 
         $phanTramGiamInput = $request->input('PHAN_TRAM_GIAM') ?? $request->input('phanTramGiam') ?? $request->input('phan_tram_giam');
 
@@ -625,10 +631,6 @@ class ProductController extends Controller
                 return ($p->phanTramGiam ?? 0) > 0;
             })->values()->take(8);
 
-            if ($discounted->isEmpty()) {
-                $discounted = $products->take(8);
-            }
-
             $newest = $products->sortByDesc('createdAt')->values()->take(8);
             $expensive = $products->sortByDesc('giaBan')->values()->take(8);
 
@@ -670,5 +672,45 @@ class ProductController extends Controller
         } catch (\Throwable $e) {
             // Silently ignore cache clearing errors
         }
+    }
+
+    /**
+     * Delete old product image from MinIO if it belongs to MinIO and is unused by other products.
+     */
+    private function deleteOldProductImageIfUnused(string $oldImage, int $excludeProductId): void
+    {
+        $trimmed = trim($oldImage);
+        if ($trimmed === '' || str_starts_with(ltrim($trimmed, '/'), 'assets/')) {
+            return;
+        }
+
+        // Skip external URLs that do not belong to our MinIO endpoint/bucket
+        if (preg_match('/^https?:\/\//i', $trimmed)) {
+            $bucket = env('AWS_BUCKET', 'dolabakery');
+            $minioHosts = array_filter([
+                parse_url((string) env('AWS_URL', ''), PHP_URL_HOST),
+                parse_url((string) env('AWS_ENDPOINT', ''), PHP_URL_HOST),
+            ]);
+            $imageHost = parse_url($trimmed, PHP_URL_HOST);
+            $imagePath = (string) parse_url($trimmed, PHP_URL_PATH);
+
+            $isOurHost = $imageHost && in_array($imageHost, $minioHosts, true);
+            $hasBucketPrefix = $bucket && str_starts_with($imagePath, "/{$bucket}/");
+
+            if (!$isOurHost && !$hasBucketPrefix) {
+                return;
+            }
+        }
+
+        // Do not delete if another product still references the same image
+        $isUsedElsewhere = SanPham::where('id', '!=', $excludeProductId)
+            ->where('hinhAnh', $oldImage)
+            ->exists();
+
+        if ($isUsedElsewhere) {
+            return;
+        }
+
+        app(UploadService::class)->deleteImage($trimmed);
     }
 }
