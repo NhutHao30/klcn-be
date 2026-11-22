@@ -516,7 +516,7 @@ class CartController extends Controller
     }
 
     /**
-     * Dynamically route order to the nearest active branch that has sufficient stock for ALL items
+     * Dynamically route order to the nearest active branch that has sufficient stock for ALL items.
      */
     private function findBestFulfillingStore($items, $addressString)
     {
@@ -525,52 +525,248 @@ class CartController extends Controller
             return 1;
         }
 
-        $eligibleStores = [];
-        foreach ($stores as $store) {
-            $hasAllStock = true;
-            foreach ($items as $ci) {
-                $spId = is_array($ci) ? ($ci['sanPhamId'] ?? 0) : ($ci->sanPhamId ?? 0);
-                $qty = is_array($ci) ? ($ci['soLuong'] ?? 1) : ($ci->soLuong ?? 1);
-                if (!$spId) continue;
+        // Aggregate required quantities per product ID
+        $requiredByProduct = [];
+        foreach ($items as $ci) {
+            $spId = (int) (is_array($ci) ? ($ci['sanPhamId'] ?? 0) : ($ci->sanPhamId ?? 0));
+            $qty = (int) (is_array($ci) ? ($ci['soLuong'] ?? 1) : ($ci->soLuong ?? 1));
+            if ($spId > 0 && $qty > 0) {
+                $requiredByProduct[$spId] = ($requiredByProduct[$spId] ?? 0) + $qty;
+            }
+        }
 
-                $stockItem = TonKhoChiNhanh::where('cuaHangId', $store->id)
-                    ->where('sanPhamId', $spId)
-                    ->first();
-                if (!$stockItem || $stockItem->soLuongTon < $qty) {
+        $productIds = array_keys($requiredByProduct);
+        $stockMap = [];
+        if (!empty($productIds)) {
+            $stockRows = TonKhoChiNhanh::whereIn('cuaHangId', $stores->pluck('id'))
+                ->whereIn('sanPhamId', $productIds)
+                ->get(['cuaHangId', 'sanPhamId', 'soLuongTon']);
+
+            foreach ($stockRows as $row) {
+                $stockMap[(int)$row->cuaHangId][(int)$row->sanPhamId] = (int)$row->soLuongTon;
+            }
+        }
+
+        $eligibleStores = [];
+        $storeMetrics = [];
+
+        foreach ($stores as $store) {
+            $sid = (int) $store->id;
+            $hasAllStock = true;
+            $fulfillableQty = 0;
+            $totalAvailableForOrder = 0;
+
+            foreach ($requiredByProduct as $spId => $reqQty) {
+                $avail = $stockMap[$sid][$spId] ?? 0;
+                $totalAvailableForOrder += $avail;
+                $fulfillableQty += min($avail, $reqQty);
+                if ($avail < $reqQty) {
                     $hasAllStock = false;
-                    break;
                 }
             }
+
+            $storeMetrics[$sid] = [
+                'hasAllStock' => $hasAllStock,
+                'fulfillableQty' => $fulfillableQty,
+                'totalAvailable' => $totalAvailableForOrder,
+            ];
+
             if ($hasAllStock) {
                 $eligibleStores[] = $store;
             }
         }
 
-        $candidatePool = count($eligibleStores) > 0 ? $eligibleStores : $stores;
+        // Priority 1: Only branches that have sufficient stock for ALL items in the order.
+        // Fallback (if no single branch has 100% stock): branches that can fulfill the highest quantity.
+        if (count($eligibleStores) > 0) {
+            $candidatePool = $eligibleStores;
+        } else {
+            $maxFulfillable = max(array_column($storeMetrics, 'fulfillableQty'));
+            $candidatePool = $stores->filter(function ($s) use ($storeMetrics, $maxFulfillable) {
+                return ($storeMetrics[(int)$s->id]['fulfillableQty'] ?? 0) === $maxFulfillable;
+            })->values()->all();
+        }
+
+        $normCustomerAddr = $this->normalizeVietnameseAddress((string) ($addressString ?? ''));
+        $customerCoords = $this->resolveLocationCoords($normCustomerAddr);
 
         $bestStore = null;
-        $bestScore = -1;
-        $addrLower = mb_strtolower($addressString ?? '', 'UTF-8');
+        $bestDistance = PHP_FLOAT_MAX;
+        $bestStockTieBreaker = -1;
 
         foreach ($candidatePool as $store) {
-            $score = 0;
-            $storeAddr = mb_strtolower(($store->diaChiChiTiet ?? '') . ' ' . ($store->tenCuaHang ?? ''), 'UTF-8');
+            $sid = (int) $store->id;
+            $normStoreAddr = $this->normalizeVietnameseAddress(
+                trim(($store->diaChiChiTiet ?? '') . ' ' . ($store->tenCuaHang ?? ''))
+            );
 
-            $parts = explode(',', $addrLower);
-            foreach ($parts as $part) {
-                $partTrim = trim($part);
-                if (mb_strlen($partTrim, 'UTF-8') > 3 && str_contains($storeAddr, $partTrim)) {
-                    $score += 10;
-                }
-            }
+            $distanceKm = $this->estimateStoreDistanceKm($normCustomerAddr, $customerCoords, $store, $normStoreAddr);
+            $stockTie = $storeMetrics[$sid]['totalAvailable'] ?? 0;
 
-            if ($score > $bestScore) {
-                $bestScore = $score;
+            if (
+                $distanceKm < $bestDistance - 0.001 ||
+                (abs($distanceKm - $bestDistance) <= 0.001 && $stockTie > $bestStockTieBreaker)
+            ) {
+                $bestDistance = $distanceKm;
+                $bestStockTieBreaker = $stockTie;
                 $bestStore = $store;
             }
         }
 
-        return $bestStore ? $bestStore->id : ($stores->first()->id ?? 1);
+        return $bestStore ? (int) $bestStore->id : (int) ($stores->first()->id ?? 1);
+    }
+
+    private function normalizeVietnameseAddress(string $text): string
+    {
+        $str = mb_strtolower(trim($text), 'UTF-8');
+        $accents = [
+            'à'=>'a','á'=>'a','ạ'=>'a','ả'=>'a','ã'=>'a','â'=>'a','ầ'=>'a','ấ'=>'a','ậ'=>'a','ẩ'=>'a','ẫ'=>'a','ă'=>'a','ằ'=>'a','ắ'=>'a','ặ'=>'a','ẳ'=>'a','ẵ'=>'a',
+            'è'=>'e','é'=>'e','ẹ'=>'e','ẻ'=>'e','ẽ'=>'e','ê'=>'e','ề'=>'e','ế'=>'e','ệ'=>'e','ể'=>'e','ễ'=>'e',
+            'ì'=>'i','í'=>'i','ị'=>'i','ỉ'=>'i','ĩ'=>'i',
+            'ò'=>'o','ó'=>'o','ọ'=>'o','ỏ'=>'o','õ'=>'o','ô'=>'o','ồ'=>'o','ố'=>'o','ộ'=>'o','ổ'=>'o','ỗ'=>'o','ơ'=>'o','ờ'=>'o','ớ'=>'o','ợ'=>'o','ở'=>'o','ỡ'=>'o',
+            'ù'=>'u','ú'=>'u','ụ'=>'u','ủ'=>'u','ũ'=>'u','ư'=>'u','ừ'=>'u','ứ'=>'u','ự'=>'u','ử'=>'u','ữ'=>'u',
+            'ỳ'=>'y','ý'=>'y','ỵ'=>'y','ỷ'=>'y','ỹ'=>'y',
+            'đ'=>'d',
+        ];
+        $str = strtr($str, $accents);
+        $str = preg_replace('/\b(tp\.?\s*hcm|tphcm|hcm|tp\.?\s*ho chi minh)\b/u', 'ho chi minh', $str);
+        $str = preg_replace('/\bq\.?\s*(\d+)\b/u', 'quan $1', $str);
+        $str = preg_replace('/\bp\.?\s*(\d+)\b/u', 'phuong $1', $str);
+        $str = preg_replace('/\s+/u', ' ', $str);
+        return trim($str);
+    }
+
+    private function resolveLocationCoords(string $normAddr): ?array
+    {
+        if ($normAddr === '') {
+            return null;
+        }
+
+        // Ordered from most specific (streets/districts) to broader regions (provinces)
+        $knownLocations = [
+            // Branch exact addresses / unique streets
+            'tran thanh mai'  => [10.7445, 106.5978],
+            '282 nguyen trai' => [10.7540, 106.6675],
+            '25 le loi'       => [10.3864, 105.4352],
+
+            // Ho Chi Minh City districts
+            'binh tan'       => [10.7652, 106.6038],
+            'binh chanh'     => [10.6874, 106.5939],
+            'tan phu'        => [10.7901, 106.6282],
+            'tan binh'       => [10.8015, 106.6526],
+            'quan 5'         => [10.7540, 106.6634],
+            'quan 6'         => [10.7481, 106.6352],
+            'quan 8'         => [10.7241, 106.6286],
+            'quan 10'        => [10.7746, 106.6679],
+            'quan 11'        => [10.7629, 106.6501],
+            'quan 1'         => [10.7757, 106.7004],
+            'quan 3'         => [10.7844, 106.6844],
+            'quan 4'         => [10.7578, 106.7013],
+            'quan 7'         => [10.7340, 106.7218],
+            'quan 12'        => [10.8672, 106.6413],
+            'phu nhuan'      => [10.7992, 106.6803],
+            'binh thanh'     => [10.8106, 106.7091],
+            'go vap'         => [10.8387, 106.6653],
+            'thu duc'        => [10.8494, 106.7537],
+            'nha be'         => [10.6953, 106.7049],
+            'hoc mon'        => [10.8894, 106.5953],
+            'cu chi'         => [11.0067, 106.5132],
+            'can gio'        => [10.4112, 106.9547],
+
+            // An Giang & Mekong Delta
+            'long xuyen'     => [10.3864, 105.4352],
+            'thoai son'      => [10.2603, 105.2636],
+            'nui sap'        => [10.2603, 105.2636],
+            'chau doc'       => [10.7000, 105.1119],
+            'chau thanh'     => [10.4430, 105.3310],
+            'chau phu'       => [10.5620, 105.2280],
+            'cho moi'        => [10.5425, 105.4050],
+            'phu tan'        => [10.6650, 105.3360],
+            'tan chau'       => [10.8000, 105.2380],
+            'tinh bien'      => [10.6010, 105.0080],
+            'tri ton'        => [10.4220, 104.9960],
+            'an phu'         => [10.8140, 105.0870],
+            'an giang'       => [10.3864, 105.4352],
+            'can tho'        => [10.0452, 105.7469],
+            'dong thap'      => [10.4938, 105.6882],
+            'kien giang'     => [10.0125, 105.0809],
+            'long an'        => [10.5359, 106.4137],
+            'tien giang'     => [10.4493, 106.3421],
+            'vinh long'      => [10.2396, 105.9572],
+            'ben tre'        => [10.2434, 106.3756],
+            'tra vinh'       => [9.9347, 106.3453],
+            'soc trang'      => [9.6025, 105.9739],
+            'bac lieu'       => [9.2940, 105.7216],
+            'ca mau'         => [9.1768, 105.1524],
+            'hau giang'      => [9.7579, 105.6413],
+
+            // Southeast & other major provinces
+            'ho chi minh'    => [10.7769, 106.7009],
+            'binh duong'     => [10.9804, 106.6519],
+            'dong nai'       => [10.9453, 106.8243],
+            'ba ria'         => [10.4114, 107.1362],
+            'vung tau'       => [10.3460, 107.0843],
+            'tay ninh'       => [11.3352, 106.1099],
+            'binh phuoc'     => [11.7512, 106.7235],
+            'da nang'        => [16.0544, 108.2022],
+            'ha noi'         => [21.0285, 105.8542],
+        ];
+
+        foreach ($knownLocations as $keyword => $coords) {
+            if (str_contains($normAddr, $keyword)) {
+                return $coords;
+            }
+        }
+
+        return null;
+    }
+
+    private function estimateStoreDistanceKm(string $normCustomerAddr, ?array $customerCoords, $store, string $normStoreAddr): float
+    {
+        // 1. Direct street/address match -> 0 km
+        $parts = array_filter(array_map('trim', explode(',', $normCustomerAddr)));
+        foreach ($parts as $part) {
+            if (strlen($part) >= 6 && str_contains($normStoreAddr, $part)) {
+                return 0.0;
+            }
+        }
+
+        // 2. Haversine distance using coordinates (DB coords if available, otherwise resolved from address)
+        $storeLat = $store->viDo ?? $store->latitude ?? null;
+        $storeLng = $store->kinhDo ?? $store->longitude ?? null;
+        $storeCoords = ($storeLat !== null && $storeLng !== null)
+            ? [(float)$storeLat, (float)$storeLng]
+            : $this->resolveLocationCoords($normStoreAddr);
+
+        if ($customerCoords && $storeCoords) {
+            return $this->haversineKm(
+                $customerCoords[0],
+                $customerCoords[1],
+                $storeCoords[0],
+                $storeCoords[1]
+            );
+        }
+
+        // 3. Fallback token overlap score (lower distance = better match)
+        $overlap = 0;
+        foreach ($parts as $part) {
+            if (strlen($part) >= 3 && str_contains($normStoreAddr, $part)) {
+                $overlap++;
+            }
+        }
+
+        return $overlap > 0 ? max(1.0, 100.0 - ($overlap * 25.0)) : 9999.0;
+    }
+
+    private function haversineKm(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $earthRadius = 6371.0;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = sin($dLat / 2) * sin($dLat / 2)
+            + cos(deg2rad($lat1)) * cos(deg2rad($lat2))
+            * sin($dLng / 2) * sin($dLng / 2);
+        return $earthRadius * 2 * atan2(sqrt($a), sqrt(1 - $a));
     }
 
     /**
