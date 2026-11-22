@@ -464,13 +464,6 @@ class OrderController extends Controller
                 return $denied;
             }
 
-            if (empty($order->nhanVienId)) {
-                $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first();
-                if ($staffProfile) {
-                    $order->nhanVienId = $staffProfile->id;
-                }
-            }
-
             $currentStatus = (int) $order->trangThaiDonHang;
             if (in_array($currentStatus, [0, 4, 5], true)) {
                 $statusName = $currentStatus === 0 ? 'Đã hủy' : 'Đã hoàn thành';
