@@ -446,15 +446,17 @@ class GhnController extends Controller
 
             if ($response->successful() && isset($data['code']) && $data['code'] == 200 && isset($data['data']['order_code'])) {
                 $ghnCode = $data['data']['order_code'];
+                $prevStatus = (int) $order->trangThaiDonHang;
+                $targetStatus = $prevStatus === 3 ? 3 : 7; // 7: CHO_LAY_HANG (Chờ lấy hàng)
                 $order->maVanDonGhn = $ghnCode;
                 $order->ghnStatusCode = 'ready_to_pick';
-                $order->trangThaiDonHang = 7; // 7: CHO_LAY_HANG (Chờ lấy hàng)
+                $order->trangThaiDonHang = $targetStatus;
                 $order->save();
 
                 \App\Models\LichSuTrangThaiDonHang::create([
                     'donHangId' => $order->id,
-                    'trangThaiCu' => 2,
-                    'trangThaiMoi' => 7,
+                    'trangThaiCu' => $prevStatus,
+                    'trangThaiMoi' => $targetStatus,
                     'ghnStatusCode' => 'ready_to_pick',
                     'moTaChiTiet' => "Tự động tạo đơn GHN thành công. Mã vận đơn: {$ghnCode}",
                     'nguonCapNhat' => 1,
@@ -472,15 +474,17 @@ class GhnController extends Controller
                 // Dự phòng thông minh cho Demo / Tài khoản GHN chưa kích hoạt hợp đồng (bị chặn giới hạn 3 đơn EXCEED_LIMIT):
                 // Tự động cấp mã vận đơn GHN Express chuẩn và cập nhật trạng thái đơn sang 'Chờ lấy hàng'
                 $fallbackGhnCode = 'GHN' . strtoupper(substr(md5($order->maDonHang . microtime()), 0, 8));
+                $prevStatus = (int) $order->trangThaiDonHang;
+                $targetStatus = $prevStatus === 3 ? 3 : 7;
                 $order->maVanDonGhn = $fallbackGhnCode;
                 $order->ghnStatusCode = 'ready_to_pick';
-                $order->trangThaiDonHang = 7;
+                $order->trangThaiDonHang = $targetStatus;
                 $order->save();
 
                 \App\Models\LichSuTrangThaiDonHang::create([
                     'donHangId' => $order->id,
-                    'trangThaiCu' => 2,
-                    'trangThaiMoi' => 7,
+                    'trangThaiCu' => $prevStatus,
+                    'trangThaiMoi' => $targetStatus,
                     'ghnStatusCode' => 'ready_to_pick',
                     'moTaChiTiet' => "Tạo đơn vận chuyển Giao Hàng Nhanh (GHN Express). Mã vận đơn: {$fallbackGhnCode}",
                     'nguonCapNhat' => 1,
@@ -496,15 +500,17 @@ class GhnController extends Controller
             \Illuminate\Support\Facades\Log::error("Lỗi kết nối API GHN: " . $e->getMessage() . ", chuyển sang sinh mã vận đơn dự phòng.");
             
             $fallbackGhnCode = 'GHN' . strtoupper(substr(md5($order->maDonHang . microtime()), 0, 8));
+            $prevStatus = (int) $order->trangThaiDonHang;
+            $targetStatus = $prevStatus === 3 ? 3 : 7;
             $order->maVanDonGhn = $fallbackGhnCode;
             $order->ghnStatusCode = 'ready_to_pick';
-            $order->trangThaiDonHang = 7;
+            $order->trangThaiDonHang = $targetStatus;
             $order->save();
 
             \App\Models\LichSuTrangThaiDonHang::create([
                 'donHangId' => $order->id,
-                'trangThaiCu' => 2,
-                'trangThaiMoi' => 7,
+                'trangThaiCu' => $prevStatus,
+                'trangThaiMoi' => $targetStatus,
                 'ghnStatusCode' => 'ready_to_pick',
                 'moTaChiTiet' => "Tạo đơn vận chuyển Giao Hàng Nhanh (GHN Express). Mã vận đơn: {$fallbackGhnCode}",
                 'nguonCapNhat' => 1,
