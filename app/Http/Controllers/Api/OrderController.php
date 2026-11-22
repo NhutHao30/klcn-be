@@ -50,6 +50,42 @@ class OrderController extends Controller
     ];
 
     /**
+     * Chỉ nhân viên bán hàng (vaiTroId = 3) thuộc đúng chi nhánh của đơn hàng mới được xử lý đơn.
+     */
+    public static function checkBranchSalesProcessPermission($user, DonHang $order): ?\Illuminate\Http\JsonResponse
+    {
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Chưa đăng nhập',
+                'message' => 'Chưa đăng nhập',
+            ], 401);
+        }
+
+        if ((int) $user->vaiTroId !== 3) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Chỉ nhân viên bán hàng thuộc chi nhánh của đơn hàng mới có quyền xử lý đơn hàng này!',
+                'message' => 'Chỉ nhân viên bán hàng thuộc chi nhánh của đơn hàng mới có quyền xử lý đơn hàng này!',
+            ], 403);
+        }
+
+        $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first();
+        $staffBranchId = $staffProfile ? (int) $staffProfile->cuaHangId : 0;
+        $orderBranchId = (int) $order->cuaHangId;
+
+        if ($staffBranchId <= 0 || ($orderBranchId > 0 && $staffBranchId !== $orderBranchId)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Bạn chỉ được phép xử lý đơn hàng thuộc chi nhánh của mình!',
+                'message' => 'Bạn chỉ được phép xử lý đơn hàng thuộc chi nhánh của mình!',
+            ], 403);
+        }
+
+        return null;
+    }
+
+    /**
      * Customer & Admin: View order list / Sales invoices
      */
     public function index(Request $request)
@@ -67,11 +103,13 @@ class OrderController extends Controller
             $query->where('nguoidungId', $nguoidung ? $nguoidung->id : 0);
         }
 
-        // Branch Manager views only own branch orders
-        if ($user->vaiTroId == 2) {
+        // Branch-scoped staff (Manager, Sales, Warehouse, CSKH, Accountant) view only own branch orders
+        if (in_array((int) $user->vaiTroId, [2, 3, 4, 5, 7], true)) {
             $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first();
             if ($staffProfile && $staffProfile->cuaHangId) {
                 $query->where('cuaHangId', $staffProfile->cuaHangId);
+            } else {
+                $query->whereRaw('1 = 0');
             }
         }
 
@@ -421,6 +459,18 @@ class OrderController extends Controller
                 return response()->json(['error' => 'Không tìm thấy hóa đơn'], 404);
             }
 
+            $user = Auth::guard('api')->user();
+            if ($denied = self::checkBranchSalesProcessPermission($user, $order)) {
+                return $denied;
+            }
+
+            if (empty($order->nhanVienId)) {
+                $staffProfile = \App\Models\NguoiDung::where('taiKhoanId', $user->id)->first();
+                if ($staffProfile) {
+                    $order->nhanVienId = $staffProfile->id;
+                }
+            }
+
             $currentStatus = (int) $order->trangThaiDonHang;
             if (in_array($currentStatus, [0, 4, 5], true)) {
                 $statusName = $currentStatus === 0 ? 'Đã hủy' : 'Đã hoàn thành';
@@ -591,6 +641,10 @@ class OrderController extends Controller
 
         if (!$order) {
             return response()->json(['error' => 'Không tìm thấy hóa đơn'], 404);
+        }
+
+        if ($denied = self::checkBranchSalesProcessPermission(Auth::guard('api')->user(), $order)) {
+            return $denied;
         }
 
         $currentStatus = (int) $order->trangThaiDonHang;
@@ -1034,6 +1088,10 @@ class OrderController extends Controller
             return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
         }
 
+        if ($denied = self::checkBranchSalesProcessPermission($user, $order)) {
+            return $denied;
+        }
+
         $ghiChu = trim((string)($request->input('ghiChu') ?? $request->input('note') ?? $request->input('ghiChuHoanTien') ?? 'Đã hoàn tiền cho khách qua chuyển khoản'));
         $soTienHoan = (float)($request->input('soTienHoan') ?? $request->input('amount') ?? $order->tongThanhToan);
         $maGiaoDich = trim((string)($request->input('maGiaoDichHoanTien') ?? $request->input('transactionCode') ?? $request->input('maGD') ?? ''));
@@ -1396,6 +1454,10 @@ class OrderController extends Controller
         $order = DonHang::where('maDonHang', $id)->orWhere('id', $id)->first();
         if (!$order) return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
 
+        if ($denied = self::checkBranchSalesProcessPermission($user, $order)) {
+            return $denied;
+        }
+
         $restock = filter_var($request->input('restock', false), FILTER_VALIDATE_BOOLEAN);
         $note = trim((string)($request->input('note') ?? $request->input('ghiChu') ?? 'Đã duyệt yêu cầu hoàn hàng và hoàn tiền'));
         $maGD = trim((string)($request->input('maGiaoDich') ?? $request->input('transactionCode') ?? ''));
@@ -1465,6 +1527,10 @@ class OrderController extends Controller
 
         $order = DonHang::where('maDonHang', $id)->orWhere('id', $id)->first();
         if (!$order) return response()->json(['error' => 'Không tìm thấy đơn hàng'], 404);
+
+        if ($denied = self::checkBranchSalesProcessPermission($user, $order)) {
+            return $denied;
+        }
 
         $lyDoTuChoi = trim((string)($request->input('lyDoTuChoi') ?? $request->input('reason') ?? ''));
         if (empty($lyDoTuChoi)) {

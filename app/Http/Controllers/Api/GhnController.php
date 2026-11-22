@@ -537,6 +537,10 @@ class GhnController extends Controller
             return response()->json(['error' => 'Không tìm thấy hóa đơn đơn hàng'], 404);
         }
 
+        if ($denied = \App\Http\Controllers\Api\OrderController::checkBranchSalesProcessPermission(\Illuminate\Support\Facades\Auth::guard('api')->user(), $order)) {
+            return $denied;
+        }
+
         $toWardCode = $request->input('to_ward_code') ?? $order->toWardCode;
         $toDistrictId = $request->input('to_district_id') ?? $order->toDistrictId;
 
