@@ -858,13 +858,4 @@ class DatHangTruocController extends Controller
         $res = \App\Http\Controllers\Api\GhnController::createShippingOrderForDonHang($orderModel, $toWardCode, $toDistrictId);
         return response()->json($res);
     }
-            DB::rollBack();
-            return response()->json(['success' => false, 'message' => 'Lỗi khi xử lý kho: ' . $e->getMessage()], 500);
-        }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Hoàn tất thanh toán & giao bánh thành công!'
-        ]);
-    }
 }

@@ -697,6 +697,9 @@ class AdminController extends Controller
         $roleId = $request->input('vaiTroId') ?? $request->input('role_id') ?? $request->input('MAROLE');
         if ($roleId !== null) {
             $newRoleId = (int)$roleId;
+            if ($newRoleId === 1 && (int)$tk->vaiTroId !== 1) {
+                return response()->json(['error' => 'Không được phép cập nhật vai trò người dùng lên Quản trị viên!'], 403);
+            }
             $tk->update(['vaiTroId' => $newRoleId]);
             if ($tk->nguoidung) {
                 $tk->nguoidung->update([
@@ -820,6 +823,9 @@ class AdminController extends Controller
 
         if ($request->has('vaiTroId') || $request->has('MAROLE')) {
             $newRoleId = (int)($request->input('vaiTroId') ?? $request->input('MAROLE') ?? $tk->vaiTroId);
+            if ($newRoleId === 1 && (int)$tk->vaiTroId !== 1) {
+                return response()->json(['error' => 'Không được phép cập nhật vai trò người dùng lên Quản trị viên!'], 403);
+            }
             if ($newRoleId > 0) {
                 $tk->vaiTroId = $newRoleId;
             }
