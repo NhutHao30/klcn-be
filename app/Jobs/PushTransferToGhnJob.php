@@ -42,8 +42,8 @@ class PushTransferToGhnJob implements ShouldQueue
         $shopId = $cuaHangXuat->GHN_SHOP_ID ?? env('GHN_SHOP_ID');
 
         // Lấy chi tiết
-        $details = DB::table('chitiet_dieuchuyen')
-            ->join('sanpham', 'chitiet_dieuchuyen.MASP', '=', 'sanpham.MASP')
+        $details = DB::table('chiTietDieuChuyen')
+            ->join('sanPham', 'chitiet_dieuchuyen.MASP', '=', 'sanpham.MASP')
             ->where('ID_PHIEU', $this->phieuId)
             ->select('chitiet_dieuchuyen.*', 'sanpham.TENSP', 'sanpham.GIABAN')
             ->get();
@@ -86,14 +86,14 @@ class PushTransferToGhnJob implements ShouldQueue
                 'MA_VANDON' => $ghnResponse['data']['order_code'],
                 'NGUOI_VANCHUYEN' => 'GHN',
                 'PHI_VANCHUYEN' => $ghnResponse['data']['total_fee'] ?? 0,
-                'updated_at' => now()
+                'updatedAt' => now()
             ]);
         } else {
             // Giả lập thành công khi test nếu API lỗi (do thiếu thông tin thật)
             DB::table('phieu_dieuchuyen')->where('ID_PHIEU', $this->phieuId)->update([
                 'MA_VANDON' => 'GHN' . time(),
                 'NGUOI_VANCHUYEN' => 'GHN',
-                'updated_at' => now()
+                'updatedAt' => now()
             ]);
         }
     }

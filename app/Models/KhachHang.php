@@ -2,62 +2,78 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 
 class KhachHang extends Model
 {
-    use SoftDeletes;
+    use HasFactory;
 
-    protected $table = 'khachhang';
-    protected $primaryKey = 'MAKH';
-    public $incrementing = false;
-    protected $keyType = 'string';
+    const CREATED_AT = 'createdAt';
+    const UPDATED_AT = 'updatedAt';
+
+    protected $table = 'nguoidung';
 
     protected $fillable = [
-        'MAKH',
-        'HOTEN',
-        'NGAYSINH',
-        'SDT',
-        'GioiTinh',
-        'DIACHI',
-        'DIEMTICHLUY',
-        'USERNAME',
-        'MACUAHANG',
+        'taiKhoanId',
+        'cuaHangId',
+        'hoTen',
+        'soDienThoai',
+        'gioiTinh',
+        'ngaySinh',
+        'cccdNumber',
+        'cccdImageUrl',
+        'loaiNguoiDung',
     ];
+
+    protected $appends = [
+        'MAKH',
+        'USERNAME',
+        'HOTEN',
+        'SDT',
+    ];
+
+    protected static function booted()
+    {
+        static::addGlobalScope('customer', function ($builder) {
+            $builder->where('loaiNguoiDung', 0);
+        });
+
+        static::creating(function ($model) {
+            $model->loaiNguoiDung = 0;
+        });
+    }
+
+    public static function findByUsername($username)
+    {
+        if (!$username) return null;
+        return static::whereHas('taikhoan', function ($q) use ($username) {
+            $q->where('username', $username);
+        })->first();
+    }
 
     public function taikhoan()
     {
-        return $this->belongsTo(TaiKhoan::class, 'USERNAME', 'USERNAME');
+        return $this->belongsTo(TaiKhoan::class, 'taiKhoanId');
     }
 
-    public function diachis()
+    public function getMAKHAttribute()
     {
-        return $this->hasMany(DiaChi::class, 'MAKH', 'MAKH');
+        return $this->attributes['id'] ?? null;
     }
 
-    public function hdbans()
+    public function getHOTENAttribute()
     {
-        return $this->hasMany(HdBan::class, 'MAKH', 'MAKH');
+        return $this->attributes['hoTen'] ?? 'Khách Hàng';
     }
 
-    public function giohang()
+    public function getSDTAttribute()
     {
-        return $this->hasOne(GioHang::class, 'MAKH', 'MAKH');
+        return $this->attributes['soDienThoai'] ?? '';
     }
 
-    public function binhluans()
+    public function getUSERNAMEAttribute()
     {
-        return $this->hasMany(BinhLuan::class, 'MAKH', 'MAKH');
-    }
-
-    public function cuoctrochuyens()
-    {
-        return $this->hasMany(CuocTroChuyen::class, 'MAKH', 'MAKH');
-    }
-
-    public function cuahang()
-    {
-        return $this->belongsTo(CuaHang::class, 'MACUAHANG', 'MACUAHANG');
+        return $this->taikhoan?->username ?? '';
     }
 }

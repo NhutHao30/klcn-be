@@ -5,38 +5,39 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\LoaiSanPham;
+use Illuminate\Support\Str;
 
 class CategoryController extends Controller
 {
-    /**
-     * Get a list of all categories (shared by both Customers & Admin)
-     */
     public function index()
     {
-        return response()->json(LoaiSanPham::all());
+        return response()->json(LoaiSanPham::where('trangThai', 1)->withCount('sanPhams')->get());
     }
 
-    /**
-     * Admin: Add new category
-     */
     public function store(Request $request)
     {
-        $request->validate([
-            'MALOAI' => 'required|string|unique:loaisanpham,MALOAI',
-            'TENLOAI' => 'required|string|unique:loaisanpham,TENLOAI',
+        $request->merge([
+            'tenLoai' => $request->input('tenLoai') ?? $request->input('TENLOAI') ?? $request->input('ten_loai') ?? $request->input('name'),
+            'moTa' => $request->input('moTa') ?? $request->input('MO_TA') ?? $request->input('mo_ta') ?? $request->input('description'),
+        ]);
+
+        $validated = $request->validate([
+            'tenLoai' => 'required|string|max:100',
+            'moTa' => 'nullable|string',
+            'hinhAnh' => 'nullable|string',
         ]);
 
         $category = LoaiSanPham::create([
-            'MALOAI' => $request->MALOAI,
-            'TENLOAI' => $request->TENLOAI
+            'tenLoai' => $validated['tenLoai'],
+            'slug' => Str::slug($validated['tenLoai']) . '-' . time(),
+            'moTa' => $validated['moTa'] ?? null,
+            'hinhAnh' => $validated['hinhAnh'] ?? null,
+            'trangThai' => 1,
         ]);
 
         return response()->json(['message' => 'Thêm danh mục thành công', 'data' => $category], 201);
     }
 
-    /**
-     * Admin: Update catalog
-     */
     public function update(Request $request, $id)
     {
         $category = LoaiSanPham::find($id);
@@ -44,20 +45,27 @@ class CategoryController extends Controller
             return response()->json(['error' => 'Không tìm thấy danh mục'], 404);
         }
 
-        $request->validate([
-            'TENLOAI' => 'required|string|unique:loaisanpham,TENLOAI,' . $id . ',MALOAI',
+        $request->merge([
+            'tenLoai' => $request->input('tenLoai') ?? $request->input('TENLOAI') ?? $request->input('ten_loai') ?? $request->input('name') ?? $category->tenLoai,
+            'moTa' => $request->input('moTa') ?? $request->input('MO_TA') ?? $request->input('mo_ta') ?? $request->input('description') ?? $category->moTa,
+        ]);
+
+        $validated = $request->validate([
+            'tenLoai' => 'sometimes|required|string|max:100',
+            'moTa' => 'nullable|string',
+            'hinhAnh' => 'nullable|string',
         ]);
 
         $category->update([
-            'TENLOAI' => $request->TENLOAI
+            'tenLoai' => $validated['tenLoai'],
+            'slug' => Str::slug($validated['tenLoai']),
+            'moTa' => $validated['moTa'] ?? $category->moTa,
+            'hinhAnh' => $validated['hinhAnh'] ?? $category->hinhAnh,
         ]);
 
         return response()->json(['message' => 'Cập nhật danh mục thành công', 'data' => $category]);
     }
 
-    /**
-     * Admin: Delete catalog
-     */
     public function destroy($id)
     {
         $category = LoaiSanPham::find($id);
@@ -65,9 +73,8 @@ class CategoryController extends Controller
             return response()->json(['error' => 'Không tìm thấy danh mục'], 404);
         }
 
-        // Check if any products belong to this category (If so, do not delete them).
-        if ($category->sanphams()->count() > 0) {
-            return response()->json(['error' => 'Không thể xóa danh mục đang có sản phẩm'], 400);
+        if ($category->sanPhams()->count() > 0) {
+            return response()->json(['error' => 'Không thể xóa danh mục đang chứa sản phẩm'], 400);
         }
 
         $category->delete();

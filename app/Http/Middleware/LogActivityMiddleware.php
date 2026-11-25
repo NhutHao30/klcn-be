@@ -81,6 +81,8 @@ class LogActivityMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
+        $countBefore = \App\Services\AuditTrail::$recordedInRequest;
+
         // Lấy user trước khi controller xử lý (quan trọng cho chức năng Đăng xuất vì token sẽ bị hủy)
         $userBefore = null;
         try {
@@ -90,8 +92,8 @@ class LogActivityMiddleware
 
         $response = $next($request);
 
-        // Chỉ ghi log cho các thao tác thay đổi dữ liệu (POST, PUT, DELETE)
-        if (!in_array($request->method(), ['POST', 'PUT', 'DELETE'])) {
+        // Chỉ ghi log cho các thao tác thay đổi dữ liệu
+        if (!in_array($request->method(), ['POST', 'PUT', 'PATCH', 'DELETE'])) {
             return $response;
         }
 
@@ -100,67 +102,91 @@ class LogActivityMiddleware
             return $response;
         }
 
+        // Request đã được ghi chi tiết ở cấp model (AuditTrail::handleModelEvent) -> không ghi trùng
+        if (\App\Services\AuditTrail::$recordedInRequest > $countBefore) {
+            return $response;
+        }
+
         try {
-            $user = $userBefore ?? Auth::guard('api')->user();
-            $username = null;
-            $maRole = null;
-            $hoTen = null;
-            $maCuaHang = null;
+            $user = $userBefore;
+            if (!$user) {
+                try {
+                    $user = Auth::guard('api')->user();
+                } catch (\Throwable $e) {
+                }
+            }
+            $path = '/' . ltrim($request->path(), '/');
 
-            if ($user) {
-                $username = $user->USERNAME;
-                $maRole = $user->MAROLE;
-            } elseif ($request->has('USERNAME')) {
-                $username = $request->input('USERNAME');
-                $userModel = \App\Models\TaiKhoan::where('USERNAME', $username)->first();
-                if ($userModel) {
-                    $maRole = $userModel->MAROLE;
+            // Đăng nhập: lấy tài khoản từ username gửi lên
+            if (!$user && str_ends_with($path, '/login')) {
+                $loginName = $request->input('username') ?? $request->input('USERNAME') ?? $request->input('email');
+                if ($loginName) {
+                    $user = \App\Models\Taikhoan::where('username', $loginName)->orWhere('email', $loginName)->first();
                 }
             }
 
-            if ($username) {
-                $nhanVien = NhanVien::where('USERNAME', $username)->first();
-                if ($nhanVien) {
-                    $hoTen = $nhanVien->HOTEN;
-                    $maCuaHang = $nhanVien->MACUAHANG;
-                } else {
-                    // Nếu là khách hàng
-                    $khachHang = \App\Models\KhachHang::where('USERNAME', $username)->first();
-                    if ($khachHang) {
-                        $hoTen = $khachHang->HOTEN;
-                    }
-                }
+            if (!\App\Services\AuditTrail::shouldAuditActor($user)) {
+                return $response;
             }
 
-            // Xác định tên hành động
             $hanhDong = $this->resolveActionName($request);
-
-            // Gắn thêm ID đối tượng nếu có (Trừ Đăng nhập/Đăng xuất/Đăng ký)
+            $objectId = null;
             if (!in_array($hanhDong, ['Đăng nhập', 'Đăng xuất', 'Đăng ký tài khoản'])) {
                 $objectId = $this->extractObjectId($request, $response);
-                if ($objectId) {
-                    $hanhDong .= ' - ' . $objectId;
+            }
+
+            $action = match (true) {
+                str_ends_with($path, '/login') => 'LOGIN',
+                str_ends_with($path, '/logout') => 'LOGOUT',
+                $request->method() === 'POST' => 'INSERT',
+                $request->method() === 'DELETE' => 'DELETE',
+                default => 'UPDATE',
+            };
+
+            $payload = $request->except(array_merge($this->sensitiveFields, ['signature', 'chu_ky', 'ky_giam_doc', 'ky_van_chuyen', 'ky_nguoi_nhan', 'signature_data']));
+            foreach ($payload as $key => $value) {
+                if ($request->hasFile($key)) {
+                    $payload[$key] = '[File Upload]';
                 }
             }
 
-            // Không lưu trữ chi tiết request, IP, User Agent để bảo mật thông tin
-            $chiTiet = null;
-
-            NhatKyHeThong::create([
-                'USERNAME'   => $username,
-                'HOTEN'      => $hoTen,
-                'MAROLE'     => $maRole,
-                'MACUAHANG'  => $maCuaHang,
-                'HANH_DONG'  => $hanhDong,
-                'CHITIET'    => null,
-                'IP_ADDRESS' => $request->ip(),
-            ]);
+            \App\Services\AuditTrail::write([
+                'action' => $action,
+                'tableName' => $this->resolveTableName($path),
+                'entityId' => $objectId ? preg_replace('/^Mã:\s*/u', '', $objectId) : null,
+                'moTa' => $hanhDong . ($objectId ? ' - ' . $objectId : ''),
+                'oldValues' => null,
+                'newValues' => in_array($action, ['LOGIN', 'LOGOUT']) ? null : \App\Services\AuditTrail::clean($payload),
+            ], $user);
         } catch (\Exception $e) {
             // Ghi log thất bại không được ảnh hưởng đến response chính
             \Illuminate\Support\Facades\Log::error('LogActivity failed: ' . $e->getMessage());
         }
 
         return $response;
+    }
+
+    /**
+     * Suy ra tên bảng/thực thể từ URL (VD: /api/admin/products/5 -> sanpham)
+     */
+    protected function resolveTableName(string $path): ?string
+    {
+        $map = [
+            'products' => 'sanpham', 'categories' => 'loaisanpham', 'hoa-don' => 'donhang', 'orders' => 'donhang',
+            'my-orders' => 'donhang', 'staff' => 'taikhoan', 'users' => 'taikhoan', 'customers' => 'nguoidung',
+            'stores' => 'cuahang', 'transfers' => 'phieudieuchuyen', 'vouchers' => 'voucher', 'news' => 'tintuc',
+            'hoadon-nhap' => 'hoadonnhap', 'lo-hang' => 'lohang', 'bien-ban-huy' => 'bienbanhuy', 'chu-ky' => 'chukyso',
+            'chu-ky-so' => 'chukyso', 'nha-cung-cap' => 'nhacungcap', 'reviews' => 'danhgiasanpham', 'pos' => 'donhang',
+            'pre-orders' => 'dathangtruoc', 'cham-cong' => 'chamcong', 'login' => 'taikhoan', 'logout' => 'taikhoan',
+            'features' => 'he_thong_khoa_chuc_nang', 'addresses' => 'diachi',
+        ];
+        foreach (explode('/', trim($path, '/')) as $segment) {
+            if (isset($map[$segment])) {
+                return $map[$segment];
+            }
+        }
+        $segments = array_values(array_filter(explode('/', trim($path, '/')), fn ($s) => !in_array($s, ['api', 'admin'])));
+        return $segments[0] ?? null;
     }
 
     /**
